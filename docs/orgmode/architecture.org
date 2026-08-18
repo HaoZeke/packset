@@ -1,0 +1,23 @@
+#+title: packset architecture
+#+options: toc:nil num:nil
+
+One writer on loopback. Cards are files. Atoms are LMDB.
+milli is a projection. Every agent is an HTTP client.
+
+* Contract
+
+- URL: =PACKSET_URL= (=INSIDE_MEMORY_URL= alias)
+- Host: =127.0.0.1= only. Never =localhost=.
+- Port: =8761= (=PACKSET_PORT=)
+- Health: =packsetd ok=
+
+* Split
+
+| Crate / script | Role |
+|---|---|
+| =packsetd.py= | writer |
+| =packset-core= | Borda, MMR, decay, extract filters |
+| =packset-client= | HTTP |
+| =packset-milli= | search projection |
+
+Clients do not open the LMDB.
