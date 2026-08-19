@@ -60,6 +60,7 @@ class MemdTests(unittest.TestCase):
         self.assertEqual(body["home"], self.tmp.name)
         self.assertEqual(body["live"], 0)
         self.assertEqual(body["tombstone"], 0)
+        self.assertEqual(body["expired"], 0)
         self.assertIn("milli", body)
         self.assertIn("embedder", body)
         self.assertIn("binary", body["milli"])
@@ -90,6 +91,18 @@ class MemdTests(unittest.TestCase):
         }
         self.json_req("POST", "/v1/atoms", other)
 
+        # Unscoped (command-line default) sees the same counts.
+        status, raw = self.get("/v1/status")
+        self.assertEqual(status, 200)
+        body = json.loads(raw.decode())
+        self.assertEqual(body["workspace"], "")
+        self.assertEqual(body["live"], 1)
+        self.assertEqual(body["tombstone"], 1)
+        self.assertEqual(body["live_by_kind"].get("preference"), 1)
+        self.assertEqual(body["tombstone_by_kind"].get("voice"), 1)
+        self.assertTrue(body["last_write_ts"])
+
+        # Scoped to the workspace matches.
         status, raw = self.get(f"/v1/status?workspace={self.ws}")
         self.assertEqual(status, 200)
         body = json.loads(raw.decode())

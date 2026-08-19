@@ -89,8 +89,9 @@ case "${1:-ensure}" in
             echo "packset: up on 127.0.0.1:$PORT ($(health_reply))"
             # Optional detail from GET /v1/status (workspace via PACKSET_WORKSPACE).
             detail_url="http://127.0.0.1:$PORT/v1/status"
-            if [ -n "${PACKSET_WORKSPACE:-}" ]; then
-                detail_url="${detail_url}?workspace=$(printf '%s' "$PACKSET_WORKSPACE" | sed 's/ /%20/g')"
+            if [ -n "${PACKSET_WORKSPACE:-}" ] && command -v python3 >/dev/null 2>&1; then
+                ws_enc="$(PACKSET_WORKSPACE="$PACKSET_WORKSPACE" python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["PACKSET_WORKSPACE"], safe=""))')"
+                detail_url="${detail_url}?workspace=${ws_enc}"
             fi
             if detail="$(timeout 3 curl -fsS "$detail_url" 2>/dev/null)"; then
                 if command -v python3 >/dev/null 2>&1; then

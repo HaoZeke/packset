@@ -58,15 +58,18 @@ class Store:
     def close(self) -> None:
         self.env.close()
 
-    def _scan(self, workspace: str) -> list[dict]:
-        prefix = _ws_prefix(workspace)
+    def _scan(self, workspace: str | None = None) -> list[dict]:
+        prefix = _ws_prefix(workspace) if workspace else b""
         out: list[dict] = []
         with self.env.begin() as txn:
             cur = txn.cursor()
-            if not cur.set_range(prefix):
+            if prefix:
+                if not cur.set_range(prefix):
+                    return out
+            elif not cur.first():
                 return out
             for key, raw in cur:
-                if not key.startswith(prefix):
+                if prefix and not key.startswith(prefix):
                     break
                 rec = json.loads(raw)
                 if isinstance(rec, dict):
@@ -271,29 +274,21 @@ class Store:
         """Seat home, atom counts, pin, milli, and embedder. Optional workspace scope."""
         live_by_kind: dict[str, int] = {}
         tombstone_by_kind: dict[str, int] = {}
+        expired_by_kind: dict[str, int] = {}
         last_write_ts = ""
         now = inside_memory.utcnow()
         with self.lock:
-            with self.env.begin() as txn:
-                cur = txn.cursor()
-                for _key, raw in cur:
-                    try:
-                        rec = json.loads(raw)
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        continue
-                    if not isinstance(rec, dict):
-                        continue
-                    if workspace and rec.get("workspace") != workspace:
-                        continue
-                    kind = str(rec.get("kind") or "unknown")
-                    ts = str(rec.get("ts") or "")
-                    if ts and ts > last_write_ts:
-                        last_write_ts = ts
-                    if rec.get("tombstone"):
-                        tombstone_by_kind[kind] = tombstone_by_kind.get(kind, 0) + 1
-                        continue
-                    if inside_memory.is_live(rec, now):
-                        live_by_kind[kind] = live_by_kind.get(kind, 0) + 1
+            for rec in self._scan(workspace):
+                kind = str(rec.get("kind") or "unknown")
+                ts = str(rec.get("ts") or "")
+                if ts and ts > last_write_ts:
+                    last_write_ts = ts
+                if rec.get("tombstone"):
+                    tombstone_by_kind[kind] = tombstone_by_kind.get(kind, 0) + 1
+                elif inside_memory.is_live(rec, now):
+                    live_by_kind[kind] = live_by_kind.get(kind, 0) + 1
+                else:
+                    expired_by_kind[kind] = expired_by_kind.get(kind, 0) + 1
             pin_name = self.pin(workspace) if workspace else ""
         milli_path = inside_search.milli_bin()
         index_ready = (self.milli_dir / "data.mdb").is_file()
@@ -303,8 +298,10 @@ class Store:
             "set": pin_name,
             "live": sum(live_by_kind.values()),
             "tombstone": sum(tombstone_by_kind.values()),
+            "expired": sum(expired_by_kind.values()),
             "live_by_kind": dict(sorted(live_by_kind.items())),
             "tombstone_by_kind": dict(sorted(tombstone_by_kind.items())),
+            "expired_by_kind": dict(sorted(expired_by_kind.items())),
             "last_write_ts": last_write_ts or None,
             "milli": {
                 "binary": str(milli_path) if milli_path else None,
