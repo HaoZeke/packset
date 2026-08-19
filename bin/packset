@@ -87,6 +87,18 @@ case "${1:-ensure}" in
     status)
         if listening && is_ours; then
             echo "packset: up on 127.0.0.1:$PORT ($(health_reply))"
+            # Optional detail from GET /v1/status (workspace via PACKSET_WORKSPACE).
+            detail_url="http://127.0.0.1:$PORT/v1/status"
+            if [ -n "${PACKSET_WORKSPACE:-}" ]; then
+                detail_url="${detail_url}?workspace=$(printf '%s' "$PACKSET_WORKSPACE" | sed 's/ /%20/g')"
+            fi
+            if detail="$(timeout 3 curl -fsS "$detail_url" 2>/dev/null)"; then
+                if command -v python3 >/dev/null 2>&1; then
+                    printf '%s\n' "$detail" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$detail"
+                else
+                    printf '%s\n' "$detail"
+                fi
+            fi
         elif listening; then
             echo "packset: port $PORT held by another process"
             exit 1

@@ -267,6 +267,56 @@ class Store:
             instructions = cards.get("instructions") or ""
         return {"workspace": workspace, "set": named, "instructions": instructions}
 
+    def status(self, workspace: str | None = None) -> dict:
+        """Seat home, atom counts, pin, milli, and embedder. Optional workspace scope."""
+        live_by_kind: dict[str, int] = {}
+        tombstone_by_kind: dict[str, int] = {}
+        last_write_ts = ""
+        now = inside_memory.utcnow()
+        with self.lock:
+            with self.env.begin() as txn:
+                cur = txn.cursor()
+                for _key, raw in cur:
+                    try:
+                        rec = json.loads(raw)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    if workspace and rec.get("workspace") != workspace:
+                        continue
+                    kind = str(rec.get("kind") or "unknown")
+                    ts = str(rec.get("ts") or "")
+                    if ts and ts > last_write_ts:
+                        last_write_ts = ts
+                    if rec.get("tombstone"):
+                        tombstone_by_kind[kind] = tombstone_by_kind.get(kind, 0) + 1
+                        continue
+                    if inside_memory.is_live(rec, now):
+                        live_by_kind[kind] = live_by_kind.get(kind, 0) + 1
+            pin_name = self.pin(workspace) if workspace else ""
+        milli_path = inside_search.milli_bin()
+        index_ready = (self.milli_dir / "data.mdb").is_file()
+        return {
+            "home": str(self.home),
+            "workspace": workspace or "",
+            "set": pin_name,
+            "live": sum(live_by_kind.values()),
+            "tombstone": sum(tombstone_by_kind.values()),
+            "live_by_kind": dict(sorted(live_by_kind.items())),
+            "tombstone_by_kind": dict(sorted(tombstone_by_kind.items())),
+            "last_write_ts": last_write_ts or None,
+            "milli": {
+                "binary": str(milli_path) if milli_path else None,
+                "index_dir": str(self.milli_dir),
+                "index_ready": index_ready,
+            },
+            "embedder": {
+                "enabled": inside_embed.enabled(),
+                "available": inside_embed.available(home=self.home),
+            },
+        }
+
     def put_attach(self, workspace: str, text: str, label: str = "") -> dict:
         body = text if isinstance(text, str) else str(text or "")
         if len(body) > inside_context.ATTACH_CAP:
@@ -319,6 +369,10 @@ def make_handler(store: Store):
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
                 self.wfile.write(b"packsetd ok")
+                return
+            if parsed.path == "/v1/status":
+                workspace = (qs.get("workspace") or [""])[0] or None
+                self._send(200, store.status(workspace))
                 return
             if parsed.path == "/v1/identity":
                 cwd = (qs.get("cwd") or [os.getcwd()])[0]

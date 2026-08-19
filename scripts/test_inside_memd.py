@@ -53,6 +53,53 @@ class MemdTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, b"packsetd ok")
 
+    def test_status_empty_and_scoped(self):
+        status, raw = self.get("/v1/status")
+        self.assertEqual(status, 200)
+        body = json.loads(raw.decode())
+        self.assertEqual(body["home"], self.tmp.name)
+        self.assertEqual(body["live"], 0)
+        self.assertEqual(body["tombstone"], 0)
+        self.assertIn("milli", body)
+        self.assertIn("embedder", body)
+        self.assertIn("binary", body["milli"])
+        self.assertIn("index_ready", body["milli"])
+        self.assertIn("available", body["embedder"])
+
+        atom = {
+            "workspace": self.ws,
+            "text": "Status counts one live voice atom here.",
+            "kind": "voice",
+            "level": "explicit",
+            "about_peer": "rgoswami",
+            "by_peer": "hermes",
+        }
+        _, created = self.json_req("POST", "/v1/atoms", atom)
+        self.json_req(
+            "POST",
+            "/v1/atoms/delete",
+            {"workspace": self.ws, "id": created["id"]},
+        )
+        other = {
+            "workspace": self.ws,
+            "text": "A second live preference stays after delete.",
+            "kind": "preference",
+            "level": "explicit",
+            "about_peer": "rgoswami",
+            "by_peer": "hermes",
+        }
+        self.json_req("POST", "/v1/atoms", other)
+
+        status, raw = self.get(f"/v1/status?workspace={self.ws}")
+        self.assertEqual(status, 200)
+        body = json.loads(raw.decode())
+        self.assertEqual(body["workspace"], self.ws)
+        self.assertEqual(body["live"], 1)
+        self.assertEqual(body["tombstone"], 1)
+        self.assertEqual(body["live_by_kind"].get("preference"), 1)
+        self.assertEqual(body["tombstone_by_kind"].get("voice"), 1)
+        self.assertTrue(body["last_write_ts"])
+
     def test_two_clients_same_pack(self):
         atom = {
             "workspace": self.ws,
