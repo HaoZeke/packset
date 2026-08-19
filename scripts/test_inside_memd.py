@@ -9,7 +9,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-import inside_memd
+import packsetd
 import inside_memory
 import inside_policy
 
@@ -17,9 +17,9 @@ import inside_policy
 class MemdTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = inside_memd.Store(Path(self.tmp.name))
+        self.store = packsetd.Store(Path(self.tmp.name))
         self.server = ThreadingHTTPServer(
-            ("127.0.0.1", 0), inside_memd.make_handler(self.store)
+            ("127.0.0.1", 0), packsetd.make_handler(self.store)
         )
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
