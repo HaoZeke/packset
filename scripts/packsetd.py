@@ -361,7 +361,7 @@ def make_handler(store: Store):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
-            if parsed.path in {"/health", "/__inside_memd/health"}:
+            if parsed.path == "/health":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()

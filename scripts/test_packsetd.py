@@ -91,26 +91,57 @@ class MemdTests(unittest.TestCase):
         }
         self.json_req("POST", "/v1/atoms", other)
 
-        # Unscoped (command-line default) sees the same counts.
+        # A closed valid_to lands in expired, not live or tombstone.
+        expired = {
+            "workspace": self.ws,
+            "text": "An expired cache pointer no longer counts as live.",
+            "kind": "cache-pointer",
+            "level": "explicit",
+            "about_peer": "rgoswami",
+            "by_peer": "hermes",
+            "valid_to": "2000-01-01T00:00:00+00:00",
+        }
+        self.json_req("POST", "/v1/atoms", expired)
+
+        # A live atom under a second workspace only shows up unscoped.
+        other_ws = "git:github.com/HaoZeke/other"
+        self.json_req(
+            "POST",
+            "/v1/atoms",
+            {
+                "workspace": other_ws,
+                "text": "A live atom in a second workspace.",
+                "kind": "preference",
+                "level": "explicit",
+                "about_peer": "rgoswami",
+                "by_peer": "hermes",
+            },
+        )
+
+        # Unscoped (command-line default) walks every workspace.
         status, raw = self.get("/v1/status")
         self.assertEqual(status, 200)
         body = json.loads(raw.decode())
         self.assertEqual(body["workspace"], "")
-        self.assertEqual(body["live"], 1)
+        self.assertEqual(body["live"], 2)
         self.assertEqual(body["tombstone"], 1)
-        self.assertEqual(body["live_by_kind"].get("preference"), 1)
+        self.assertEqual(body["expired"], 1)
+        self.assertEqual(body["live_by_kind"].get("preference"), 2)
         self.assertEqual(body["tombstone_by_kind"].get("voice"), 1)
+        self.assertEqual(body["expired_by_kind"].get("cache-pointer"), 1)
         self.assertTrue(body["last_write_ts"])
 
-        # Scoped to the workspace matches.
+        # Scoped stays inside the one workspace; the second-workspace atom is gone.
         status, raw = self.get(f"/v1/status?workspace={self.ws}")
         self.assertEqual(status, 200)
         body = json.loads(raw.decode())
         self.assertEqual(body["workspace"], self.ws)
         self.assertEqual(body["live"], 1)
         self.assertEqual(body["tombstone"], 1)
+        self.assertEqual(body["expired"], 1)
         self.assertEqual(body["live_by_kind"].get("preference"), 1)
         self.assertEqual(body["tombstone_by_kind"].get("voice"), 1)
+        self.assertEqual(body["expired_by_kind"].get("cache-pointer"), 1)
         self.assertTrue(body["last_write_ts"])
 
     def test_two_clients_same_pack(self):
