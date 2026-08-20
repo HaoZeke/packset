@@ -59,7 +59,7 @@ class Store:
         self.env.close()
 
     def _scan(self, workspace: str | None = None) -> list[dict]:
-        prefix = _ws_prefix(workspace) if workspace else b""
+        prefix = _ws_prefix(workspace) if workspace is not None else b""
         out: list[dict] = []
         with self.env.begin() as txn:
             cur = txn.cursor()
@@ -367,6 +367,8 @@ def make_handler(store: Store):
                 self.end_headers()
                 self.wfile.write(b"packsetd ok")
                 return
+            if parsed.path == "/__inside_memd/health":
+                return self._err(404, "not found")
             if parsed.path == "/v1/status":
                 workspace = (qs.get("workspace") or [""])[0] or None
                 self._send(200, store.status(workspace))

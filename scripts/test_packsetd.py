@@ -53,6 +53,29 @@ class MemdTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, b"packsetd ok")
 
+    def test_retired_health_alias_is_gone(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.get("/__inside_memd/health")
+        self.assertEqual(ctx.exception.code, 404)
+
+    def test_empty_string_scan_is_not_a_full_walk(self):
+        self.json_req(
+            "POST",
+            "/v1/atoms",
+            {
+                "workspace": self.ws,
+                "text": "A live voice atom under a real workspace.",
+                "kind": "voice",
+                "level": "explicit",
+                "about_peer": "rgoswami",
+                "by_peer": "hermes",
+            },
+        )
+        empty = self.store.status("")
+        self.assertEqual(empty["live"], 0)
+        unscoped = self.store.status(None)
+        self.assertEqual(unscoped["live"], 1)
+
     def test_status_empty_and_scoped(self):
         status, raw = self.get("/v1/status")
         self.assertEqual(status, 200)
