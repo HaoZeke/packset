@@ -65,6 +65,27 @@ impl PacksetClient {
         Ok(body)
     }
 
+    pub fn get_atom(&self, workspace: &str, id: &str) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/atoms", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .timeout(TIMEOUT)
+            .call()
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?;
+        let atoms = body
+            .get("atoms")
+            .and_then(|a| a.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for atom in atoms {
+            if atom.get("id").and_then(|v| v.as_str()) == Some(id) {
+                return Ok(atom);
+            }
+        }
+        Err(Error::Bad(format!("no atom {id}")))
+    }
+
     pub fn search(&self, workspace: &str, q: &str, limit: u32) -> Result<Vec<Hit>, Error> {
         let url = format!("{}/v1/search", self.base);
         let body: serde_json::Value = ureq::get(&url)
