@@ -20,6 +20,7 @@ import lmdb
 
 import inside_context
 import inside_embed
+import inside_extract
 import inside_identity
 import inside_memory
 import inside_prose
@@ -88,6 +89,9 @@ class Store:
             return live
 
     def add(self, atom: dict) -> dict:
+        text = atom.get("text") if isinstance(atom.get("text"), str) else ""
+        if inside_extract.is_tool_dump(text):
+            raise inside_memory.AtomError("tool dump is attach, not an atom")
         atom = inside_memory.validate_atom(dict(atom))
         if not atom.get("id"):
             atom["id"] = inside_memory.new_id()
