@@ -54,3 +54,45 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
         inter / uni
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::borda::borda_merge;
+
+    #[test]
+    fn mmr_after_borda() {
+        let a = vec!["x".to_string(), "y".to_string(), "z".to_string()];
+        let b = vec!["y".to_string(), "x".to_string(), "z".to_string()];
+        let order = borda_merge(&[a, b], 3);
+        assert_eq!(order, vec!["x", "y", "z"]);
+        let items = vec![
+            Ranked {
+                id: "keep".into(),
+                rel: 1.0,
+                tokens: ["review", "open", "repro"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            },
+            Ranked {
+                id: "dup".into(),
+                rel: 0.55,
+                tokens: ["review", "open", "repro"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            },
+            Ranked {
+                id: "other".into(),
+                rel: 0.5,
+                tokens: ["pin", "zircon", "index"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            },
+        ];
+        let reranked = mmr_rerank(&items, 0.7);
+        assert_eq!(reranked, vec!["keep", "other", "dup"]);
+    }
+}

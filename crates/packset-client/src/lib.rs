@@ -70,6 +70,48 @@ impl PacksetClient {
         Ok(Self::new(url))
     }
 
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
+    pub fn workspace(&self) -> String {
+        if let Ok(w) = env::var("PACKSET_WORKSPACE") {
+            if !w.is_empty() {
+                return w;
+            }
+        }
+        let cwd = env::var("GROKOS_WORKSPACE")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| env::current_dir().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        self.workspace_for_cwd(&cwd)
+    }
+
+    /// Workspace id from `/v1/identity` for `cwd`, or `dir:<abs>` if that call fails.
+    pub fn workspace_for_cwd(&self, cwd: &std::path::Path) -> String {
+        let abs = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+        let url = format!("{}/v1/identity", self.base);
+        let body = ureq::get(&url)
+            .query("cwd", abs.to_string_lossy().as_ref())
+            .timeout(TIMEOUT)
+            .call()
+            .ok()
+            .and_then(|r| r.into_string().ok());
+        if let Some(body) = body {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
+                if let Some(ws) = val.get("workspace").and_then(|v| v.as_str()) {
+                    if !ws.is_empty() {
+                        return ws.to_string();
+                    }
+                }
+            }
+        }
+        format!("dir:{}", abs.display())
+    }
+
     pub fn health(&self) -> Result<String, Error> {
         let body = ureq::get(&format!("{}/health", self.base))
             .timeout(TIMEOUT)
@@ -94,6 +136,21 @@ impl PacksetClient {
             Err(e) => return Err(Error::Http(Box::new(e))),
         };
         Ok(resp.into_json()?)
+    }
+
+    pub fn list_atoms(&self, workspace: &str) -> Result<Vec<serde_json::Value>, Error> {
+        let url = format!("{}/v1/atoms", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .timeout(TIMEOUT)
+            .call()
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?;
+        let atoms = body
+            .get("atoms")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        Ok(serde_json::from_value(atoms)?)
     }
 
     pub fn search(&self, workspace: &str, q: &str, limit: u32) -> Result<Vec<Hit>, Error> {
