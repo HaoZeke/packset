@@ -89,6 +89,27 @@ def test_old_health_path_returns_404(packset: Packset) -> None:
     assert ctx.value.code == 404
 
 
+def test_get_atom_by_id(packset: Packset) -> None:
+    _, posted = packset.json("POST", "/v1/atoms", voice())
+    status, raw = packset.get(f"/v1/atoms/{posted['id']}?workspace={WS}")
+    assert status == 200
+    got = json.loads(raw.decode())
+    assert got["id"] == posted["id"]
+    assert got["text"] == posted["text"]
+    with pytest.raises(HTTPError) as ctx:
+        packset.get(f"/v1/atoms/missing-id?workspace={WS}")
+    assert ctx.value.code == 404
+    packset.store.delete(WS, posted["id"])
+    with pytest.raises(HTTPError) as gone:
+        packset.get(f"/v1/atoms/{posted['id']}?workspace={WS}")
+    assert gone.value.code == 404
+
+
+def test_get_empty_workspace_is_none(packset: Packset) -> None:
+    packset.json("POST", "/v1/atoms", voice())
+    assert packset.store.get("", "any") is None
+
+
 def test_empty_workspace_status_counts_zero(packset: Packset) -> None:
     packset.json("POST", "/v1/atoms", voice(text="A live voice atom under a real workspace."))
     empty = packset.store.status("")

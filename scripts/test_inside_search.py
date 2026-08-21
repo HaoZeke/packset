@@ -100,6 +100,47 @@ def test_pack_documents_skips_dead_atoms() -> None:
     assert stale["id"] not in ids
 
 
+def test_borda_two_lists_of_three() -> None:
+    left = [("f", "x"), ("f", "y"), ("f", "z")]
+    right = [("f", "y"), ("f", "x"), ("f", "z")]
+    assert inside_search.borda_merge([left, right], 3) == left
+    left = [("f", "a"), ("f", "b"), ("f", "c")]
+    right = [("f", "b"), ("f", "c"), ("f", "a")]
+    assert inside_search.borda_merge([left, right], 3) == [
+        ("f", "b"),
+        ("f", "a"),
+        ("f", "c"),
+    ]
+
+
+def test_merge_is_borda_then_mmr() -> None:
+    primary = [
+        {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},
+        {"field": "atom", "id": "b", "text": "beta two", "score": 0.5},
+        {"field": "atom", "id": "c", "text": "gamma three", "score": 0.1},
+    ]
+    secondary = [
+        {"field": "atom", "id": "b", "text": "beta two", "score": 0.9},
+        {"field": "atom", "id": "c", "text": "gamma three", "score": 0.4},
+        {"field": "atom", "id": "a", "text": "alpha one", "score": 0.2},
+    ]
+    ids = [h["id"] for h in inside_search._merge_hits(primary, secondary, 3)]
+    assert ids[0] == "b"
+    assert set(ids) == {"a", "b", "c"}
+
+
+def test_mmr_after_borda_splits_near_duplicates() -> None:
+    items = [
+        (("f", "keep"), 1.0, {"review", "open", "repro"}),
+        (("f", "dup"), 0.55, {"review", "open", "repro"}),
+        (("f", "other"), 0.5, {"pin", "zircon", "index"}),
+    ]
+    order = inside_search.mmr_rerank(items, 0.7)
+    assert order[0] == ("f", "keep")
+    assert order[1] == ("f", "other")
+    assert order[2] == ("f", "dup")
+
+
 def test_linear_when_milli_absent() -> None:
     pack = {"workspace": WS, "user": "Be brief.", "memory": "", "atoms": []}
     hits, engine = inside_search.search_pack_with_engine(pack, "brief")
