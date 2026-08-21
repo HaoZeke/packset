@@ -4,7 +4,7 @@ test-py:
     .pixi/envs/default/bin/pytest -q scripts
 
 lint:
-    ruff check scripts
+    .pixi/envs/default/bin/ruff check scripts
 
 milli:
     #!/usr/bin/env bash

@@ -94,14 +94,18 @@ fn apply_settings(index: &Index) -> Result<()> {
     Ok(())
 }
 
-fn documents_reader(docs: impl IntoIterator<Item = Map<String, Value>>) -> Result<DocumentsBatchReader<Cursor<Vec<u8>>>> {
+fn documents_reader(
+    docs: impl IntoIterator<Item = Map<String, Value>>,
+) -> Result<DocumentsBatchReader<Cursor<Vec<u8>>>> {
     let mut builder = DocumentsBatchBuilder::new(Vec::new());
     for doc in docs {
         builder
             .append_json_object(&doc)
             .map_err(|err| anyhow!(err.to_string()))?;
     }
-    let bytes = builder.into_inner().map_err(|err| anyhow!(err.to_string()))?;
+    let bytes = builder
+        .into_inner()
+        .map_err(|err| anyhow!(err.to_string()))?;
     DocumentsBatchReader::from_reader(Cursor::new(bytes)).map_err(|err| anyhow!(err.to_string()))
 }
 

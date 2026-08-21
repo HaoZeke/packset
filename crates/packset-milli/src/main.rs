@@ -82,7 +82,9 @@ fn run() -> Result<Value> {
                                 .collect();
                         }
                         Value::String(one) => ids.push(one),
-                        other => return Err(anyhow!("delete ids must be a JSON array, got {other}")),
+                        other => {
+                            return Err(anyhow!("delete ids must be a JSON array, got {other}"))
+                        }
                     }
                 }
             }
