@@ -9,7 +9,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-import inside_memd
+import packsetd
 import inside_memory
 import inside_policy
 
@@ -17,9 +17,9 @@ import inside_policy
 class MemdTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = inside_memd.Store(Path(self.tmp.name))
+        self.store = packsetd.Store(Path(self.tmp.name))
         self.server = ThreadingHTTPServer(
-            ("127.0.0.1", 0), inside_memd.make_handler(self.store)
+            ("127.0.0.1", 0), packsetd.make_handler(self.store)
         )
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -52,6 +52,120 @@ class MemdTests(unittest.TestCase):
         status, body = self.get("/health")
         self.assertEqual(status, 200)
         self.assertEqual(body, b"packsetd ok")
+
+    def test_retired_health_alias_is_gone(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.get("/__inside_memd/health")
+        self.assertEqual(ctx.exception.code, 404)
+
+    def test_empty_string_scan_is_not_a_full_walk(self):
+        self.json_req(
+            "POST",
+            "/v1/atoms",
+            {
+                "workspace": self.ws,
+                "text": "A live voice atom under a real workspace.",
+                "kind": "voice",
+                "level": "explicit",
+                "about_peer": "rgoswami",
+                "by_peer": "hermes",
+            },
+        )
+        empty = self.store.status("")
+        self.assertEqual(empty["live"], 0)
+        unscoped = self.store.status(None)
+        self.assertEqual(unscoped["live"], 1)
+
+    def test_status_empty_and_scoped(self):
+        status, raw = self.get("/v1/status")
+        self.assertEqual(status, 200)
+        body = json.loads(raw.decode())
+        self.assertEqual(body["home"], self.tmp.name)
+        self.assertEqual(body["live"], 0)
+        self.assertEqual(body["tombstone"], 0)
+        self.assertEqual(body["expired"], 0)
+        self.assertIn("milli", body)
+        self.assertIn("embedder", body)
+        self.assertIn("binary", body["milli"])
+        self.assertIn("index_ready", body["milli"])
+        self.assertIn("available", body["embedder"])
+
+        atom = {
+            "workspace": self.ws,
+            "text": "Status counts one live voice atom here.",
+            "kind": "voice",
+            "level": "explicit",
+            "about_peer": "rgoswami",
+            "by_peer": "hermes",
+        }
+        _, created = self.json_req("POST", "/v1/atoms", atom)
+        self.json_req(
+            "POST",
+            "/v1/atoms/delete",
+            {"workspace": self.ws, "id": created["id"]},
+        )
+        other = {
+            "workspace": self.ws,
+            "text": "A second live preference stays after delete.",
+            "kind": "preference",
+            "level": "explicit",
+            "about_peer": "rgoswami",
+            "by_peer": "hermes",
+        }
+        self.json_req("POST", "/v1/atoms", other)
+
+        # A closed valid_to lands in expired, not live or tombstone.
+        expired = {
+            "workspace": self.ws,
+            "text": "An expired cache pointer no longer counts as live.",
+            "kind": "cache-pointer",
+            "level": "explicit",
+            "about_peer": "rgoswami",
+            "by_peer": "hermes",
+            "valid_to": "2000-01-01T00:00:00+00:00",
+        }
+        self.json_req("POST", "/v1/atoms", expired)
+
+        # A live atom under a second workspace only shows up unscoped.
+        other_ws = "git:github.com/HaoZeke/other"
+        self.json_req(
+            "POST",
+            "/v1/atoms",
+            {
+                "workspace": other_ws,
+                "text": "A live atom in a second workspace.",
+                "kind": "preference",
+                "level": "explicit",
+                "about_peer": "rgoswami",
+                "by_peer": "hermes",
+            },
+        )
+
+        # Unscoped (command-line default) walks every workspace.
+        status, raw = self.get("/v1/status")
+        self.assertEqual(status, 200)
+        body = json.loads(raw.decode())
+        self.assertEqual(body["workspace"], "")
+        self.assertEqual(body["live"], 2)
+        self.assertEqual(body["tombstone"], 1)
+        self.assertEqual(body["expired"], 1)
+        self.assertEqual(body["live_by_kind"].get("preference"), 2)
+        self.assertEqual(body["tombstone_by_kind"].get("voice"), 1)
+        self.assertEqual(body["expired_by_kind"].get("cache-pointer"), 1)
+        self.assertTrue(body["last_write_ts"])
+
+        # Scoped stays inside the one workspace; the second-workspace atom is gone.
+        status, raw = self.get(f"/v1/status?workspace={self.ws}")
+        self.assertEqual(status, 200)
+        body = json.loads(raw.decode())
+        self.assertEqual(body["workspace"], self.ws)
+        self.assertEqual(body["live"], 1)
+        self.assertEqual(body["tombstone"], 1)
+        self.assertEqual(body["expired"], 1)
+        self.assertEqual(body["live_by_kind"].get("preference"), 1)
+        self.assertEqual(body["tombstone_by_kind"].get("voice"), 1)
+        self.assertEqual(body["expired_by_kind"].get("cache-pointer"), 1)
+        self.assertTrue(body["last_write_ts"])
 
     def test_two_clients_same_pack(self):
         atom = {

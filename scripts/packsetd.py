@@ -59,15 +59,18 @@ class Store:
     def close(self) -> None:
         self.env.close()
 
-    def _scan(self, workspace: str) -> list[dict]:
-        prefix = _ws_prefix(workspace)
+    def _scan(self, workspace: str | None = None) -> list[dict]:
+        prefix = _ws_prefix(workspace) if workspace is not None else b""
         out: list[dict] = []
         with self.env.begin() as txn:
             cur = txn.cursor()
-            if not cur.set_range(prefix):
+            if prefix:
+                if not cur.set_range(prefix):
+                    return out
+            elif not cur.first():
                 return out
             for key, raw in cur:
-                if not key.startswith(prefix):
+                if prefix and not key.startswith(prefix):
                     break
                 rec = json.loads(raw)
                 if isinstance(rec, dict):
@@ -271,6 +274,50 @@ class Store:
             instructions = cards.get("instructions") or ""
         return {"workspace": workspace, "set": named, "instructions": instructions}
 
+    def status(self, workspace: str | None = None) -> dict:
+        """Seat home, atom counts, pin, milli, and embedder. Optional workspace scope."""
+        live_by_kind: dict[str, int] = {}
+        tombstone_by_kind: dict[str, int] = {}
+        expired_by_kind: dict[str, int] = {}
+        last_write_ts = ""
+        now = inside_memory.utcnow()
+        with self.lock:
+            for rec in self._scan(workspace):
+                kind = str(rec.get("kind") or "unknown")
+                ts = str(rec.get("ts") or "")
+                if ts and ts > last_write_ts:
+                    last_write_ts = ts
+                if rec.get("tombstone"):
+                    tombstone_by_kind[kind] = tombstone_by_kind.get(kind, 0) + 1
+                elif inside_memory.is_live(rec, now):
+                    live_by_kind[kind] = live_by_kind.get(kind, 0) + 1
+                else:
+                    expired_by_kind[kind] = expired_by_kind.get(kind, 0) + 1
+            pin_name = self.pin(workspace) if workspace else ""
+        milli_path = inside_search.milli_bin()
+        index_ready = (self.milli_dir / "data.mdb").is_file()
+        return {
+            "home": str(self.home),
+            "workspace": workspace or "",
+            "set": pin_name,
+            "live": sum(live_by_kind.values()),
+            "tombstone": sum(tombstone_by_kind.values()),
+            "expired": sum(expired_by_kind.values()),
+            "live_by_kind": dict(sorted(live_by_kind.items())),
+            "tombstone_by_kind": dict(sorted(tombstone_by_kind.items())),
+            "expired_by_kind": dict(sorted(expired_by_kind.items())),
+            "last_write_ts": last_write_ts or None,
+            "milli": {
+                "binary": str(milli_path) if milli_path else None,
+                "index_dir": str(self.milli_dir),
+                "index_ready": index_ready,
+            },
+            "embedder": {
+                "enabled": inside_embed.enabled(),
+                "available": inside_embed.available(home=self.home),
+            },
+        }
+
     def put_attach(self, workspace: str, text: str, label: str = "") -> dict:
         body = text if isinstance(text, str) else str(text or "")
         if len(body) > inside_context.ATTACH_CAP:
@@ -318,11 +365,17 @@ def make_handler(store: Store):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             qs = parse_qs(parsed.query)
-            if parsed.path in {"/health", "/__inside_memd/health"}:
+            if parsed.path == "/health":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
                 self.wfile.write(b"packsetd ok")
+                return
+            if parsed.path == "/__inside_memd/health":
+                return self._err(404, "not found")
+            if parsed.path == "/v1/status":
+                workspace = (qs.get("workspace") or [""])[0] or None
+                self._send(200, store.status(workspace))
                 return
             if parsed.path == "/v1/identity":
                 cwd = (qs.get("cwd") or [os.getcwd()])[0]

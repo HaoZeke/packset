@@ -14,6 +14,18 @@ PORT="${PACKSET_PORT:-${GROK_MEM_PORT:-8761}}"
 LOG="${PACKSET_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/packsetd.log}"
 daemon="$root/scripts/packsetd.py"
 
+resolve_python() {
+    if [ -x "$root/.pixi/envs/default/bin/python" ]; then
+        printf '%s' "$root/.pixi/envs/default/bin/python"
+    elif command -v pixi >/dev/null 2>&1; then
+        printf '%s' "pixi run --manifest-path $root/pixi.toml python"
+    elif command -v python3 >/dev/null 2>&1; then
+        printf '%s' "python3"
+    else
+        return 1
+    fi
+}
+
 listening() {
     (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null
 }
@@ -43,12 +55,9 @@ start() {
         return 1
     fi
     mkdir -p "$(dirname "$LOG")"
-    if [ -x "$root/.pixi/envs/default/bin/python" ]; then
-        py="$root/.pixi/envs/default/bin/python"
-    elif command -v pixi >/dev/null 2>&1; then
-        py="pixi run --manifest-path $root/pixi.toml python"
-    else
-        py="python3"
+    if ! py="$(resolve_python)"; then
+        echo "packset: python3 not found" >&2
+        return 1
     fi
     setsid $py "$daemon" --port "$PORT" >>"$LOG" 2>&1 </dev/null &
     for _ in $(seq 1 25); do
@@ -87,6 +96,33 @@ case "${1:-ensure}" in
     status)
         if listening && is_ours; then
             echo "packset: up on 127.0.0.1:$PORT ($(health_reply))"
+            # Optional detail from GET /v1/status (workspace via PACKSET_WORKSPACE).
+            detail_url="http://127.0.0.1:$PORT/v1/status"
+            if [ -n "${PACKSET_WORKSPACE:-}" ]; then
+                case "$PACKSET_WORKSPACE" in
+                    *[!A-Za-z0-9._~-]*)
+                        # Needs percent-encoding; refuse to fall back to an unscoped query.
+                        if ! py="$(resolve_python)"; then
+                            echo "packset: PACKSET_WORKSPACE needs python to encode" >&2
+                            exit 1
+                        fi
+                        ws_enc="$(PACKSET_WORKSPACE="$PACKSET_WORKSPACE" $py -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["PACKSET_WORKSPACE"], safe=""))')"
+                        ;;
+                    *)
+                        ws_enc="$PACKSET_WORKSPACE"
+                        ;;
+                esac
+                detail_url="${detail_url}?workspace=${ws_enc}"
+            fi
+            if ! detail="$(timeout 3 curl -fsS "$detail_url" 2>/dev/null)"; then
+                echo "packset: could not fetch /v1/status" >&2
+                exit 1
+            fi
+            if py="$(resolve_python)"; then
+                printf '%s\n' "$detail" | $py -m json.tool 2>/dev/null || printf '%s\n' "$detail"
+            else
+                printf '%s\n' "$detail"
+            fi
         elif listening; then
             echo "packset: port $PORT held by another process"
             exit 1
