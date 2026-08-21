@@ -1,52 +1,49 @@
-#!/usr/bin/env python3
 """Explicit remember/prefer lines become seat atoms."""
-import unittest
+
+from __future__ import annotations
 
 import inside_extract
 
 
-class ExtractTests(unittest.TestCase):
-    def test_remember_line(self):
-        got = inside_extract.claim_from_user(
-            "Remember: always pin the zircon index."
+def test_remember_line() -> None:
+    got = inside_extract.claim_from_user("Remember: always pin the zircon index.")
+    assert got == ("lesson", "always pin the zircon index")
+
+
+def test_prefer_line() -> None:
+    kind, text = inside_extract.claim_from_user("Prefer conventional commits")
+    assert kind == "preference"
+    assert "conventional" in text
+
+
+def test_quote_prompt_returns_none() -> None:
+    assert (
+        inside_extract.claim_from_user(
+            "In one short sentence, quote the preference and the papers."
         )
-        self.assertEqual(got, ("lesson", "always pin the zircon index"))
-
-    def test_prefer_line(self):
-        got = inside_extract.claim_from_user("Prefer conventional commits")
-        self.assertEqual(got[0], "preference")
-        self.assertIn("conventional", got[1])
-
-    def test_quote_prompt_is_not_a_claim(self):
-        self.assertIsNone(
-            inside_extract.claim_from_user(
-                "In one short sentence, quote the preference and the papers."
-            )
-        )
-
-    def test_question_with_prefer_is_not_a_claim(self):
-        self.assertIsNone(
-            inside_extract.claim_from_user(
-                "What latch do I prefer on reviews? One short sentence."
-            )
-        )
-
-    def test_atom_kind_and_workspace(self):
-        atom = inside_extract.atom_from_user(
-            "Note that reviews cite the commit SHA.",
-            workspace="global",
-        )
-        self.assertIsNotNone(atom)
-        self.assertEqual(atom["kind"], "lesson")
-        self.assertEqual(atom["workspace"], "global")
-        self.assertIn("commit SHA", atom["text"])
+        is None
+    )
 
 
-    def test_listing_is_dump(self):
-        listing = "\n".join(f"- file{i}.rs" for i in range(8))
-        self.assertTrue(inside_extract.is_tool_dump(listing))
-        self.assertFalse(inside_extract.is_tool_dump("Remember: keep the habit."))
+def test_question_with_prefer_returns_none() -> None:
+    assert (
+        inside_extract.claim_from_user("What latch do I prefer on reviews? One short sentence.")
+        is None
+    )
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_atom_kind_and_workspace() -> None:
+    atom = inside_extract.atom_from_user(
+        "Note that reviews cite the commit SHA.",
+        workspace="global",
+    )
+    assert atom is not None
+    assert atom["kind"] == "lesson"
+    assert atom["workspace"] == "global"
+    assert "commit SHA" in atom["text"]
+
+
+def test_listing_is_dump() -> None:
+    listing = "\n".join(f"- file{i}.rs" for i in range(8))
+    assert inside_extract.is_tool_dump(listing)
+    assert not inside_extract.is_tool_dump("Remember: keep the habit.")

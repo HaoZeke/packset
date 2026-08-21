@@ -1,604 +1,100 @@
-#!/usr/bin/env python3
 """HTTP checks for packsetd. No live harness required."""
+
+from __future__ import annotations
+
 import json
-import tempfile
 import threading
-import unittest
-import urllib.error
-import urllib.request
+from collections.abc import Iterator
+from dataclasses import dataclass
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
-import packsetd
+import pytest
+
+import inside_extract
 import inside_memory
 import inside_policy
+import packsetd
+
+WS = "git:github.com/HaoZeke/joss-reviews"
 
 
-class MemdTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.store = packsetd.Store(Path(self.tmp.name))
-        self.server = ThreadingHTTPServer(
-            ("127.0.0.1", 0), packsetd.make_handler(self.store)
-        )
-        self.port = self.server.server_address[1]
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-        self.base = f"http://127.0.0.1:{self.port}"
-        self.ws = "git:github.com/HaoZeke/joss-reviews"
+@dataclass
+class Packset:
+    url: str
+    store: packsetd.Store
+    home: Path
+    workspace: str
 
-    def tearDown(self):
-        self.server.shutdown()
-        self.server.server_close()
-        self.store.close()
-        self.tmp.cleanup()
-
-    def get(self, path):
-        with urllib.request.urlopen(self.base + path) as resp:
+    def get(self, path: str) -> tuple[int, bytes]:
+        with urlopen(self.url + path) as resp:
             return resp.status, resp.read()
 
-    def json_req(self, method, path, payload):
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            self.base + path,
-            data=data,
+    def json(self, method: str, path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        req = Request(
+            self.url + path,
+            data=json.dumps(payload).encode(),
             method=method,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req) as resp:
+        with urlopen(req) as resp:
             return resp.status, json.loads(resp.read().decode())
 
-    def test_health(self):
-        status, body = self.get("/health")
-        self.assertEqual(status, 200)
-        self.assertEqual(body, b"packsetd ok")
 
-    def test_retired_health_alias_is_gone(self):
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get("/__inside_memd/health")
-        self.assertEqual(ctx.exception.code, 404)
+@pytest.fixture
+def packset(tmp_path: Path) -> Iterator[Packset]:
+    store = packsetd.Store(tmp_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), packsetd.make_handler(store))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    try:
+        yield Packset(
+            url=f"http://127.0.0.1:{port}",
+            store=store,
+            home=tmp_path,
+            workspace=WS,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        store.close()
 
-    def test_empty_string_scan_is_not_a_full_walk(self):
-        self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "A live voice atom under a real workspace.",
-                "kind": "voice",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-            },
-        )
-        empty = self.store.status("")
-        self.assertEqual(empty["live"], 0)
-        unscoped = self.store.status(None)
-        self.assertEqual(unscoped["live"], 1)
 
-    def test_status_empty_and_scoped(self):
-        status, raw = self.get("/v1/status")
-        self.assertEqual(status, 200)
-        body = json.loads(raw.decode())
-        self.assertEqual(body["home"], self.tmp.name)
-        self.assertEqual(body["live"], 0)
-        self.assertEqual(body["tombstone"], 0)
-        self.assertEqual(body["expired"], 0)
-        self.assertIn("milli", body)
-        self.assertIn("embedder", body)
-        self.assertIn("binary", body["milli"])
-        self.assertIn("index_ready", body["milli"])
-        self.assertIn("available", body["embedder"])
+def voice(**fields: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "workspace": WS,
+        "text": "Reviews open with a reproducibility check.",
+        "kind": "voice",
+        "level": "explicit",
+        "about_peer": "rgoswami",
+        "by_peer": "hermes",
+    }
+    body.update(fields)
+    return body
 
-        atom = {
-            "workspace": self.ws,
-            "text": "Status counts one live voice atom here.",
-            "kind": "voice",
-            "level": "explicit",
-            "about_peer": "rgoswami",
-            "by_peer": "hermes",
-        }
-        _, created = self.json_req("POST", "/v1/atoms", atom)
-        self.json_req(
-            "POST",
-            "/v1/atoms/delete",
-            {"workspace": self.ws, "id": created["id"]},
-        )
-        other = {
-            "workspace": self.ws,
-            "text": "A second live preference stays after delete.",
-            "kind": "preference",
-            "level": "explicit",
-            "about_peer": "rgoswami",
-            "by_peer": "hermes",
-        }
-        self.json_req("POST", "/v1/atoms", other)
 
-        # A closed valid_to lands in expired, not live or tombstone.
-        expired = {
-            "workspace": self.ws,
-            "text": "An expired cache pointer no longer counts as live.",
-            "kind": "cache-pointer",
-            "level": "explicit",
-            "about_peer": "rgoswami",
-            "by_peer": "hermes",
-            "valid_to": "2000-01-01T00:00:00+00:00",
-        }
-        self.json_req("POST", "/v1/atoms", expired)
+def test_health(packset: Packset) -> None:
+    status, body = packset.get("/health")
+    assert status == 200
+    assert body == b"packsetd ok"
 
-        # A live atom under a second workspace only shows up unscoped.
-        other_ws = "git:github.com/HaoZeke/other"
-        self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": other_ws,
-                "text": "A live atom in a second workspace.",
-                "kind": "preference",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-            },
-        )
 
-        # Unscoped (command-line default) walks every workspace.
-        status, raw = self.get("/v1/status")
-        self.assertEqual(status, 200)
-        body = json.loads(raw.decode())
-        self.assertEqual(body["workspace"], "")
-        self.assertEqual(body["live"], 2)
-        self.assertEqual(body["tombstone"], 1)
-        self.assertEqual(body["expired"], 1)
-        self.assertEqual(body["live_by_kind"].get("preference"), 2)
-        self.assertEqual(body["tombstone_by_kind"].get("voice"), 1)
-        self.assertEqual(body["expired_by_kind"].get("cache-pointer"), 1)
-        self.assertTrue(body["last_write_ts"])
+def test_old_health_path_returns_404(packset: Packset) -> None:
+    with pytest.raises(HTTPError) as ctx:
+        packset.get("/__inside_memd/health")
+    assert ctx.value.code == 404
 
-        # Scoped stays inside the one workspace; the second-workspace atom is gone.
-        status, raw = self.get(f"/v1/status?workspace={self.ws}")
-        self.assertEqual(status, 200)
-        body = json.loads(raw.decode())
-        self.assertEqual(body["workspace"], self.ws)
-        self.assertEqual(body["live"], 1)
-        self.assertEqual(body["tombstone"], 1)
-        self.assertEqual(body["expired"], 1)
-        self.assertEqual(body["live_by_kind"].get("preference"), 1)
-        self.assertEqual(body["tombstone_by_kind"].get("voice"), 1)
-        self.assertEqual(body["expired_by_kind"].get("cache-pointer"), 1)
-        self.assertTrue(body["last_write_ts"])
 
-    def test_two_clients_same_pack(self):
-        atom = {
-            "workspace": self.ws,
-            "text": "Reviews open with a reproducibility check.",
-            "kind": "voice",
-            "level": "explicit",
-            "about_peer": "rgoswami",
-            "by_peer": "hermes",
-        }
-        _, first = self.json_req("POST", "/v1/atoms", atom)
-        _, second = self.json_req("POST", "/v1/atoms", atom)
-        self.assertEqual(first["id"], second["id"])
-        status, raw = self.get(f"/v1/pack?workspace={self.ws}")
-        self.assertEqual(status, 200)
-        pack = json.loads(raw.decode())
-        self.assertEqual(len(pack["atoms"]), 1)
-        self.assertEqual(pack["atoms"][0]["text"], atom["text"])
-
-    def test_user_and_memory_shared(self):
-        self.json_req("PUT", "/v1/user", {"text": "No thanks.\n"})
-        self.json_req(
-            "PUT",
-            "/v1/memory",
-            {"workspace": self.ws, "text": "Read paper.pdf first.\n"},
-        )
-        _, raw = self.get(f"/v1/pack?workspace={self.ws}")
-        pack = json.loads(raw.decode())
-        self.assertIn("No thanks", pack["user"])
-        self.assertIn("paper.pdf", pack["memory"])
-
-    def test_expired_atom_absent_from_pack(self):
-        _, stored = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Stale remote snapshot.",
-                "kind": "cache-pointer",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "valid_to": "2000-01-01T00:00:00.000Z",
-            },
-        )
-        status, raw = self.get(f"/v1/pack?workspace={self.ws}")
-        self.assertEqual(status, 200)
-        pack = json.loads(raw.decode())
-        ids = [a["id"] for a in pack["atoms"]]
-        self.assertNotIn(stored["id"], ids)
-        self.assertEqual(pack["atoms"], [])
-
-    def test_open_and_missing_valid_to_in_pack(self):
-        _, open_atom = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Open validity claim.",
-                "kind": "voice",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "valid_to": None,
-            },
-        )
-        _, future = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Still inside the validity window.",
-                "kind": "habit",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "valid_to": "2099-01-01T00:00:00.000Z",
-            },
-        )
-        _, bare = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "No validity field at all.",
-                "kind": "preference",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "pi",
-            },
-        )
-        _, raw = self.get(f"/v1/pack?workspace={self.ws}")
-        pack = json.loads(raw.decode())
-        ids = {a["id"] for a in pack["atoms"]}
-        self.assertEqual(ids, {open_atom["id"], future["id"], bare["id"]})
-
-    def test_cache_pointer_pack_only_while_open(self):
-        _, stale = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "open issues @ 2000-01-01T00:00:00.000Z: 4 labeled needs-review",
-                "kind": "cache-pointer",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "valid_to": "2000-01-01T00:00:00.000Z",
-            },
-        )
-        _, open_ptr = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "open issues @ 2026-08-11T12:00:00.000Z: 2 labeled needs-review",
-                "kind": "cache-pointer",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "valid_to": "2099-01-01T00:00:00.000Z",
-            },
-        )
-        _, raw = self.get(f"/v1/pack?workspace={self.ws}")
-        pack = json.loads(raw.decode())
-        ids = [a["id"] for a in pack["atoms"]]
-        self.assertNotIn(stale["id"], ids)
-        self.assertIn(open_ptr["id"], ids)
-        self.assertEqual(pack["atoms"][0]["kind"], "cache-pointer")
-
-    def test_add_links_entity_overlap(self):
-        _, first = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "JOSS reviews open with a reproducibility check.",
-                "kind": "voice",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "entities": ["JOSS"],
-            },
-        )
-        _, second = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "JOSS labels need a dated snapshot.",
-                "kind": "habit",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "entities": ["JOSS"],
-            },
-        )
-        _, third = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "unrelated lowercase only.",
-                "kind": "preference",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "pi",
-                "entities": ["Unrelated"],
-            },
-        )
-        _, raw = self.get(f"/v1/atoms?workspace={self.ws}")
-        payload = json.loads(raw.decode())
-        live = {a["id"]: a for a in payload["atoms"]}
-        self.assertIn(second["id"], live[first["id"]]["links"])
-        self.assertIn(first["id"], live[second["id"]]["links"])
-        self.assertEqual(live[third["id"]]["links"], [])
-        self.assertNotIn(third["id"], live[first["id"]]["links"])
-
-    def test_recall_returns_live_atoms(self):
-        _, live = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Reviews open with a reproducibility check.",
-                "kind": "voice",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "entities": ["JOSS"],
-            },
-        )
-        _, neighbor = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "JOSS labels need a dated snapshot.",
-                "kind": "habit",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "entities": ["JOSS"],
-            },
-        )
-        _, stale = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Stale remote snapshot.",
-                "kind": "cache-pointer",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "valid_to": "2000-01-01T00:00:00.000Z",
-            },
-        )
-        status, raw = self.get(
-            f"/v1/recall?workspace={self.ws}&limit=64&seed={live['id']}"
-        )
-        self.assertEqual(status, 200)
-        payload = json.loads(raw.decode())
-        self.assertIn("atoms", payload)
-        ids = [atom["id"] for atom in payload["atoms"]]
-        self.assertIn(live["id"], ids)
-        self.assertIn(neighbor["id"], ids)
-        self.assertNotIn(stale["id"], ids)
-
-    def test_search_ranks_live_atoms(self):
-        self.json_req(
-            "PUT",
-            "/v1/memory",
-            {"workspace": self.ws, "text": "Read paper.pdf first.\n"},
-        )
-        _, stored = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "JOSS reviews open with a reproducibility check.",
-                "kind": "voice",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "entities": ["JOSS"],
-            },
-        )
-        self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Stale JOSS snapshot.",
-                "kind": "cache-pointer",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-                "valid_to": "2000-01-01T00:00:00.000Z",
-            },
-        )
-        status, raw = self.get(f"/v1/search?workspace={self.ws}&q=joss")
-        self.assertEqual(status, 200)
-        payload = json.loads(raw.decode())
-        self.assertIn(
-            payload.get("engine"),
-            {"linear", "milli", "linear+dense", "milli+dense"},
-        )
-        ids = [h.get("id") for h in payload["hits"] if h.get("field") == "atom"]
-        self.assertIn(stored["id"], ids)
-        self.assertEqual(len(ids), 1)
-        status, raw = self.get(f"/v1/search?workspace={self.ws}&q=paper")
-        payload = json.loads(raw.decode())
-        self.assertTrue(any(h["field"] == "memory" for h in payload["hits"]))
-        client_hits = inside_policy.fetch_search(self.base, self.ws, "joss")
-        self.assertIn(stored["id"], [h.get("id") for h in client_hits])
-
-    def test_tombstones_still_disappear_from_pack(self):
-        _, stored = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Reviews open with a reproducibility check.",
-                "kind": "voice",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-            },
-        )
-        self.json_req(
-            "POST",
-            "/v1/atoms/delete",
-            {"workspace": self.ws, "id": stored["id"]},
-        )
-        _, raw = self.get(f"/v1/pack?workspace={self.ws}")
-        pack = json.loads(raw.decode())
-        self.assertEqual(pack["atoms"], [])
-
-    def test_pin_switch_and_clear(self):
-        status, raw = self.get(f"/v1/pin?workspace={self.ws}")
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(raw.decode())["set"], "")
-        _, body = self.json_req(
-            "PUT", "/v1/pin", {"workspace": self.ws, "set": "review"}
-        )
-        self.assertEqual(body["set"], "review")
-        _, raw = self.get(f"/v1/pin?workspace={self.ws}")
-        self.assertEqual(json.loads(raw.decode())["set"], "review")
-        _, body = self.json_req("PUT", "/v1/pin", {"workspace": self.ws, "set": ""})
-        self.assertEqual(body["set"], "")
-
-    def test_set_pack_matches_workspace_pack_shape(self):
-        self.json_req(
-            "PUT",
-            "/v1/set",
-            {
-                "workspace": self.ws,
-                "set": "review",
-                "user": "Open a review with the defect.\n",
-                "memory": "Reviews cite the commit.\n",
-            },
-        )
-        self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Remember the zircon latch on reviews.",
-                "kind": "lesson",
-                "level": "explicit",
-                "about_peer": "user",
-                "by_peer": "user",
-                "set": "review",
-            },
-        )
-        self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Print the failing test name first.",
-                "kind": "lesson",
-                "level": "explicit",
-                "about_peer": "user",
-                "by_peer": "user",
-                "set": "debug",
-            },
-        )
-        status, raw = self.get(f"/v1/set?workspace={self.ws}&name=review")
-        self.assertEqual(status, 200)
-        pack = json.loads(raw.decode())
-        self.assertEqual(pack["set"], "review")
-        self.assertIn("Open a review", pack["user"])
-        self.assertIn("cite the commit", pack["memory"])
-        self.assertNotIn("voice", pack)
-        self.assertNotIn("lessons", pack)
-        kinds = [a["set"] for a in pack["atoms"]]
-        self.assertEqual(kinds, ["review"])
-        self.assertTrue(all("zircon" in a["text"] for a in pack["atoms"]))
-
-    def test_same_claim_under_two_sets_is_two_atoms(self):
-        claim = {
-            "workspace": self.ws,
-            "text": "Always pin the zircon index on reviews.",
-            "kind": "lesson",
-            "level": "explicit",
-            "about_peer": "user",
-            "by_peer": "user",
-            "entities": ["zircon"],
-        }
-        _, review = self.json_req("POST", "/v1/atoms", {**claim, "set": "review"})
-        _, debug = self.json_req("POST", "/v1/atoms", {**claim, "set": "debug"})
-        self.assertNotEqual(review["id"], debug["id"])
-        _, again = self.json_req("POST", "/v1/atoms", {**claim, "set": "review"})
-        self.assertEqual(again["id"], review["id"])
-
-        status, raw = self.get(f"/v1/search?workspace={self.ws}&q=zircon&set=review")
-        self.assertEqual(status, 200)
-        hits = json.loads(raw.decode())["hits"]
-        atom_ids = [h.get("id") for h in hits if h.get("field") == "atom"]
-        self.assertIn(review["id"], atom_ids)
-        self.assertNotIn(debug["id"], atom_ids)
-
-        client_hits = inside_policy.fetch_search(
-            self.base, self.ws, "zircon", set_name="review"
-        )
-        self.assertIn(review["id"], [h.get("id") for h in client_hits])
-        self.assertNotIn(debug["id"], [h.get("id") for h in client_hits])
-
-        _, neighbor = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Zircon latch belongs in the debug notebook.",
-                "kind": "habit",
-                "level": "explicit",
-                "about_peer": "user",
-                "by_peer": "user",
-                "entities": ["zircon"],
-                "set": "debug",
-            },
-        )
-        _, raw = self.get(f"/v1/atoms?workspace={self.ws}")
-        live = {a["id"]: a for a in json.loads(raw.decode())["atoms"]}
-        self.assertNotIn(neighbor["id"], live[review["id"]].get("links") or [])
-        self.assertNotIn(review["id"], live[neighbor["id"]].get("links") or [])
-        self.assertIn(debug["id"], live[neighbor["id"]]["links"])
-        self.assertIn(neighbor["id"], live[debug["id"]]["links"])
-
-    def test_remember_refused_write_is_not_no_remember(self):
-        import inside_extract
-
-        self.json_req("PUT", "/v1/pin", {"workspace": self.ws, "set": "review"})
-        quiet = inside_extract.extract_user_text(
-            "What color is the sky?",
-            url=self.base,
-            workspace=self.ws,
-        )
-        self.assertIsNone(quiet)
-
-        def refuse(_atom):
-            raise inside_memory.AtomError("store refused")
-
-        self.store.add = refuse
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            inside_extract.extract_user_text(
-                "Remember: always pin the zircon index.",
-                url=self.base,
-                workspace=self.ws,
-            )
-        self.assertEqual(ctx.exception.code, 400)
+def test_empty_workspace_status_counts_zero(packset: Packset) -> None:
+    packset.json("POST", "/v1/atoms", voice(text="A live voice atom under a real workspace."))
+    empty = packset.store.status("")
+    assert empty["live"] == 0
+    unscoped = packset.store.status(None)
+    assert unscoped["live"] == 1
 
     def test_get_atom_by_id(self):
         _, posted = self.json_req(
@@ -655,5 +151,412 @@ class MemdTests(unittest.TestCase):
         self.assertIn("not implemented", str(ctx.exception))
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_status_empty_and_scoped(packset: Packset) -> None:
+    status, raw = packset.get("/v1/status")
+    assert status == 200
+    body = json.loads(raw.decode())
+    assert body["home"] == str(packset.home)
+    assert body["live"] == 0
+    assert body["tombstone"] == 0
+    assert body["expired"] == 0
+    assert "milli" in body
+    assert "embedder" in body
+    assert "binary" in body["milli"]
+    assert "index_ready" in body["milli"]
+    assert "available" in body["embedder"]
+
+    _, created = packset.json(
+        "POST", "/v1/atoms", voice(text="Status counts one live voice atom here.")
+    )
+    packset.json("POST", "/v1/atoms/delete", {"workspace": WS, "id": created["id"]})
+    packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="A second live preference stays after delete.",
+            kind="preference",
+        ),
+    )
+    packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="An expired cache pointer no longer counts as live.",
+            kind="cache-pointer",
+            valid_to="2000-01-01T00:00:00+00:00",
+        ),
+    )
+    other_ws = "git:github.com/HaoZeke/other"
+    packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            workspace=other_ws,
+            text="A live atom in a second workspace.",
+            kind="preference",
+        ),
+    )
+
+    status, raw = packset.get("/v1/status")
+    assert status == 200
+    body = json.loads(raw.decode())
+    assert body["workspace"] == ""
+    assert body["live"] == 2
+    assert body["tombstone"] == 1
+    assert body["expired"] == 1
+    assert body["live_by_kind"].get("preference") == 2
+    assert body["tombstone_by_kind"].get("voice") == 1
+    assert body["expired_by_kind"].get("cache-pointer") == 1
+    assert body["last_write_ts"]
+
+    status, raw = packset.get(f"/v1/status?workspace={WS}")
+    assert status == 200
+    body = json.loads(raw.decode())
+    assert body["workspace"] == WS
+    assert body["live"] == 1
+    assert body["tombstone"] == 1
+    assert body["expired"] == 1
+    assert body["live_by_kind"].get("preference") == 1
+    assert body["tombstone_by_kind"].get("voice") == 1
+    assert body["expired_by_kind"].get("cache-pointer") == 1
+    assert body["last_write_ts"]
+
+
+def test_two_clients_same_pack(packset: Packset) -> None:
+    atom = voice()
+    _, first = packset.json("POST", "/v1/atoms", atom)
+    _, second = packset.json("POST", "/v1/atoms", atom)
+    assert first["id"] == second["id"]
+    status, raw = packset.get(f"/v1/pack?workspace={WS}")
+    assert status == 200
+    pack = json.loads(raw.decode())
+    assert len(pack["atoms"]) == 1
+    assert pack["atoms"][0]["text"] == atom["text"]
+
+
+def test_user_and_memory_shared(packset: Packset) -> None:
+    packset.json("PUT", "/v1/user", {"text": "No thanks.\n"})
+    packset.json("PUT", "/v1/memory", {"workspace": WS, "text": "Read paper.pdf first.\n"})
+    _, raw = packset.get(f"/v1/pack?workspace={WS}")
+    pack = json.loads(raw.decode())
+    assert "No thanks" in pack["user"]
+    assert "paper.pdf" in pack["memory"]
+
+
+def test_expired_atom_absent_from_pack(packset: Packset) -> None:
+    _, stored = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Stale remote snapshot.",
+            kind="cache-pointer",
+            valid_to="2000-01-01T00:00:00.000Z",
+        ),
+    )
+    status, raw = packset.get(f"/v1/pack?workspace={WS}")
+    assert status == 200
+    pack = json.loads(raw.decode())
+    ids = [a["id"] for a in pack["atoms"]]
+    assert stored["id"] not in ids
+    assert pack["atoms"] == []
+
+
+def test_open_and_missing_valid_to_in_pack(packset: Packset) -> None:
+    _, open_atom = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(text="Open validity claim.", valid_to=None),
+    )
+    _, future = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Still inside the validity window.",
+            kind="habit",
+            valid_to="2099-01-01T00:00:00.000Z",
+        ),
+    )
+    _, bare = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(text="No validity field at all.", kind="preference", by_peer="pi"),
+    )
+    _, raw = packset.get(f"/v1/pack?workspace={WS}")
+    pack = json.loads(raw.decode())
+    ids = {a["id"] for a in pack["atoms"]}
+    assert ids == {open_atom["id"], future["id"], bare["id"]}
+
+
+def test_cache_pointer_pack_only_while_open(packset: Packset) -> None:
+    _, stale = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="open issues @ 2000-01-01T00:00:00.000Z: 4 labeled needs-review",
+            kind="cache-pointer",
+            valid_to="2000-01-01T00:00:00.000Z",
+        ),
+    )
+    _, open_ptr = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="open issues @ 2026-08-11T12:00:00.000Z: 2 labeled needs-review",
+            kind="cache-pointer",
+            valid_to="2099-01-01T00:00:00.000Z",
+        ),
+    )
+    _, raw = packset.get(f"/v1/pack?workspace={WS}")
+    pack = json.loads(raw.decode())
+    ids = [a["id"] for a in pack["atoms"]]
+    assert stale["id"] not in ids
+    assert open_ptr["id"] in ids
+    assert pack["atoms"][0]["kind"] == "cache-pointer"
+
+
+def test_add_links_entity_overlap(packset: Packset) -> None:
+    _, first = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="JOSS reviews open with a reproducibility check.",
+            entities=["JOSS"],
+        ),
+    )
+    _, second = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="JOSS labels need a dated snapshot.",
+            kind="habit",
+            entities=["JOSS"],
+        ),
+    )
+    _, third = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="unrelated lowercase only.",
+            kind="preference",
+            by_peer="pi",
+            entities=["Unrelated"],
+        ),
+    )
+    _, raw = packset.get(f"/v1/atoms?workspace={WS}")
+    live = {a["id"]: a for a in json.loads(raw.decode())["atoms"]}
+    assert second["id"] in live[first["id"]]["links"]
+    assert first["id"] in live[second["id"]]["links"]
+    assert live[third["id"]]["links"] == []
+    assert third["id"] not in live[first["id"]]["links"]
+
+
+def test_recall_returns_live_atoms(packset: Packset) -> None:
+    _, live = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Reviews open with a reproducibility check.",
+            entities=["JOSS"],
+        ),
+    )
+    _, neighbor = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="JOSS labels need a dated snapshot.",
+            kind="habit",
+            entities=["JOSS"],
+        ),
+    )
+    _, stale = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Stale remote snapshot.",
+            kind="cache-pointer",
+            valid_to="2000-01-01T00:00:00.000Z",
+        ),
+    )
+    status, raw = packset.get(f"/v1/recall?workspace={WS}&limit=64&seed={live['id']}")
+    assert status == 200
+    payload = json.loads(raw.decode())
+    assert "atoms" in payload
+    ids = [atom["id"] for atom in payload["atoms"]]
+    assert live["id"] in ids
+    assert neighbor["id"] in ids
+    assert stale["id"] not in ids
+
+
+def test_search_ranks_live_atoms(packset: Packset) -> None:
+    packset.json("PUT", "/v1/memory", {"workspace": WS, "text": "Read paper.pdf first.\n"})
+    _, stored = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="JOSS reviews open with a reproducibility check.",
+            entities=["JOSS"],
+        ),
+    )
+    packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Stale JOSS snapshot.",
+            kind="cache-pointer",
+            valid_to="2000-01-01T00:00:00.000Z",
+        ),
+    )
+    status, raw = packset.get(f"/v1/search?workspace={WS}&q=joss")
+    assert status == 200
+    payload = json.loads(raw.decode())
+    assert payload.get("engine") in {
+        "linear",
+        "milli",
+        "linear+dense",
+        "milli+dense",
+    }
+    ids = [h.get("id") for h in payload["hits"] if h.get("field") == "atom"]
+    assert stored["id"] in ids
+    assert len(ids) == 1
+    status, raw = packset.get(f"/v1/search?workspace={WS}&q=paper")
+    payload = json.loads(raw.decode())
+    assert any(h["field"] == "memory" for h in payload["hits"])
+    client_hits = inside_policy.fetch_search(packset.url, WS, "joss")
+    assert stored["id"] in [h.get("id") for h in client_hits]
+
+
+def test_tombstones_still_disappear_from_pack(packset: Packset) -> None:
+    _, stored = packset.json("POST", "/v1/atoms", voice())
+    packset.json("POST", "/v1/atoms/delete", {"workspace": WS, "id": stored["id"]})
+    _, raw = packset.get(f"/v1/pack?workspace={WS}")
+    pack = json.loads(raw.decode())
+    assert pack["atoms"] == []
+
+
+def test_pin_switch_and_clear(packset: Packset) -> None:
+    status, raw = packset.get(f"/v1/pin?workspace={WS}")
+    assert status == 200
+    assert json.loads(raw.decode())["set"] == ""
+    _, body = packset.json("PUT", "/v1/pin", {"workspace": WS, "set": "review"})
+    assert body["set"] == "review"
+    _, raw = packset.get(f"/v1/pin?workspace={WS}")
+    assert json.loads(raw.decode())["set"] == "review"
+    _, body = packset.json("PUT", "/v1/pin", {"workspace": WS, "set": ""})
+    assert body["set"] == ""
+
+
+def test_set_pack_matches_workspace_pack_shape(packset: Packset) -> None:
+    packset.json(
+        "PUT",
+        "/v1/set",
+        {
+            "workspace": WS,
+            "set": "review",
+            "user": "Open a review with the defect.\n",
+            "memory": "Reviews cite the commit.\n",
+        },
+    )
+    packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Remember the zircon latch on reviews.",
+            kind="lesson",
+            about_peer="user",
+            by_peer="user",
+            set="review",
+        ),
+    )
+    packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Print the failing test name first.",
+            kind="lesson",
+            about_peer="user",
+            by_peer="user",
+            set="debug",
+        ),
+    )
+    status, raw = packset.get(f"/v1/set?workspace={WS}&name=review")
+    assert status == 200
+    pack = json.loads(raw.decode())
+    assert pack["set"] == "review"
+    assert "Open a review" in pack["user"]
+    assert "cite the commit" in pack["memory"]
+    assert "voice" not in pack
+    assert "lessons" not in pack
+    kinds = [a["set"] for a in pack["atoms"]]
+    assert kinds == ["review"]
+    assert all("zircon" in a["text"] for a in pack["atoms"])
+
+
+def test_same_claim_under_two_sets_is_two_atoms(packset: Packset) -> None:
+    claim = {
+        "workspace": WS,
+        "text": "Always pin the zircon index on reviews.",
+        "kind": "lesson",
+        "level": "explicit",
+        "about_peer": "user",
+        "by_peer": "user",
+        "entities": ["zircon"],
+    }
+    _, review = packset.json("POST", "/v1/atoms", {**claim, "set": "review"})
+    _, debug = packset.json("POST", "/v1/atoms", {**claim, "set": "debug"})
+    assert review["id"] != debug["id"]
+    _, again = packset.json("POST", "/v1/atoms", {**claim, "set": "review"})
+    assert again["id"] == review["id"]
+
+    status, raw = packset.get(f"/v1/search?workspace={WS}&q=zircon&set=review")
+    assert status == 200
+    hits = json.loads(raw.decode())["hits"]
+    atom_ids = [h.get("id") for h in hits if h.get("field") == "atom"]
+    assert review["id"] in atom_ids
+    assert debug["id"] not in atom_ids
+
+    client_hits = inside_policy.fetch_search(packset.url, WS, "zircon", set_name="review")
+    assert review["id"] in [h.get("id") for h in client_hits]
+    assert debug["id"] not in [h.get("id") for h in client_hits]
+
+    _, neighbor = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Zircon latch belongs in the debug notebook.",
+            kind="habit",
+            about_peer="user",
+            by_peer="user",
+            entities=["zircon"],
+            set="debug",
+        ),
+    )
+    _, raw = packset.get(f"/v1/atoms?workspace={WS}")
+    live = {a["id"]: a for a in json.loads(raw.decode())["atoms"]}
+    assert neighbor["id"] not in (live[review["id"]].get("links") or [])
+    assert review["id"] not in (live[neighbor["id"]].get("links") or [])
+    assert debug["id"] in live[neighbor["id"]]["links"]
+    assert neighbor["id"] in live[debug["id"]]["links"]
+
+
+def test_remember_refused_write_returns_400(
+    packset: Packset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    packset.json("PUT", "/v1/pin", {"workspace": WS, "set": "review"})
+    quiet = inside_extract.extract_user_text(
+        "What color is the sky?",
+        url=packset.url,
+        workspace=WS,
+    )
+    assert quiet is None
+
+    def refuse(_atom: dict[str, Any]) -> dict[str, Any]:
+        raise inside_memory.AtomError("store refused")
+
+    monkeypatch.setattr(packset.store, "add", refuse)
+    with pytest.raises(HTTPError) as ctx:
+        inside_extract.extract_user_text(
+            "Remember: always pin the zircon index.",
+            url=packset.url,
+            workspace=WS,
+        )
+    assert ctx.value.code == 400

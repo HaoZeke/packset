@@ -1,47 +1,27 @@
-#!/usr/bin/env python3
 """Local ONNX embedder. Works without the model present."""
-import os
-import unittest
+
+from __future__ import annotations
+
+import pytest
 
 import inside_embed
 
 
-class EmbedTests(unittest.TestCase):
-    def test_off_returns_none(self):
-        prev = os.environ.get("INSIDE_EMBED")
-        os.environ["INSIDE_EMBED"] = "off"
-        try:
-            self.assertFalse(inside_embed.enabled())
-            self.assertIsNone(inside_embed.encode_one("Reviews open first."))
-        finally:
-            if prev is None:
-                os.environ.pop("INSIDE_EMBED", None)
-            else:
-                os.environ["INSIDE_EMBED"] = prev
-
-    def test_cosine_identical_and_orthogonal(self):
-        self.assertAlmostEqual(inside_embed.cosine([1.0, 0.0], [1.0, 0.0]), 1.0)
-        self.assertAlmostEqual(inside_embed.cosine([1.0, 0.0], [0.0, 1.0]), 0.0)
-        self.assertEqual(inside_embed.cosine([], [1.0]), 0.0)
-
-    def test_available_is_false_without_cache_or_download(self):
-        prev_d = os.environ.get("INSIDE_EMBED_DOWNLOAD")
-        prev_c = os.environ.get("INSIDE_EMBED_CACHE")
-        os.environ["INSIDE_EMBED_DOWNLOAD"] = "0"
-        os.environ["INSIDE_EMBED_CACHE"] = "/tmp/inside-embed-missing"
-        try:
-            # No onnx in that dir: encode stays off even if fastembed is installed.
-            self.assertFalse(inside_embed.available())
-        finally:
-            if prev_d is None:
-                os.environ.pop("INSIDE_EMBED_DOWNLOAD", None)
-            else:
-                os.environ["INSIDE_EMBED_DOWNLOAD"] = prev_d
-            if prev_c is None:
-                os.environ.pop("INSIDE_EMBED_CACHE", None)
-            else:
-                os.environ["INSIDE_EMBED_CACHE"] = prev_c
+def test_off_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INSIDE_EMBED", "off")
+    assert not inside_embed.enabled()
+    assert inside_embed.encode_one("Reviews open first.") is None
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_cosine_identical_and_orthogonal() -> None:
+    assert inside_embed.cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert inside_embed.cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+    assert inside_embed.cosine([], [1.0]) == 0.0
+
+
+def test_available_false_without_cache_or_download(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("INSIDE_EMBED_DOWNLOAD", "0")
+    monkeypatch.setenv("INSIDE_EMBED_CACHE", "/tmp/inside-embed-missing")
+    assert not inside_embed.available()
