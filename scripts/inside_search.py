@@ -765,7 +765,7 @@ class UnknownVoter(ValueError):
 
 
 def parse_fuse(name: str) -> str:
-    if name in {"borda", "rrf"}:
+    if name in {"borda", "rrf", "kemeny"}:
         return name
     raise UnknownVoter(f"unknown fuse {name}")
 
@@ -808,6 +808,11 @@ def _merge_hits(
         ranked, scores = rrf_scores(
             [_ballot_keys(primary), _ballot_keys(secondary)], 60
         )
+    elif fuse == "kemeny":
+        ranked = kemeny_merge(
+            [_ballot_keys(primary), _ballot_keys(secondary)], limit
+        )
+        scores = {key: float(len(ranked) - i) for i, key in enumerate(ranked)}
     else:
         raise UnknownVoter(f"unknown fuse {fuse}")
     items: list[tuple[tuple[str, str], float, set[str]]] = []

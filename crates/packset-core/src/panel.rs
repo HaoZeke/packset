@@ -7,6 +7,7 @@
 use std::hash::Hash;
 
 use crate::borda::{borda_merge, Ballot};
+use crate::kemeny::kemeny_merge;
 use crate::mmr::{mmr_rerank, Ranked};
 use crate::rrf::rrf_merge;
 
@@ -17,6 +18,7 @@ pub enum Fuse {
     #[default]
     Borda,
     Rrf,
+    Kemeny,
 }
 
 /// Diversify slot. `None` keeps fuse order.
@@ -49,6 +51,7 @@ impl Fuse {
         match name {
             "borda" => Ok(Self::Borda),
             "rrf" => Ok(Self::Rrf),
+            "kemeny" => Ok(Self::Kemeny),
             other => Err(UnknownVoter::Fuse(other.to_string())),
         }
     }
@@ -57,6 +60,7 @@ impl Fuse {
         match self {
             Self::Borda => "borda",
             Self::Rrf => "rrf",
+            Self::Kemeny => "kemeny",
         }
     }
 }
@@ -106,6 +110,7 @@ impl Panel {
                 out.truncate(k);
                 out
             }
+            Fuse::Kemeny => kemeny_merge(ballots, k),
         }
     }
 
@@ -209,6 +214,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_kemeny_calls_kemeny_merge() {
+        assert_eq!(Fuse::parse("kemeny").unwrap(), Fuse::Kemeny);
+        assert_eq!(Fuse::Kemeny.as_str(), "kemeny");
+        let panel = Panel::parse("kemeny", "mmr").unwrap();
+        assert_eq!(panel.fuse, Fuse::Kemeny);
+        assert_eq!(panel.diversify, Diversify::Mmr);
+        let a = vec!["a", "b", "c"];
+        let b = vec!["b", "a", "c"];
+        let out = Panel {
+            fuse: Fuse::Kemeny,
+            diversify: Diversify::None,
+        }
+        .fuse_merge(&[a, b], 3);
+        assert_eq!(out, vec!["a", "b", "c"]);
+    }
+
+    #[test]
     fn unknown_name_is_error() {
         assert!(matches!(
             Fuse::parse("not-a-voter"),
@@ -221,5 +243,6 @@ mod tests {
         assert!(Panel::parse("borda", "not-a-voter").is_err());
         assert!(Fuse::parse("").is_err());
         assert!(Fuse::parse("Borda").is_err());
+        assert!(Fuse::parse("Kemeny").is_err());
     }
 }

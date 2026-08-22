@@ -474,6 +474,29 @@ class SearchTests(unittest.TestCase):
         ]
         self.assertEqual(ids, ["x", "y", "z"])
 
+    def test_parse_kemeny_is_a_fuse(self):
+        self.assertEqual(inside_search.parse_fuse("kemeny"), "kemeny")
+        self.assertEqual(
+            inside_search.resolve_panel("kemeny", "mmr"), ("kemeny", "mmr")
+        )
+        left = [
+            {"field": "atom", "id": "a", "text": "a", "score": 1.0},
+            {"field": "atom", "id": "b", "text": "b", "score": 0.5},
+            {"field": "atom", "id": "c", "text": "c", "score": 0.1},
+        ]
+        right = [
+            {"field": "atom", "id": "b", "text": "b", "score": 1.0},
+            {"field": "atom", "id": "a", "text": "a", "score": 0.5},
+            {"field": "atom", "id": "c", "text": "c", "score": 0.1},
+        ]
+        ids = [
+            h["id"]
+            for h in inside_search._merge_hits(
+                left, right, 3, fuse="kemeny", diversify="none"
+            )
+        ]
+        self.assertEqual(ids, ["a", "b", "c"])
+
     def test_unknown_voter_is_error(self):
         with self.assertRaises(inside_search.UnknownVoter):
             inside_search.parse_fuse("not-a-voter")
