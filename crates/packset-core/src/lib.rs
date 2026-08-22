@@ -1,9 +1,9 @@
 //! Store-agnostic packset algorithms.
 //!
 //! Host merge is a named fuse then diversify panel. Default fuse
-//! is Borda (`k - position`). Reciprocal Rank Fusion is a named
-//! fuse voter. Default diversify is MMR. Temporal decay is a
-//! voter, not a second store.
+//! is Borda (`k - position`). Reciprocal Rank Fusion and Tideman
+//! ranked pairs are named fuse voters. Default diversify is MMR.
+//! Temporal decay is a voter, not a second store.
 
 pub mod atom;
 pub mod borda;

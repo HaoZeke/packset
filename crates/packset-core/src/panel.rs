@@ -9,6 +9,7 @@ use std::hash::Hash;
 use crate::borda::{borda_merge, Ballot};
 use crate::mmr::{mmr_rerank, Ranked};
 use crate::rrf::rrf_merge;
+use crate::tideman::ranked_pairs_merge;
 
 /// Fuse slot. Only implemented names parse.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -17,6 +18,7 @@ pub enum Fuse {
     #[default]
     Borda,
     Rrf,
+    Tideman,
 }
 
 /// Diversify slot. `None` keeps fuse order.
@@ -49,6 +51,7 @@ impl Fuse {
         match name {
             "borda" => Ok(Self::Borda),
             "rrf" => Ok(Self::Rrf),
+            "tideman" => Ok(Self::Tideman),
             other => Err(UnknownVoter::Fuse(other.to_string())),
         }
     }
@@ -57,6 +60,7 @@ impl Fuse {
         match self {
             Self::Borda => "borda",
             Self::Rrf => "rrf",
+            Self::Tideman => "tideman",
         }
     }
 }
@@ -106,6 +110,7 @@ impl Panel {
                 out.truncate(k);
                 out
             }
+            Fuse::Tideman => ranked_pairs_merge(ballots, k),
         }
     }
 
@@ -209,6 +214,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_tideman_calls_ranked_pairs_merge() {
+        assert_eq!(Fuse::parse("tideman").unwrap(), Fuse::Tideman);
+        assert_eq!(Fuse::Tideman.as_str(), "tideman");
+        let panel = Panel::parse("tideman", "mmr").unwrap();
+        assert_eq!(panel.fuse, Fuse::Tideman);
+        assert_eq!(panel.diversify, Diversify::Mmr);
+        let a = vec!["a", "c", "d", "e", "f"];
+        let b = vec!["a", "c", "d", "e", "f"];
+        let c = vec!["a", "c", "d", "e", "f"];
+        let d = vec!["c", "d", "e", "f", "a"];
+        let e = vec!["d", "e", "f", "c", "a"];
+        let out = Panel {
+            fuse: Fuse::Tideman,
+            diversify: Diversify::None,
+        }
+        .fuse_merge(&[a, b, c, d, e], 5);
+        assert_eq!(out[0], "a");
+    }
+
+    #[test]
     fn unknown_name_is_error() {
         assert!(matches!(
             Fuse::parse("not-a-voter"),
@@ -221,5 +246,7 @@ mod tests {
         assert!(Panel::parse("borda", "not-a-voter").is_err());
         assert!(Fuse::parse("").is_err());
         assert!(Fuse::parse("Borda").is_err());
+        assert!(Fuse::parse("Tideman").is_err());
+        assert!(Fuse::parse("ranked-pairs").is_err());
     }
 }
