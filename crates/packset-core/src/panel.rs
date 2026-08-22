@@ -7,6 +7,7 @@
 use std::hash::Hash;
 
 use crate::borda::{borda_merge, Ballot};
+use crate::comb::{combmnz_merge, combsum_merge, ScoredBallot};
 use crate::mmr::{mmr_rerank, Ranked};
 use crate::rrf::rrf_merge;
 
@@ -17,6 +18,8 @@ pub enum Fuse {
     #[default]
     Borda,
     Rrf,
+    CombSum,
+    CombMnz,
 }
 
 /// Diversify slot. `None` keeps fuse order.
@@ -49,6 +52,8 @@ impl Fuse {
         match name {
             "borda" => Ok(Self::Borda),
             "rrf" => Ok(Self::Rrf),
+            "combsum" => Ok(Self::CombSum),
+            "combmnz" => Ok(Self::CombMnz),
             other => Err(UnknownVoter::Fuse(other.to_string())),
         }
     }
@@ -57,6 +62,8 @@ impl Fuse {
         match self {
             Self::Borda => "borda",
             Self::Rrf => "rrf",
+            Self::CombSum => "combsum",
+            Self::CombMnz => "combmnz",
         }
     }
 }
@@ -106,6 +113,34 @@ impl Panel {
                 out.truncate(k);
                 out
             }
+            Fuse::CombSum | Fuse::CombMnz => self.fuse_scored(&ranks_as_scored(ballots), k),
+        }
+    }
+
+    /// Fuse scored lists. CombSUM / CombMNZ use the raw scores;
+    /// Borda and RRF keep list order and ignore the numbers.
+    pub fn fuse_scored<T>(&self, ballots: &[ScoredBallot<T>], k: usize) -> Vec<T>
+    where
+        T: Clone + Eq + Hash,
+    {
+        match self.fuse {
+            Fuse::CombSum => {
+                let mut out = combsum_merge(ballots);
+                out.truncate(k);
+                out
+            }
+            Fuse::CombMnz => {
+                let mut out = combmnz_merge(ballots);
+                out.truncate(k);
+                out
+            }
+            Fuse::Borda | Fuse::Rrf => {
+                let ranks: Vec<Ballot<T>> = ballots
+                    .iter()
+                    .map(|b| b.iter().map(|(id, _)| id.clone()).collect())
+                    .collect();
+                self.fuse_merge(&ranks, k)
+            }
         }
     }
 
@@ -115,6 +150,20 @@ impl Panel {
             Diversify::None => items.iter().map(|i| i.id.clone()).collect(),
         }
     }
+}
+
+fn ranks_as_scored<T: Clone>(ballots: &[Ballot<T>]) -> Vec<ScoredBallot<T>> {
+    ballots
+        .iter()
+        .map(|ballot| {
+            let n = ballot.len() as f64;
+            ballot
+                .iter()
+                .enumerate()
+                .map(|(pos, id)| (id.clone(), n - pos as f64))
+                .collect()
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -209,6 +258,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_comb_calls_scored_merge() {
+        assert_eq!(Fuse::parse("combsum").unwrap(), Fuse::CombSum);
+        assert_eq!(Fuse::parse("combmnz").unwrap(), Fuse::CombMnz);
+        assert_eq!(Fuse::CombSum.as_str(), "combsum");
+        assert_eq!(Fuse::CombMnz.as_str(), "combmnz");
+        let a = vec![("c", 1.0), ("d", 0.4), ("low", 0.0)];
+        let b = vec![("hi", 1.0), ("d", 0.25), ("lo", 0.0)];
+        let sum = Panel {
+            fuse: Fuse::CombSum,
+            diversify: Diversify::None,
+        }
+        .fuse_scored(&[a.clone(), b.clone()], 3);
+        assert_eq!(sum[0], "c");
+        let mnz = Panel {
+            fuse: Fuse::CombMnz,
+            diversify: Diversify::None,
+        }
+        .fuse_scored(&[a, b], 3);
+        assert_eq!(mnz[0], "d");
+    }
+
+    #[test]
     fn unknown_name_is_error() {
         assert!(matches!(
             Fuse::parse("not-a-voter"),
@@ -221,5 +292,6 @@ mod tests {
         assert!(Panel::parse("borda", "not-a-voter").is_err());
         assert!(Fuse::parse("").is_err());
         assert!(Fuse::parse("Borda").is_err());
+        assert!(Fuse::parse("CombMNZ").is_err());
     }
 }
