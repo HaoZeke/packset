@@ -7,6 +7,7 @@
 use std::hash::Hash;
 
 use crate::borda::{borda_merge, Ballot};
+use crate::dpp::dpp_rerank;
 use crate::mmr::{mmr_rerank, Ranked};
 use crate::rrf::rrf_merge;
 
@@ -25,6 +26,7 @@ pub enum Fuse {
 pub enum Diversify {
     #[default]
     Mmr,
+    Dpp,
     None,
 }
 
@@ -65,6 +67,7 @@ impl Diversify {
     pub fn parse(name: &str) -> Result<Self, UnknownVoter> {
         match name {
             "mmr" => Ok(Self::Mmr),
+            "dpp" => Ok(Self::Dpp),
             "none" => Ok(Self::None),
             other => Err(UnknownVoter::Diversify(other.to_string())),
         }
@@ -73,6 +76,7 @@ impl Diversify {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Mmr => "mmr",
+            Self::Dpp => "dpp",
             Self::None => "none",
         }
     }
@@ -112,6 +116,7 @@ impl Panel {
     pub fn rerank(&self, items: &[Ranked], lambda: f64) -> Vec<String> {
         match self.diversify {
             Diversify::Mmr => mmr_rerank(items, lambda),
+            Diversify::Dpp => dpp_rerank(items, items.len()),
             Diversify::None => items.iter().map(|i| i.id.clone()).collect(),
         }
     }
@@ -191,6 +196,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_dpp_calls_dpp_rerank() {
+        assert_eq!(Diversify::parse("dpp").unwrap(), Diversify::Dpp);
+        assert_eq!(Diversify::Dpp.as_str(), "dpp");
+        let panel = Panel::parse("borda", "dpp").unwrap();
+        assert_eq!(panel.fuse, Fuse::Borda);
+        assert_eq!(panel.diversify, Diversify::Dpp);
+        let items = keep_dup_other();
+        let reranked = panel.rerank(&items, 0.7);
+        assert_eq!(reranked, dpp_rerank(&items, items.len()));
+        assert_eq!(reranked, vec!["keep", "other", "dup"]);
+        assert_eq!(Panel::default().diversify, Diversify::Mmr);
+    }
+
+    #[test]
     fn parse_rrf_calls_rrf_merge() {
         assert_eq!(Fuse::parse("rrf").unwrap(), Fuse::Rrf);
         assert_eq!(Fuse::Rrf.as_str(), "rrf");
@@ -221,5 +240,7 @@ mod tests {
         assert!(Panel::parse("borda", "not-a-voter").is_err());
         assert!(Fuse::parse("").is_err());
         assert!(Fuse::parse("Borda").is_err());
+        assert!(Diversify::parse("").is_err());
+        assert!(Diversify::parse("Dpp").is_err());
     }
 }
