@@ -351,6 +351,24 @@ class SearchTests(unittest.TestCase):
             [("f", "b"), ("f", "a"), ("f", "c")],
         )
 
+    def test_rrf_two_lists_of_three(self):
+        left = [("f", "x"), ("f", "y"), ("f", "z")]
+        right = [("f", "y"), ("f", "x"), ("f", "z")]
+        self.assertEqual(inside_search.rrf_merge([left, right], 60), left)
+
+    def test_rrf_omitted_rank_lifts_z_above_borda_last(self):
+        left = [("f", "x"), ("f", "y"), ("f", "z")]
+        right = [("f", "y"), ("f", "x"), ("f", "z")]
+        only_z = [("f", "z")]
+        self.assertEqual(
+            inside_search.borda_merge([left, right, only_z], 3),
+            left,
+        )
+        self.assertEqual(
+            inside_search.rrf_merge([left, right, only_z], 60)[0],
+            ("f", "z"),
+        )
+
     def test_merge_is_borda_not_primary_dedupe(self):
         primary = [
             {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},

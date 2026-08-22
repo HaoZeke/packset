@@ -634,6 +634,29 @@ def borda_merge(ballots: list[list[tuple[str, str]]], k: int) -> list[tuple[str,
     return ranked
 
 
+def rrf_scores(
+    ballots: list[list[tuple[str, str]]], k0: int
+) -> tuple[list[tuple[str, str]], dict[tuple[str, str], float]]:
+    """Reciprocal Rank Fusion. Score is 1 / (k0 + rank). Ties keep first-seen order."""
+    if not ballots:
+        return [], {}
+    scores: dict[tuple[str, str], float] = {}
+    first_seen: list[tuple[str, str]] = []
+    for ballot in ballots:
+        for pos, key in enumerate(ballot):
+            if key not in scores:
+                first_seen.append(key)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k0 + pos + 1)
+    ranked = list(first_seen)
+    ranked.sort(key=lambda key: (-scores.get(key, 0.0), first_seen.index(key)))
+    return ranked, scores
+
+
+def rrf_merge(ballots: list[list[tuple[str, str]]], k0: int) -> list[tuple[str, str]]:
+    ranked, _scores = rrf_scores(ballots, k0)
+    return ranked
+
+
 def _jaccard(a: set[str], b: set[str]) -> float:
     if not a and not b:
         return 0.0
