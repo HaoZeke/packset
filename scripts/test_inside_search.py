@@ -1,12 +1,35 @@
 #!/usr/bin/env python3
 """Ranked pack search. No Meilisearch process."""
+import contextlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 import inside_memory
 import inside_search
+
+
+@contextlib.contextmanager
+def _panel_env(**values: str):
+    keys = (
+        inside_search.ENV_FUSE,
+        inside_search.ENV_DIVERSIFY,
+        inside_search.ENV_DECAY,
+    )
+    prev = {key: os.environ.get(key) for key in keys}
+    for key in keys:
+        os.environ.pop(key, None)
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for key in keys:
+            if prev[key] is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prev[key]
 
 
 class SearchTests(unittest.TestCase):
@@ -380,7 +403,8 @@ class SearchTests(unittest.TestCase):
             {"field": "atom", "id": "c", "text": "gamma three", "score": 0.4},
             {"field": "atom", "id": "a", "text": "alpha one", "score": 0.2},
         ]
-        ids = [h["id"] for h in inside_search._merge_hits(primary, secondary, 3)]
+        with _panel_env():
+            ids = [h["id"] for h in inside_search._merge_hits(primary, secondary, 3)]
         self.assertEqual(ids[0], "b")
         self.assertEqual(set(ids), {"a", "b", "c"})
 
@@ -396,7 +420,6 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(order[2], ("f", "dup"))
 
     def test_default_panel_matches_borda_then_mmr(self):
-        self.assertEqual(inside_search.resolve_panel(), ("borda", "mmr"))
         primary = [
             {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},
             {"field": "atom", "id": "b", "text": "beta two", "score": 0.5},
@@ -407,13 +430,17 @@ class SearchTests(unittest.TestCase):
             {"field": "atom", "id": "c", "text": "gamma three", "score": 0.4},
             {"field": "atom", "id": "a", "text": "alpha one", "score": 0.2},
         ]
-        implicit = [h["id"] for h in inside_search._merge_hits(primary, secondary, 3)]
-        named = [
-            h["id"]
-            for h in inside_search._merge_hits(
-                primary, secondary, 3, fuse="borda", diversify="mmr"
-            )
-        ]
+        with _panel_env():
+            self.assertEqual(inside_search.resolve_panel(), ("borda", "mmr", "off"))
+            implicit = [
+                h["id"] for h in inside_search._merge_hits(primary, secondary, 3)
+            ]
+            named = [
+                h["id"]
+                for h in inside_search._merge_hits(
+                    primary, secondary, 3, fuse="borda", diversify="mmr"
+                )
+            ]
         self.assertEqual(implicit, named)
         self.assertEqual(implicit[0], "b")
         self.assertEqual(set(implicit), {"a", "b", "c"})
@@ -439,7 +466,9 @@ class SearchTests(unittest.TestCase):
 
     def test_parse_rrf_is_a_fuse(self):
         self.assertEqual(inside_search.parse_fuse("rrf"), "rrf")
-        self.assertEqual(inside_search.resolve_panel("rrf", "mmr"), ("rrf", "mmr"))
+        self.assertEqual(
+            inside_search.resolve_panel("rrf", "mmr"), ("rrf", "mmr", "off")
+        )
         left = [
             {"field": "atom", "id": "x", "text": "x", "score": 1.0},
             {"field": "atom", "id": "y", "text": "y", "score": 0.5},
@@ -464,7 +493,87 @@ class SearchTests(unittest.TestCase):
         with self.assertRaises(inside_search.UnknownVoter):
             inside_search.parse_diversify("not-a-voter")
         with self.assertRaises(inside_search.UnknownVoter):
+            inside_search.parse_decay("maybe")
+        with self.assertRaises(inside_search.UnknownVoter):
             inside_search._merge_hits([], [], 1, fuse="not-a-voter")
+
+    def test_unimplemented_voter_is_error(self):
+        for name in (
+            "dowdall",
+            "combmnz",
+            "kemeny",
+            "schulze",
+            "copeland",
+            "tideman",
+        ):
+            with self.assertRaises(inside_search.UnknownVoter) as ctx:
+                inside_search.parse_fuse(name)
+            self.assertIn("not implemented", str(ctx.exception))
+        with self.assertRaises(inside_search.UnknownVoter) as ctx:
+            inside_search.parse_diversify("dpp")
+        self.assertIn("not implemented", str(ctx.exception))
+        with self.assertRaises(inside_search.UnknownVoter):
+            inside_search._merge_hits([], [], 1, fuse="kemeny")
+
+    def test_env_borda_mmr_matches_merge_fixtures(self):
+        primary = [
+            {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},
+            {"field": "atom", "id": "b", "text": "beta two", "score": 0.5},
+            {"field": "atom", "id": "c", "text": "gamma three", "score": 0.1},
+        ]
+        secondary = [
+            {"field": "atom", "id": "b", "text": "beta two", "score": 0.9},
+            {"field": "atom", "id": "c", "text": "gamma three", "score": 0.4},
+            {"field": "atom", "id": "a", "text": "alpha one", "score": 0.2},
+        ]
+        with _panel_env(
+            PACKSET_FUSE="borda", PACKSET_DIVERSIFY="mmr", PACKSET_DECAY="off"
+        ):
+            ids = [h["id"] for h in inside_search._merge_hits(primary, secondary, 3)]
+        self.assertEqual(ids[0], "b")
+        self.assertEqual(set(ids), {"a", "b", "c"})
+        items = [
+            (("f", "keep"), 1.0, {"review", "open", "repro"}),
+            (("f", "dup"), 0.55, {"review", "open", "repro"}),
+            (("f", "other"), 0.5, {"pin", "zircon", "index"}),
+        ]
+        order = inside_search.mmr_rerank(items, 0.7)
+        self.assertEqual(order[0], ("f", "keep"))
+        self.assertEqual(order[1], ("f", "other"))
+        self.assertEqual(order[2], ("f", "dup"))
+
+    def test_env_rrf_changes_omitted_rank_order(self):
+        left = [
+            {"field": "atom", "id": "x", "text": "x", "score": 1.0},
+            {"field": "atom", "id": "y", "text": "y", "score": 0.5},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        right = [
+            {"field": "atom", "id": "y", "text": "y", "score": 1.0},
+            {"field": "atom", "id": "x", "text": "x", "score": 0.5},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        only_z = [{"field": "atom", "id": "z", "text": "z", "score": 1.0}]
+        ballots = [left, right, only_z]
+        with _panel_env(PACKSET_FUSE="borda", PACKSET_DIVERSIFY="none"):
+            borda_ids = [
+                h["id"] for h in inside_search._merge_ballots(ballots, 3)
+            ]
+        with _panel_env(PACKSET_FUSE="rrf", PACKSET_DIVERSIFY="none"):
+            rrf_ids = [h["id"] for h in inside_search._merge_ballots(ballots, 3)]
+        self.assertEqual(borda_ids, ["x", "y", "z"])
+        self.assertEqual(rrf_ids[0], "z")
+        self.assertNotEqual(borda_ids, rrf_ids)
+
+    def test_env_unknown_fuse_is_error(self):
+        with _panel_env(PACKSET_FUSE="not-a-voter"):
+            with self.assertRaises(inside_search.UnknownVoter):
+                inside_search.resolve_panel()
+            with self.assertRaises(inside_search.UnknownVoter):
+                inside_search._merge_hits([], [], 1)
+        with _panel_env(PACKSET_FUSE=""):
+            with self.assertRaises(inside_search.UnknownVoter):
+                inside_search.resolve_panel()
 
 
 if __name__ == "__main__":

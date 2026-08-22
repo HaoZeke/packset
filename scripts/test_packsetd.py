@@ -642,6 +642,18 @@ class MemdTests(unittest.TestCase):
         self.assertEqual(self.store._scan(""), [])
         self.assertEqual(self.store.get("", "any"), None)
 
+    def test_unknown_fuse_is_startup_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit) as ctx:
+                packsetd.main(["--home", tmp, "--fuse", "not-a-voter"])
+        self.assertIn("unknown fuse", str(ctx.exception))
+
+    def test_unimplemented_fuse_is_startup_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit) as ctx:
+                packsetd.main(["--home", tmp, "--fuse", "kemeny"])
+        self.assertIn("not implemented", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -649,9 +649,28 @@ def main(argv: list[str] | None = None) -> int:
         "--home",
         default=os.environ.get("GROK_INSIDE_MEMORY_HOME") or str(inside_memory.memory_root()),
     )
+    parser.add_argument(
+        "--fuse",
+        default=None,
+        help="host fuse voter (PACKSET_FUSE); default borda",
+    )
+    parser.add_argument(
+        "--diversify",
+        default=None,
+        help="host diversify voter (PACKSET_DIVERSIFY); default mmr",
+    )
+    parser.add_argument(
+        "--decay",
+        default=None,
+        help="host decay voter (PACKSET_DECAY); default off",
+    )
     args = parser.parse_args(argv)
     if args.host != "127.0.0.1":
         raise SystemExit("packsetd listens on 127.0.0.1 only")
+    try:
+        inside_search.bind_host_panel(args.fuse, args.diversify, args.decay)
+    except inside_search.UnknownVoter as exc:
+        raise SystemExit(f"packsetd: {exc}") from exc
     store = Store(Path(args.home))
     server = ThreadingHTTPServer((args.host, args.port), make_handler(store))
     sys.stderr.write(f"packsetd: listening on http://{args.host}:{args.port}\n")
