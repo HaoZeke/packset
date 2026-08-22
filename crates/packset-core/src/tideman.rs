@@ -168,10 +168,10 @@ mod tests {
         ]
     }
 
-    fn expand(groups: &[(&[&str], usize)]) -> Vec<Ballot<&'static str>> {
+    fn expand(groups: &[(&'static [&'static str], usize)]) -> Vec<Ballot<&'static str>> {
         let mut ballots = Vec::new();
-        for (order, n) in groups {
-            for _ in 0..*n {
+        for &(order, n) in groups {
+            for _ in 0..n {
                 ballots.push(order.to_vec());
             }
         }
