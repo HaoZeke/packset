@@ -369,6 +369,39 @@ class SearchTests(unittest.TestCase):
             ("f", "z"),
         )
 
+    def test_dowdall_two_lists_of_three(self):
+        left = [("f", "a"), ("f", "b"), ("f", "c")]
+        right = [("f", "b"), ("f", "c"), ("f", "a")]
+        self.assertEqual(
+            inside_search.borda_merge([left, right], 3),
+            [("f", "b"), ("f", "a"), ("f", "c")],
+        )
+        ranked, scores = inside_search.dowdall_scores([left, right], 3)
+        self.assertEqual(ranked, [("f", "b"), ("f", "a"), ("f", "c")])
+        self.assertAlmostEqual(scores[("f", "a")], 1.0 + 1.0 / 3.0)
+        self.assertAlmostEqual(scores[("f", "b")], 0.5 + 1.0)
+        self.assertAlmostEqual(scores[("f", "c")], 1.0 / 3.0 + 0.5)
+
+    def test_dowdall_last_place_pile_keeps_first_place(self):
+        first = [("f", "a"), ("f", "c"), ("f", "d"), ("f", "e"), ("f", "z")]
+        second = [("f", "b"), ("f", "c"), ("f", "d"), ("f", "e"), ("f", "z")]
+        third = [("f", "a"), ("f", "b"), ("f", "c"), ("f", "d"), ("f", "z")]
+        self.assertEqual(
+            inside_search.borda_merge([first, second, third], 5)[0],
+            ("f", "c"),
+        )
+        self.assertEqual(
+            inside_search.dowdall_merge([first, second, third], 5),
+            [
+                ("f", "a"),
+                ("f", "b"),
+                ("f", "c"),
+                ("f", "d"),
+                ("f", "z"),
+                ("f", "e"),
+            ],
+        )
+
     def test_merge_is_borda_not_primary_dedupe(self):
         primary = [
             {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},
