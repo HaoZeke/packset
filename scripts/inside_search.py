@@ -17,6 +17,7 @@ import shutil
 import subprocess
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from itertools import permutations
 from pathlib import Path
 from typing import Any
 
@@ -655,6 +656,60 @@ def rrf_scores(
 def rrf_merge(ballots: list[list[tuple[str, str]]], k0: int) -> list[tuple[str, str]]:
     ranked, _scores = rrf_scores(ballots, k0)
     return ranked
+
+
+KEMENY_EXACT_MAX = 8
+
+
+def kemeny_merge(
+    ballots: list[list[tuple[str, str]]], k: int
+) -> list[tuple[str, str]]:
+    """Kemeny-Young. Exact for n<=8; wider falls back to Borda.
+
+    Ties keep first-seen order.
+    """
+    if not ballots or k <= 0:
+        return []
+    first_seen: list[tuple[str, str]] = []
+    index: dict[tuple[str, str], int] = {}
+    for ballot in ballots:
+        for key in ballot[:k]:
+            if key not in index:
+                index[key] = len(first_seen)
+                first_seen.append(key)
+    n = len(first_seen)
+    if n == 0:
+        return []
+    if n > KEMENY_EXACT_MAX:
+        return borda_merge(ballots, k)
+    pairwise = [[0] * n for _ in range(n)]
+    for ballot in ballots:
+        pos: list[int | None] = [None] * n
+        for p, key in enumerate(ballot[:k]):
+            i = index.get(key)
+            if i is not None and pos[i] is None:
+                pos[i] = p
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                pi, pj = pos[i], pos[j]
+                if pi is not None and pj is not None and pi < pj:
+                    pairwise[i][j] += 1
+                elif pi is not None and pj is None:
+                    pairwise[i][j] += 1
+    best: tuple[int, ...] | None = None
+    best_dist: int | None = None
+    for perm in permutations(range(n)):
+        dist = 0
+        for a in range(n):
+            for b in range(a + 1, n):
+                dist += pairwise[perm[b]][perm[a]]
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best = perm
+    assert best is not None
+    return [first_seen[i] for i in best]
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:

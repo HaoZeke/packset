@@ -356,6 +356,22 @@ class SearchTests(unittest.TestCase):
         right = [("f", "y"), ("f", "x"), ("f", "z")]
         self.assertEqual(inside_search.rrf_merge([left, right], 60), left)
 
+    def test_kemeny_two_lists_first_seen(self):
+        left = [("f", "a"), ("f", "b"), ("f", "c")]
+        right = [("f", "b"), ("f", "a"), ("f", "c")]
+        self.assertEqual(inside_search.kemeny_merge([left, right], 3), left)
+        left = [("f", "b"), ("f", "a"), ("f", "c")]
+        right = [("f", "a"), ("f", "b"), ("f", "c")]
+        self.assertEqual(inside_search.kemeny_merge([left, right], 3), left)
+
+    def test_kemeny_cycle_of_three_pins_first_seen(self):
+        first = [("f", "a"), ("f", "b"), ("f", "c")]
+        second = [("f", "b"), ("f", "c"), ("f", "a")]
+        third = [("f", "c"), ("f", "a"), ("f", "b")]
+        self.assertEqual(
+            inside_search.kemeny_merge([first, second, third], 3), first
+        )
+
     def test_rrf_omitted_rank_lifts_z_above_borda_last(self):
         left = [("f", "x"), ("f", "y"), ("f", "z")]
         right = [("f", "y"), ("f", "x"), ("f", "z")]
