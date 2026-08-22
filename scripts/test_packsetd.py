@@ -651,7 +651,7 @@ class MemdTests(unittest.TestCase):
     def test_unimplemented_fuse_is_startup_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(SystemExit) as ctx:
-                packsetd.main(["--home", tmp, "--fuse", "kemeny"])
+                packsetd.main(["--home", tmp, "--fuse", "schulze"])
         self.assertIn("not implemented", str(ctx.exception))
 
 

@@ -392,6 +392,55 @@ class SearchTests(unittest.TestCase):
             ("f", "z"),
         )
 
+    def test_dowdall_two_lists_of_three(self):
+        left = [("f", "a"), ("f", "b"), ("f", "c")]
+        right = [("f", "b"), ("f", "c"), ("f", "a")]
+        self.assertEqual(
+            inside_search.borda_merge([left, right], 3),
+            [("f", "b"), ("f", "a"), ("f", "c")],
+        )
+        ranked, scores = inside_search.dowdall_scores([left, right], 3)
+        self.assertEqual(ranked, [("f", "b"), ("f", "a"), ("f", "c")])
+        self.assertAlmostEqual(scores[("f", "a")], 1.0 + 1.0 / 3.0)
+        self.assertAlmostEqual(scores[("f", "b")], 0.5 + 1.0)
+        self.assertAlmostEqual(scores[("f", "c")], 1.0 / 3.0 + 0.5)
+
+    def test_dowdall_last_place_pile_keeps_first_place(self):
+        first = [("f", "a"), ("f", "c"), ("f", "d"), ("f", "e"), ("f", "z")]
+        second = [("f", "b"), ("f", "c"), ("f", "d"), ("f", "e"), ("f", "z")]
+        third = [("f", "a"), ("f", "b"), ("f", "c"), ("f", "d"), ("f", "z")]
+        self.assertEqual(
+            inside_search.borda_merge([first, second, third], 5)[0],
+            ("f", "c"),
+        )
+        self.assertEqual(
+            inside_search.dowdall_merge([first, second, third], 5),
+            [
+                ("f", "a"),
+                ("f", "b"),
+                ("f", "c"),
+                ("f", "d"),
+                ("f", "z"),
+                ("f", "e"),
+            ],
+        )
+
+    def test_kemeny_two_lists_first_seen(self):
+        left = [("f", "a"), ("f", "b"), ("f", "c")]
+        right = [("f", "b"), ("f", "a"), ("f", "c")]
+        self.assertEqual(inside_search.kemeny_merge([left, right], 3), left)
+        left = [("f", "b"), ("f", "a"), ("f", "c")]
+        right = [("f", "a"), ("f", "b"), ("f", "c")]
+        self.assertEqual(inside_search.kemeny_merge([left, right], 3), left)
+
+    def test_kemeny_cycle_of_three_pins_first_seen(self):
+        first = [("f", "a"), ("f", "b"), ("f", "c")]
+        second = [("f", "b"), ("f", "c"), ("f", "a")]
+        third = [("f", "c"), ("f", "a"), ("f", "b")]
+        self.assertEqual(
+            inside_search.kemeny_merge([first, second, third], 3), first
+        )
+
     def test_merge_is_borda_not_primary_dedupe(self):
         primary = [
             {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},
@@ -487,6 +536,58 @@ class SearchTests(unittest.TestCase):
         ]
         self.assertEqual(ids, ["x", "y", "z"])
 
+    def test_parse_dowdall_is_a_fuse(self):
+        self.assertEqual(inside_search.parse_fuse("dowdall"), "dowdall")
+        self.assertEqual(
+            inside_search.resolve_panel("dowdall", "none"),
+            ("dowdall", "none", "off"),
+        )
+        first = [
+            {"field": "atom", "id": "a", "text": "a", "score": 1.0},
+            {"field": "atom", "id": "c", "text": "c", "score": 0.4},
+            {"field": "atom", "id": "d", "text": "d", "score": 0.3},
+            {"field": "atom", "id": "e", "text": "e", "score": 0.2},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        second = [
+            {"field": "atom", "id": "b", "text": "b", "score": 1.0},
+            {"field": "atom", "id": "c", "text": "c", "score": 0.4},
+            {"field": "atom", "id": "d", "text": "d", "score": 0.3},
+            {"field": "atom", "id": "e", "text": "e", "score": 0.2},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        ids = [
+            h["id"]
+            for h in inside_search._merge_hits(
+                first, second, 5, fuse="dowdall", diversify="none"
+            )
+        ]
+        self.assertEqual(ids[0], "a")
+
+    def test_parse_kemeny_is_a_fuse(self):
+        self.assertEqual(inside_search.parse_fuse("kemeny"), "kemeny")
+        self.assertEqual(
+            inside_search.resolve_panel("kemeny", "mmr"),
+            ("kemeny", "mmr", "off"),
+        )
+        left = [
+            {"field": "atom", "id": "a", "text": "a", "score": 1.0},
+            {"field": "atom", "id": "b", "text": "b", "score": 0.5},
+            {"field": "atom", "id": "c", "text": "c", "score": 0.1},
+        ]
+        right = [
+            {"field": "atom", "id": "b", "text": "b", "score": 1.0},
+            {"field": "atom", "id": "a", "text": "a", "score": 0.5},
+            {"field": "atom", "id": "c", "text": "c", "score": 0.1},
+        ]
+        ids = [
+            h["id"]
+            for h in inside_search._merge_hits(
+                left, right, 3, fuse="kemeny", diversify="none"
+            )
+        ]
+        self.assertEqual(ids, ["a", "b", "c"])
+
     def test_unknown_voter_is_error(self):
         with self.assertRaises(inside_search.UnknownVoter):
             inside_search.parse_fuse("not-a-voter")
@@ -499,9 +600,7 @@ class SearchTests(unittest.TestCase):
 
     def test_unimplemented_voter_is_error(self):
         for name in (
-            "dowdall",
             "combmnz",
-            "kemeny",
             "schulze",
             "copeland",
             "tideman",
@@ -513,7 +612,7 @@ class SearchTests(unittest.TestCase):
             inside_search.parse_diversify("dpp")
         self.assertIn("not implemented", str(ctx.exception))
         with self.assertRaises(inside_search.UnknownVoter):
-            inside_search._merge_hits([], [], 1, fuse="kemeny")
+            inside_search._merge_hits([], [], 1, fuse="schulze")
 
     def test_env_borda_mmr_matches_merge_fixtures(self):
         primary = [

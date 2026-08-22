@@ -18,6 +18,7 @@ import shutil
 import subprocess
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from itertools import permutations
 from pathlib import Path
 from typing import Any
 
@@ -658,6 +659,83 @@ def rrf_merge(ballots: list[list[tuple[str, str]]], k0: int) -> list[tuple[str, 
     return ranked
 
 
+def dowdall_scores(
+    ballots: list[list[tuple[str, str]]], k: int
+) -> tuple[list[tuple[str, str]], dict[tuple[str, str], float]]:
+    """Dowdall (Nauru) Borda. Score is 1/(position+1). Ties keep first-seen order."""
+    if not ballots or k <= 0:
+        return [], {}
+    scores: dict[tuple[str, str], float] = {}
+    first_seen: list[tuple[str, str]] = []
+    for ballot in ballots:
+        for pos, key in enumerate(ballot[:k]):
+            if key not in scores:
+                first_seen.append(key)
+            scores[key] = scores.get(key, 0.0) + 1.0 / (pos + 1)
+    ranked = list(first_seen)
+    ranked.sort(key=lambda key: (-scores.get(key, 0.0), first_seen.index(key)))
+    return ranked, scores
+
+
+def dowdall_merge(ballots: list[list[tuple[str, str]]], k: int) -> list[tuple[str, str]]:
+    ranked, _scores = dowdall_scores(ballots, k)
+    return ranked
+
+
+KEMENY_EXACT_MAX = 8
+
+
+def kemeny_merge(
+    ballots: list[list[tuple[str, str]]], k: int
+) -> list[tuple[str, str]]:
+    """Kemeny-Young. Exact for n<=8; wider falls back to Borda.
+
+    Ties keep first-seen order.
+    """
+    if not ballots or k <= 0:
+        return []
+    first_seen: list[tuple[str, str]] = []
+    index: dict[tuple[str, str], int] = {}
+    for ballot in ballots:
+        for key in ballot[:k]:
+            if key not in index:
+                index[key] = len(first_seen)
+                first_seen.append(key)
+    n = len(first_seen)
+    if n == 0:
+        return []
+    if n > KEMENY_EXACT_MAX:
+        return borda_merge(ballots, k)
+    pairwise = [[0] * n for _ in range(n)]
+    for ballot in ballots:
+        pos: list[int | None] = [None] * n
+        for p, key in enumerate(ballot[:k]):
+            i = index.get(key)
+            if i is not None and pos[i] is None:
+                pos[i] = p
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                pi, pj = pos[i], pos[j]
+                if pi is not None and pj is not None and pi < pj:
+                    pairwise[i][j] += 1
+                elif pi is not None and pj is None:
+                    pairwise[i][j] += 1
+    best: tuple[int, ...] | None = None
+    best_dist: int | None = None
+    for perm in permutations(range(n)):
+        dist = 0
+        for a in range(n):
+            for b in range(a + 1, n):
+                dist += pairwise[perm[b]][perm[a]]
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best = perm
+    assert best is not None
+    return [first_seen[i] for i in best]
+
+
 def _jaccard(a: set[str], b: set[str]) -> float:
     if not a and not b:
         return 0.0
@@ -708,10 +786,8 @@ DEFAULT_DECAY = "off"
 ENV_FUSE = "PACKSET_FUSE"
 ENV_DIVERSIFY = "PACKSET_DIVERSIFY"
 ENV_DECAY = "PACKSET_DECAY"
-_IMPLEMENTED_FUSE = frozenset({"borda", "rrf"})
-_RESERVED_FUSE = frozenset(
-    {"dowdall", "combmnz", "kemeny", "schulze", "copeland", "tideman"}
-)
+_IMPLEMENTED_FUSE = frozenset({"borda", "rrf", "dowdall", "kemeny"})
+_RESERVED_FUSE = frozenset({"combmnz", "schulze", "copeland", "tideman"})
 _IMPLEMENTED_DIVERSIFY = frozenset({"mmr", "none"})
 _RESERVED_DIVERSIFY = frozenset({"dpp"})
 
@@ -823,6 +899,11 @@ def _merge_ballots(
         ranked, scores = borda_scores(keys, limit)
     elif fuse == "rrf":
         ranked, scores = rrf_scores(keys, 60)
+    elif fuse == "dowdall":
+        ranked, scores = dowdall_scores(keys, limit)
+    elif fuse == "kemeny":
+        ranked = kemeny_merge(keys, limit)
+        scores = {key: float(len(ranked) - i) for i, key in enumerate(ranked)}
     else:
         raise UnknownVoter(f"unknown fuse {fuse}")
     weights = {key: float(scores.get(key, 0)) for key in ranked}
