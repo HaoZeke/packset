@@ -647,7 +647,7 @@ def mmr_rerank(
     items: list[tuple[tuple[str, str], float, set[str]]],
     lambda_rel: float = 0.7,
 ) -> list[tuple[str, str]]:
-    """MMR after Borda. lambda in [0, 1); otherwise keep Borda order."""
+    """MMR after fuse. lambda in [0, 1); otherwise keep fuse order."""
     if len(items) < 2 or not (0.0 <= lambda_rel < 1.0):
         return [key for key, _rel, _toks in items]
     rels = [rel for _key, rel, _toks in items]
@@ -678,28 +678,67 @@ def mmr_rerank(
     return [items[i][0] for i in selected]
 
 
+DEFAULT_FUSE = "borda"
+DEFAULT_DIVERSIFY = "mmr"
+
+
+class UnknownVoter(ValueError):
+    """A fuse or diversify name that is not an implemented voter."""
+
+
+def parse_fuse(name: str) -> str:
+    if name == "borda":
+        return name
+    raise UnknownVoter(f"unknown fuse {name}")
+
+
+def parse_diversify(name: str) -> str:
+    if name in {"mmr", "none"}:
+        return name
+    raise UnknownVoter(f"unknown diversify {name}")
+
+
+def resolve_panel(
+    fuse: str = DEFAULT_FUSE, diversify: str = DEFAULT_DIVERSIFY
+) -> tuple[str, str]:
+    """Host sequence. Clients do not choose this."""
+    return parse_fuse(fuse), parse_diversify(diversify)
+
+
 def _merge_hits(
     primary: list[dict[str, Any]],
     secondary: list[dict[str, Any]],
     limit: int,
+    *,
+    fuse: str = DEFAULT_FUSE,
+    diversify: str = DEFAULT_DIVERSIFY,
 ) -> list[dict[str, Any]]:
-    """Host Borda then MMR. Not de-dupe."""
+    """Named fuse then diversify. Default is Borda then MMR. Not de-dupe."""
     if limit <= 0:
         return []
+    fuse, diversify = resolve_panel(fuse, diversify)
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for hit in secondary:
         by_key[_hit_key(hit)] = hit
     for hit in primary:
         by_key[_hit_key(hit)] = hit
-    ranked, scores = borda_scores(
-        [_ballot_keys(primary), _ballot_keys(secondary)], limit
-    )
+    if fuse == "borda":
+        ranked, scores = borda_scores(
+            [_ballot_keys(primary), _ballot_keys(secondary)], limit
+        )
+    else:
+        raise UnknownVoter(f"unknown fuse {fuse}")
     items: list[tuple[tuple[str, str], float, set[str]]] = []
     for key in ranked:
         hit = by_key[key]
         toks = set(_TOKEN.findall(str(hit.get("text") or "").lower()))
         items.append((key, float(scores.get(key, 0)), toks))
-    order = mmr_rerank(items)
+    if diversify == "mmr":
+        order = mmr_rerank(items)
+    elif diversify == "none":
+        order = ranked
+    else:
+        raise UnknownVoter(f"unknown diversify {diversify}")
     return [by_key[key] for key in order][:limit]
 
 

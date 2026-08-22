@@ -377,6 +377,56 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(order[1], ("f", "other"))
         self.assertEqual(order[2], ("f", "dup"))
 
+    def test_default_panel_matches_borda_then_mmr(self):
+        self.assertEqual(inside_search.resolve_panel(), ("borda", "mmr"))
+        primary = [
+            {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},
+            {"field": "atom", "id": "b", "text": "beta two", "score": 0.5},
+            {"field": "atom", "id": "c", "text": "gamma three", "score": 0.1},
+        ]
+        secondary = [
+            {"field": "atom", "id": "b", "text": "beta two", "score": 0.9},
+            {"field": "atom", "id": "c", "text": "gamma three", "score": 0.4},
+            {"field": "atom", "id": "a", "text": "alpha one", "score": 0.2},
+        ]
+        implicit = [h["id"] for h in inside_search._merge_hits(primary, secondary, 3)]
+        named = [
+            h["id"]
+            for h in inside_search._merge_hits(
+                primary, secondary, 3, fuse="borda", diversify="mmr"
+            )
+        ]
+        self.assertEqual(implicit, named)
+        self.assertEqual(implicit[0], "b")
+        self.assertEqual(set(implicit), {"a", "b", "c"})
+
+    def test_diversify_none_keeps_borda_order(self):
+        primary = [
+            {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},
+            {"field": "atom", "id": "b", "text": "beta two", "score": 0.5},
+            {"field": "atom", "id": "c", "text": "gamma three", "score": 0.1},
+        ]
+        secondary = [
+            {"field": "atom", "id": "b", "text": "beta two", "score": 0.9},
+            {"field": "atom", "id": "c", "text": "gamma three", "score": 0.4},
+            {"field": "atom", "id": "a", "text": "alpha one", "score": 0.2},
+        ]
+        ids = [
+            h["id"]
+            for h in inside_search._merge_hits(
+                primary, secondary, 3, diversify="none"
+            )
+        ]
+        self.assertEqual(ids, ["b", "a", "c"])
+
+    def test_unknown_voter_is_error(self):
+        with self.assertRaises(inside_search.UnknownVoter):
+            inside_search.parse_fuse("not-a-voter")
+        with self.assertRaises(inside_search.UnknownVoter):
+            inside_search.parse_diversify("not-a-voter")
+        with self.assertRaises(inside_search.UnknownVoter):
+            inside_search._merge_hits([], [], 1, fuse="not-a-voter")
+
 
 if __name__ == "__main__":
     unittest.main()

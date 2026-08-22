@@ -1,6 +1,6 @@
-//! Maximal marginal relevance after Borda.
+//! Maximal marginal relevance after fuse.
 //!
-//! MMR(d) = lambda * rel'(d) - (1-lambda) * max Jaccard(d, selected).
+//! Diversify slot. MMR(d) = lambda * rel'(d) - (1-lambda) * max Jaccard(d, selected).
 
 use std::collections::HashSet;
 
@@ -16,7 +16,10 @@ pub fn mmr_rerank(items: &[Ranked], lambda: f64) -> Vec<String> {
         return items.iter().map(|i| i.id.clone()).collect();
     }
     let min = items.iter().map(|i| i.rel).fold(f64::INFINITY, f64::min);
-    let max = items.iter().map(|i| i.rel).fold(f64::NEG_INFINITY, f64::max);
+    let max = items
+        .iter()
+        .map(|i| i.rel)
+        .fold(f64::NEG_INFINITY, f64::max);
     let span = (max - min).max(1e-9);
     let rel = |r: f64| (r - min) / span;
 

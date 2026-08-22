@@ -1,4 +1,6 @@
 //! Temporal decay. Evergreen sources are exempt.
+//!
+//! Decay is a voter, not a second store.
 
 pub fn temporal_decay(source: &str, age_days: f64, half_life_days: Option<f64>) -> f64 {
     if matches!(source, "global" | "workspace" | "user" | "evergreen") {

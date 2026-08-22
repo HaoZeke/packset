@@ -23,14 +23,14 @@ packset pin NAME        # scope retrieve and Remember
 
 - One writer. Working tree is not the pack.
 - `Remember:` / `Prefer:` are instant. One claim per atom.
-- Search merge is host Borda, then optional MMR.
+- Search merge is a host voter panel. Default is Borda then MMR.
 - Tool dumps and fetched bodies are not atoms.
 
 ## Crates
 
 | Crate | Role |
 |---|---|
-| `packset-core` | atom schema, Borda, MMR, decay, extract filters |
+| `packset-core` | atom schema, named fuse/diversify panel, decay, extract filters |
 | `packset-client` | HTTP client |
 | `packset-milli` | inverted-index projection (build on the remote builder) |
 

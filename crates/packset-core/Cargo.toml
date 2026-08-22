@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Atom schema, Borda merge, MMR, decay, extract filters"
+description = "Atom schema, named fuse/diversify panel, decay, extract filters"
 
 [dependencies]
 serde.workspace = true

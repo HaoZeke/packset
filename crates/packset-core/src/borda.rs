@@ -1,4 +1,6 @@
 //! Host Borda: score = k - position. First place is k-1.
+//!
+//! Fuse slot. Other fuse voters take the same [`Ballot`] type.
 
 use std::collections::HashMap;
 use std::hash::Hash;
