@@ -1,6 +1,6 @@
-//! Maximal marginal relevance after Borda.
+//! Maximal marginal relevance after fuse.
 //!
-//! MMR(d) = lambda * rel'(d) - (1-lambda) * max Jaccard(d, selected).
+//! Diversify slot. MMR(d) = lambda * rel'(d) - (1-lambda) * max Jaccard(d, selected).
 
 use std::collections::HashSet;
 
