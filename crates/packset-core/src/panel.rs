@@ -8,6 +8,7 @@ use std::hash::Hash;
 
 use crate::borda::{borda_merge, Ballot};
 use crate::mmr::{mmr_rerank, Ranked};
+use crate::rrf::rrf_merge;
 
 /// Fuse slot. Only implemented names parse.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -15,6 +16,7 @@ use crate::mmr::{mmr_rerank, Ranked};
 pub enum Fuse {
     #[default]
     Borda,
+    Rrf,
 }
 
 /// Diversify slot. `None` keeps fuse order.
@@ -46,6 +48,7 @@ impl Fuse {
     pub fn parse(name: &str) -> Result<Self, UnknownVoter> {
         match name {
             "borda" => Ok(Self::Borda),
+            "rrf" => Ok(Self::Rrf),
             other => Err(UnknownVoter::Fuse(other.to_string())),
         }
     }
@@ -53,6 +56,7 @@ impl Fuse {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Borda => "borda",
+            Self::Rrf => "rrf",
         }
     }
 }
@@ -97,6 +101,11 @@ impl Panel {
     {
         match self.fuse {
             Fuse::Borda => borda_merge(ballots, k),
+            Fuse::Rrf => {
+                let mut out = rrf_merge(ballots, 60);
+                out.truncate(k);
+                out
+            }
         }
     }
 
@@ -179,6 +188,24 @@ mod tests {
         };
         let items = keep_dup_other();
         assert_eq!(panel.rerank(&items, 0.7), vec!["keep", "dup", "other"]);
+    }
+
+    #[test]
+    fn parse_rrf_calls_rrf_merge() {
+        assert_eq!(Fuse::parse("rrf").unwrap(), Fuse::Rrf);
+        assert_eq!(Fuse::Rrf.as_str(), "rrf");
+        let panel = Panel::parse("rrf", "mmr").unwrap();
+        assert_eq!(panel.fuse, Fuse::Rrf);
+        assert_eq!(panel.diversify, Diversify::Mmr);
+        let a = vec!["x", "y", "z"];
+        let b = vec!["y", "x", "z"];
+        let c = vec!["z"];
+        let out = Panel {
+            fuse: Fuse::Rrf,
+            diversify: Diversify::None,
+        }
+        .fuse_merge(&[a, b, c], 3);
+        assert_eq!(out[0], "z");
     }
 
     #[test]

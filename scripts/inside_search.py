@@ -710,7 +710,7 @@ class UnknownVoter(ValueError):
 
 
 def parse_fuse(name: str) -> str:
-    if name == "borda":
+    if name in {"borda", "rrf"}:
         return name
     raise UnknownVoter(f"unknown fuse {name}")
 
@@ -748,6 +748,10 @@ def _merge_hits(
     if fuse == "borda":
         ranked, scores = borda_scores(
             [_ballot_keys(primary), _ballot_keys(secondary)], limit
+        )
+    elif fuse == "rrf":
+        ranked, scores = rrf_scores(
+            [_ballot_keys(primary), _ballot_keys(secondary)], 60
         )
     else:
         raise UnknownVoter(f"unknown fuse {fuse}")

@@ -437,6 +437,27 @@ class SearchTests(unittest.TestCase):
         ]
         self.assertEqual(ids, ["b", "a", "c"])
 
+    def test_parse_rrf_is_a_fuse(self):
+        self.assertEqual(inside_search.parse_fuse("rrf"), "rrf")
+        self.assertEqual(inside_search.resolve_panel("rrf", "mmr"), ("rrf", "mmr"))
+        left = [
+            {"field": "atom", "id": "x", "text": "x", "score": 1.0},
+            {"field": "atom", "id": "y", "text": "y", "score": 0.5},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        right = [
+            {"field": "atom", "id": "y", "text": "y", "score": 1.0},
+            {"field": "atom", "id": "x", "text": "x", "score": 0.5},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        ids = [
+            h["id"]
+            for h in inside_search._merge_hits(
+                left, right, 3, fuse="rrf", diversify="none"
+            )
+        ]
+        self.assertEqual(ids, ["x", "y", "z"])
+
     def test_unknown_voter_is_error(self):
         with self.assertRaises(inside_search.UnknownVoter):
             inside_search.parse_fuse("not-a-voter")
