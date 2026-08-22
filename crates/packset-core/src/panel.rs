@@ -7,6 +7,7 @@
 use std::hash::Hash;
 
 use crate::borda::{borda_merge, Ballot};
+use crate::copeland::copeland_merge;
 use crate::mmr::{mmr_rerank, Ranked};
 use crate::rrf::rrf_merge;
 
@@ -17,6 +18,7 @@ pub enum Fuse {
     #[default]
     Borda,
     Rrf,
+    Copeland,
 }
 
 /// Diversify slot. `None` keeps fuse order.
@@ -49,6 +51,7 @@ impl Fuse {
         match name {
             "borda" => Ok(Self::Borda),
             "rrf" => Ok(Self::Rrf),
+            "copeland" => Ok(Self::Copeland),
             other => Err(UnknownVoter::Fuse(other.to_string())),
         }
     }
@@ -57,6 +60,7 @@ impl Fuse {
         match self {
             Self::Borda => "borda",
             Self::Rrf => "rrf",
+            Self::Copeland => "copeland",
         }
     }
 }
@@ -106,6 +110,7 @@ impl Panel {
                 out.truncate(k);
                 out
             }
+            Fuse::Copeland => copeland_merge(ballots, k),
         }
     }
 
@@ -209,6 +214,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_copeland_calls_copeland_merge() {
+        assert_eq!(Fuse::parse("copeland").unwrap(), Fuse::Copeland);
+        assert_eq!(Fuse::Copeland.as_str(), "copeland");
+        let panel = Panel::parse("copeland", "mmr").unwrap();
+        assert_eq!(panel.fuse, Fuse::Copeland);
+        assert_eq!(panel.diversify, Diversify::Mmr);
+        let ballots = [
+            vec!["a", "c", "d", "e", "f"],
+            vec!["a", "c", "d", "e", "f"],
+            vec!["a", "c", "d", "e", "f"],
+            vec!["c", "d", "e", "f", "a"],
+            vec!["d", "e", "f", "c", "a"],
+        ];
+        let out = Panel {
+            fuse: Fuse::Copeland,
+            diversify: Diversify::None,
+        }
+        .fuse_merge(&ballots, 5);
+        assert_eq!(out[0], "a");
+    }
+
+    #[test]
     fn unknown_name_is_error() {
         assert!(matches!(
             Fuse::parse("not-a-voter"),
@@ -221,5 +248,6 @@ mod tests {
         assert!(Panel::parse("borda", "not-a-voter").is_err());
         assert!(Fuse::parse("").is_err());
         assert!(Fuse::parse("Borda").is_err());
+        assert!(Fuse::parse("Copeland").is_err());
     }
 }
