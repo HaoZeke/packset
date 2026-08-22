@@ -491,6 +491,33 @@ class SearchTests(unittest.TestCase):
         ]
         self.assertEqual(ids, ["x", "y", "z"])
 
+    def test_parse_dowdall_is_a_fuse(self):
+        self.assertEqual(inside_search.parse_fuse("dowdall"), "dowdall")
+        self.assertEqual(
+            inside_search.resolve_panel("dowdall", "none"), ("dowdall", "none")
+        )
+        first = [
+            {"field": "atom", "id": "a", "text": "a", "score": 1.0},
+            {"field": "atom", "id": "c", "text": "c", "score": 0.4},
+            {"field": "atom", "id": "d", "text": "d", "score": 0.3},
+            {"field": "atom", "id": "e", "text": "e", "score": 0.2},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        second = [
+            {"field": "atom", "id": "b", "text": "b", "score": 1.0},
+            {"field": "atom", "id": "c", "text": "c", "score": 0.4},
+            {"field": "atom", "id": "d", "text": "d", "score": 0.3},
+            {"field": "atom", "id": "e", "text": "e", "score": 0.2},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        ids = [
+            h["id"]
+            for h in inside_search._merge_hits(
+                first, second, 5, fuse="dowdall", diversify="none"
+            )
+        ]
+        self.assertEqual(ids[0], "a")
+
     def test_unknown_voter_is_error(self):
         with self.assertRaises(inside_search.UnknownVoter):
             inside_search.parse_fuse("not-a-voter")

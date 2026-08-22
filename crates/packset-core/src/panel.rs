@@ -7,6 +7,7 @@
 use std::hash::Hash;
 
 use crate::borda::{borda_merge, Ballot};
+use crate::dowdall::dowdall_merge;
 use crate::mmr::{mmr_rerank, Ranked};
 use crate::rrf::rrf_merge;
 
@@ -17,6 +18,7 @@ pub enum Fuse {
     #[default]
     Borda,
     Rrf,
+    Dowdall,
 }
 
 /// Diversify slot. `None` keeps fuse order.
@@ -49,6 +51,7 @@ impl Fuse {
         match name {
             "borda" => Ok(Self::Borda),
             "rrf" => Ok(Self::Rrf),
+            "dowdall" => Ok(Self::Dowdall),
             other => Err(UnknownVoter::Fuse(other.to_string())),
         }
     }
@@ -57,6 +60,7 @@ impl Fuse {
         match self {
             Self::Borda => "borda",
             Self::Rrf => "rrf",
+            Self::Dowdall => "dowdall",
         }
     }
 }
@@ -106,6 +110,7 @@ impl Panel {
                 out.truncate(k);
                 out
             }
+            Fuse::Dowdall => dowdall_merge(ballots, k),
         }
     }
 
@@ -209,6 +214,24 @@ mod tests {
     }
 
     #[test]
+    fn parse_dowdall_calls_dowdall_merge() {
+        assert_eq!(Fuse::parse("dowdall").unwrap(), Fuse::Dowdall);
+        assert_eq!(Fuse::Dowdall.as_str(), "dowdall");
+        let panel = Panel::parse("dowdall", "mmr").unwrap();
+        assert_eq!(panel.fuse, Fuse::Dowdall);
+        assert_eq!(panel.diversify, Diversify::Mmr);
+        let a = vec!["a", "c", "d", "e", "z"];
+        let b = vec!["b", "c", "d", "e", "z"];
+        let c = vec!["a", "b", "c", "d", "z"];
+        let out = Panel {
+            fuse: Fuse::Dowdall,
+            diversify: Diversify::None,
+        }
+        .fuse_merge(&[a, b, c], 5);
+        assert_eq!(out[0], "a");
+    }
+
+    #[test]
     fn unknown_name_is_error() {
         assert!(matches!(
             Fuse::parse("not-a-voter"),
@@ -221,5 +244,6 @@ mod tests {
         assert!(Panel::parse("borda", "not-a-voter").is_err());
         assert!(Fuse::parse("").is_err());
         assert!(Fuse::parse("Borda").is_err());
+        assert!(Fuse::parse("Dowdall").is_err());
     }
 }
