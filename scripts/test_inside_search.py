@@ -351,6 +351,24 @@ class SearchTests(unittest.TestCase):
             [("f", "b"), ("f", "a"), ("f", "c")],
         )
 
+    def test_rrf_two_lists_of_three(self):
+        left = [("f", "x"), ("f", "y"), ("f", "z")]
+        right = [("f", "y"), ("f", "x"), ("f", "z")]
+        self.assertEqual(inside_search.rrf_merge([left, right], 60), left)
+
+    def test_rrf_omitted_rank_lifts_z_above_borda_last(self):
+        left = [("f", "x"), ("f", "y"), ("f", "z")]
+        right = [("f", "y"), ("f", "x"), ("f", "z")]
+        only_z = [("f", "z")]
+        self.assertEqual(
+            inside_search.borda_merge([left, right, only_z], 3),
+            left,
+        )
+        self.assertEqual(
+            inside_search.rrf_merge([left, right, only_z], 60)[0],
+            ("f", "z"),
+        )
+
     def test_merge_is_borda_not_primary_dedupe(self):
         primary = [
             {"field": "atom", "id": "a", "text": "alpha one", "score": 1.0},
@@ -418,6 +436,27 @@ class SearchTests(unittest.TestCase):
             )
         ]
         self.assertEqual(ids, ["b", "a", "c"])
+
+    def test_parse_rrf_is_a_fuse(self):
+        self.assertEqual(inside_search.parse_fuse("rrf"), "rrf")
+        self.assertEqual(inside_search.resolve_panel("rrf", "mmr"), ("rrf", "mmr"))
+        left = [
+            {"field": "atom", "id": "x", "text": "x", "score": 1.0},
+            {"field": "atom", "id": "y", "text": "y", "score": 0.5},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        right = [
+            {"field": "atom", "id": "y", "text": "y", "score": 1.0},
+            {"field": "atom", "id": "x", "text": "x", "score": 0.5},
+            {"field": "atom", "id": "z", "text": "z", "score": 0.1},
+        ]
+        ids = [
+            h["id"]
+            for h in inside_search._merge_hits(
+                left, right, 3, fuse="rrf", diversify="none"
+            )
+        ]
+        self.assertEqual(ids, ["x", "y", "z"])
 
     def test_unknown_voter_is_error(self):
         with self.assertRaises(inside_search.UnknownVoter):
