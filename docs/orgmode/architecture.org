@@ -16,7 +16,10 @@ milli is a projection. Every agent is an HTTP client.
 | Crate / script | Role |
 |---|---|
 | =packsetd.py= | writer |
-| =packset-core= | named fuse/diversify panel, decay, extract filters |
+| =packset-core= | named fuse/diversify/decay panel, extract filters |
+
+Host panel env: =PACKSET_FUSE= =PACKSET_DIVERSIFY= =PACKSET_DECAY=.
+Default =borda= / =mmr= / =off=. Unknown names fail closed.
 | =packset-client= | HTTP |
 | =packset-milli= | search projection |
 

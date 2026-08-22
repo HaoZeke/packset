@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -703,63 +704,138 @@ def mmr_rerank(
 
 DEFAULT_FUSE = "borda"
 DEFAULT_DIVERSIFY = "mmr"
+DEFAULT_DECAY = "off"
+ENV_FUSE = "PACKSET_FUSE"
+ENV_DIVERSIFY = "PACKSET_DIVERSIFY"
+ENV_DECAY = "PACKSET_DECAY"
+_IMPLEMENTED_FUSE = frozenset({"borda", "rrf"})
+_RESERVED_FUSE = frozenset(
+    {"dowdall", "combmnz", "kemeny", "schulze", "copeland", "tideman"}
+)
+_IMPLEMENTED_DIVERSIFY = frozenset({"mmr", "none"})
+_RESERVED_DIVERSIFY = frozenset({"dpp"})
 
 
 class UnknownVoter(ValueError):
-    """A fuse or diversify name that is not an implemented voter."""
+    """A fuse, diversify, or decay name that is not an implemented voter."""
 
 
 def parse_fuse(name: str) -> str:
-    if name in {"borda", "rrf"}:
+    if name in _IMPLEMENTED_FUSE:
         return name
+    if name in _RESERVED_FUSE:
+        raise UnknownVoter(f"not implemented fuse {name}")
     raise UnknownVoter(f"unknown fuse {name}")
 
 
 def parse_diversify(name: str) -> str:
-    if name in {"mmr", "none"}:
+    if name in _IMPLEMENTED_DIVERSIFY:
         return name
+    if name in _RESERVED_DIVERSIFY:
+        raise UnknownVoter(f"not implemented diversify {name}")
     raise UnknownVoter(f"unknown diversify {name}")
 
 
+def parse_decay(name: str) -> str:
+    if name in {"on", "off"}:
+        return name
+    raise UnknownVoter(f"unknown decay {name}")
+
+
+def _env_or(key: str, default: str) -> str:
+    if key not in os.environ:
+        return default
+    return os.environ[key]
+
+
 def resolve_panel(
-    fuse: str = DEFAULT_FUSE, diversify: str = DEFAULT_DIVERSIFY
-) -> tuple[str, str]:
-    """Host sequence. Clients do not choose this."""
-    return parse_fuse(fuse), parse_diversify(diversify)
+    fuse: str | None = None,
+    diversify: str | None = None,
+    decay: str | None = None,
+) -> tuple[str, str, str]:
+    """Host sequence from names or PACKSET_* env. Clients do not choose this."""
+    if fuse is None:
+        fuse = _env_or(ENV_FUSE, DEFAULT_FUSE)
+    if diversify is None:
+        diversify = _env_or(ENV_DIVERSIFY, DEFAULT_DIVERSIFY)
+    if decay is None:
+        decay = _env_or(ENV_DECAY, DEFAULT_DECAY)
+    return parse_fuse(fuse), parse_diversify(diversify), parse_decay(decay)
 
 
-def _merge_hits(
-    primary: list[dict[str, Any]],
-    secondary: list[dict[str, Any]],
+def bind_host_panel(
+    fuse: str | None = None,
+    diversify: str | None = None,
+    decay: str | None = None,
+) -> tuple[str, str, str]:
+    """Resolve and publish the host panel into PACKSET_* env."""
+    fuse, diversify, decay = resolve_panel(fuse, diversify, decay)
+    os.environ[ENV_FUSE] = fuse
+    os.environ[ENV_DIVERSIFY] = diversify
+    os.environ[ENV_DECAY] = decay
+    return fuse, diversify, decay
+
+
+def temporal_decay(
+    source: str, age_days: float, half_life_days: float | None
+) -> float:
+    """Half-life weight. Evergreen sources stay 1.0."""
+    if source in {"global", "workspace", "user", "evergreen"}:
+        return 1.0
+    if half_life_days is None or half_life_days <= 0:
+        return 1.0
+    return math.exp(-math.log(2.0) / half_life_days * max(age_days, 0.0))
+
+
+def _hit_decay_weight(hit: dict[str, Any]) -> float:
+    source = str(hit.get("kind") or hit.get("field") or "")
+    ts = hit.get("ts")
+    if not ts:
+        return 1.0
+    try:
+        when = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return 1.0
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    days = max(0.0, (datetime.now(UTC) - when).total_seconds() / 86400.0)
+    return temporal_decay(source, days, _RECENCY_HALF_LIFE_DAYS)
+
+
+def _merge_ballots(
+    ballots: list[list[dict[str, Any]]],
     limit: int,
     *,
-    fuse: str = DEFAULT_FUSE,
-    diversify: str = DEFAULT_DIVERSIFY,
+    fuse: str | None = None,
+    diversify: str | None = None,
+    decay: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Named fuse then diversify. Default is Borda then MMR. Not de-dupe."""
+    """Named fuse then diversify then decay. Default is Borda then MMR, decay off."""
     if limit <= 0:
         return []
-    fuse, diversify = resolve_panel(fuse, diversify)
+    fuse, diversify, decay = resolve_panel(fuse, diversify, decay)
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    for hit in secondary:
-        by_key[_hit_key(hit)] = hit
-    for hit in primary:
-        by_key[_hit_key(hit)] = hit
+    for hits in reversed(ballots):
+        for hit in hits:
+            by_key[_hit_key(hit)] = hit
+    keys = [_ballot_keys(hits) for hits in ballots]
     if fuse == "borda":
-        ranked, scores = borda_scores(
-            [_ballot_keys(primary), _ballot_keys(secondary)], limit
-        )
+        ranked, scores = borda_scores(keys, limit)
     elif fuse == "rrf":
-        ranked, scores = rrf_scores(
-            [_ballot_keys(primary), _ballot_keys(secondary)], 60
-        )
+        ranked, scores = rrf_scores(keys, 60)
     else:
         raise UnknownVoter(f"unknown fuse {fuse}")
+    weights = {key: float(scores.get(key, 0)) for key in ranked}
+    if decay == "on":
+        for key in ranked:
+            weights[key] *= _hit_decay_weight(by_key[key])
+        order_index = {key: i for i, key in enumerate(ranked)}
+        ranked = sorted(ranked, key=lambda key: (-weights[key], order_index[key]))
     items: list[tuple[tuple[str, str], float, set[str]]] = []
     for key in ranked:
         hit = by_key[key]
         toks = set(_TOKEN.findall(str(hit.get("text") or "").lower()))
-        items.append((key, float(scores.get(key, 0)), toks))
+        items.append((key, weights[key], toks))
     if diversify == "mmr":
         order = mmr_rerank(items)
     elif diversify == "none":
@@ -767,6 +843,25 @@ def _merge_hits(
     else:
         raise UnknownVoter(f"unknown diversify {diversify}")
     return [by_key[key] for key in order][:limit]
+
+
+def _merge_hits(
+    primary: list[dict[str, Any]],
+    secondary: list[dict[str, Any]],
+    limit: int,
+    *,
+    fuse: str | None = None,
+    diversify: str | None = None,
+    decay: str | None = None,
+) -> list[dict[str, Any]]:
+    """Named fuse then diversify. Default is Borda then MMR. Not de-dupe."""
+    return _merge_ballots(
+        [primary, secondary],
+        limit,
+        fuse=fuse,
+        diversify=diversify,
+        decay=decay,
+    )
 
 
 def _merge_dense(
