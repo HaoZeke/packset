@@ -16,7 +16,7 @@ import inside_set
 
 
 def claims(selected: dict[str, Any]) -> str:
-    return "\n".join(item["text"] for item in inside_policy.items_from_selected(selected))
+    return inside_policy._selected_text(selected)
 
 
 def review_pack(extra_atoms: list[dict[str, Any]] | None = None) -> dict[str, Any]:
