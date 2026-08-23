@@ -26,9 +26,11 @@ packset-tui --dump      # GET /v1/atoms as TSV
 packset-tui --bump ID   # POST /v1/atoms/update {workspace, id, fields:{}}
 ```
 
-`b` bumps the selected row's `ts`. `w` picks another workspace (type a
-name or choose from `/v1/workspaces`). `[` / `]` cycle. Urgency is a
-column only when an atom carries that field.
+The interactive app opens on identity, then on `global` (or another
+store with live atoms) when identity is empty. `b` bumps the selected
+row's `ts`. `w` picks another workspace (type a name or choose from
+`/v1/workspaces`). `[` / `]` cycle. Urgency is a column only when an
+atom carries that field.
 
 ## Law
 

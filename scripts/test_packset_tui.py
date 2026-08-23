@@ -27,6 +27,7 @@ from packset_tui.atoms import (  # noqa: E402
     fetch_atoms,
     list_workspaces,
     packset_url,
+    resolve_workspace,
     table_columns,
     table_row,
     workspace_from_identity,
@@ -188,6 +189,28 @@ class PacksetTuiTests(unittest.TestCase):
     def test_workspace_identity(self):
         ws = workspace_from_identity(self.base, Path(self.tmp.name))
         self.assertTrue(ws.startswith(("dir:", "git:")))
+
+    def test_resolve_workspace_picks_global_when_identity_empty(self):
+        self.store.add(
+            {
+                "workspace": "global",
+                "text": "Always put work on the graph before starting.",
+                "kind": "lesson",
+                "level": "explicit",
+                "about_peer": "rgoswami",
+                "by_peer": "hermes",
+            }
+        )
+        old = os.environ.get("PACKSET_WORKSPACE")
+        os.environ["PACKSET_WORKSPACE"] = "dir:/empty-identity"
+        try:
+            self.assertEqual(resolve_workspace(self.base), "global")
+            self.assertEqual(resolve_workspace(self.base, "dir:/empty-identity"), "dir:/empty-identity")
+        finally:
+            if old is None:
+                os.environ.pop("PACKSET_WORKSPACE", None)
+            else:
+                os.environ["PACKSET_WORKSPACE"] = old
 
     def test_list_workspaces_includes_global_and_posted(self):
         self.post_atom()

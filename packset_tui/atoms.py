@@ -22,6 +22,24 @@ def packset_url() -> str:
     return DEFAULT_URL
 
 
+def resolve_workspace(base: str, explicit: str | None = None) -> str:
+    """Interactive default: identity, then a store that actually has atoms."""
+    if explicit and explicit.strip():
+        return explicit.strip()
+    chosen = workspace_name(base)
+    atoms, err = fetch_atoms(base, chosen)
+    if err or atoms:
+        return chosen
+    names = [
+        str(row["name"])
+        for row in list_workspaces(base, extra=[chosen, "global"])
+        if row.get("name") and row["name"] != chosen and int(row.get("live") or 0) > 0
+    ]
+    if "global" in names:
+        return "global"
+    return names[0] if names else chosen
+
+
 def workspace_name(base: str | None = None) -> str:
     raw = (os.environ.get("PACKSET_WORKSPACE") or "").strip()
     if raw and raw.lower() != "off":

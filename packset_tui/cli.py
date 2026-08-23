@@ -11,6 +11,7 @@ from packset_tui.atoms import (
     dump_table,
     fetch_atoms,
     packset_url,
+    resolve_workspace,
     workspace_name,
 )
 
@@ -59,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     from packset_tui.app import PacksetApp
 
-    PacksetApp(base=base, workspace=workspace).run()
+    PacksetApp(base=base, workspace=resolve_workspace(base, args.workspace)).run()
     return 0
 
 
