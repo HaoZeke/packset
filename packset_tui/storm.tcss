@@ -1,0 +1,31 @@
+/* Tokyo Night Storm. Resize is layout, not padded SGR rows. */
+Screen {
+    background: #24283b;
+    color: #c0caf5;
+}
+
+Header {
+    background: #1f2335;
+    color: #7aa2f7;
+}
+
+Footer {
+    background: #1f2335;
+    color: #a9b1d6;
+}
+
+DataTable {
+    background: #24283b;
+    color: #c0caf5;
+}
+
+DataTable > .datatable--cursor {
+    background: #3d59a1;
+    color: #c0caf5;
+}
+
+DataTable > .datatable--header {
+    background: #1f2335;
+    color: #7aa2f7;
+    text-style: bold;
+}
