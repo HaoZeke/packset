@@ -142,10 +142,11 @@ def test_mmr_after_borda_splits_near_duplicates() -> None:
 
 
 def test_linear_when_milli_absent() -> None:
+    if inside_search.milli_bin() is not None:
+        pytest.skip("inside-milli binary is present")
     pack = {"workspace": WS, "user": "Be brief.", "memory": "", "atoms": []}
     hits, engine = inside_search.search_pack_with_engine(pack, "brief")
-    if inside_search.milli_bin() is None:
-        assert engine == "linear"
+    assert engine == "linear"
     assert any(h["field"] == "user" for h in hits)
 
 
