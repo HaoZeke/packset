@@ -25,6 +25,7 @@ from packset_tui.atoms import (  # noqa: E402
     bump_ts,
     dump_table,
     fetch_atoms,
+    list_workspaces,
     packset_url,
     table_columns,
     table_row,
@@ -187,6 +188,40 @@ class PacksetTuiTests(unittest.TestCase):
     def test_workspace_identity(self):
         ws = workspace_from_identity(self.base, Path(self.tmp.name))
         self.assertTrue(ws.startswith(("dir:", "git:")))
+
+    def test_list_workspaces_includes_global_and_posted(self):
+        self.post_atom()
+        rows = {row["name"]: row["live"] for row in list_workspaces(self.base)}
+        self.assertIn("global", rows)
+        self.assertEqual(rows[self.ws], 1)
+
+    def test_app_cycle_workspace_loads_global_atoms(self):
+        try:
+            import asyncio
+
+            from packset_tui.app import PacksetApp
+        except ImportError:
+            self.skipTest("textual not installed")
+        self.store.add(
+            {
+                "workspace": "global",
+                "text": "Always put work on the graph before starting.",
+                "kind": "lesson",
+                "level": "explicit",
+                "about_peer": "rgoswami",
+                "by_peer": "hermes",
+            }
+        )
+        app = PacksetApp(base=self.base, workspace=self.ws)
+
+        async def run() -> tuple[str, int]:
+            async with app.run_test() as pilot:
+                await pilot.press("]")
+                return app.workspace, len(app._ids)
+
+        workspace, n = asyncio.run(run())
+        self.assertEqual(workspace, "global")
+        self.assertEqual(n, 1)
 
     def test_workspace_env(self):
         old = os.environ.get("PACKSET_WORKSPACE")

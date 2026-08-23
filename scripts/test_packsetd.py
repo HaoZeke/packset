@@ -105,6 +105,23 @@ def test_get_atom_by_id(packset: Packset) -> None:
     assert gone.value.code == 404
 
 
+def test_workspaces_lists_global_and_live(packset: Packset) -> None:
+    status, raw = packset.get("/v1/workspaces")
+    assert status == 200
+    empty = json.loads(raw.decode())["workspaces"]
+    assert {"name": "global", "live": 0} in empty
+    packset.json("POST", "/v1/atoms", voice())
+    packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(workspace="global", text="A global lesson stays on the global store."),
+    )
+    _, listed = packset.get("/v1/workspaces")
+    rows = {row["name"]: row["live"] for row in json.loads(listed.decode())["workspaces"]}
+    assert rows[WS] == 1
+    assert rows["global"] == 1
+
+
 def test_get_empty_workspace_is_none(packset: Packset) -> None:
     packset.json("POST", "/v1/atoms", voice())
     assert packset.store.get("", "any") is None

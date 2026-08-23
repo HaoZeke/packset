@@ -26,8 +26,9 @@ packset-tui --dump      # GET /v1/atoms as TSV
 packset-tui --bump ID   # POST /v1/atoms/update {workspace, id, fields:{}}
 ```
 
-`b` bumps the selected row's `ts`. Urgency is a column only when an atom
-carries that field.
+`b` bumps the selected row's `ts`. `w` picks another workspace (type a
+name or choose from `/v1/workspaces`). `[` / `]` cycle. Urgency is a
+column only when an atom carries that field.
 
 ## Law
 

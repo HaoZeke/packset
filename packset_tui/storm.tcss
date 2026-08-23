@@ -73,3 +73,30 @@ DataTable > .datatable--header {
 DataTable > .datatable--odd-row {
     background: #1f2335;
 }
+
+#workspace-dialog {
+    width: 72;
+    height: auto;
+    max-height: 80%;
+    padding: 1 1;
+    background: #1f2335;
+    border: tall #7aa2f7;
+}
+
+#workspace-hint {
+    color: #7aa2f7;
+    padding: 0 0 1 0;
+}
+
+#workspace-input {
+    background: #24283b;
+    color: #c0caf5;
+    border: tall #565f89;
+}
+
+#workspace-list {
+    height: auto;
+    max-height: 16;
+    background: #24283b;
+    color: #c0caf5;
+}

@@ -290,6 +290,22 @@ class Store:
             instructions = cards.get("instructions") or ""
         return {"workspace": workspace, "set": named, "instructions": instructions}
 
+    def workspaces(self) -> list[dict]:
+        """Distinct workspace ids with live counts. Always includes global."""
+        now = inside_memory.utcnow()
+        counts: dict[str, int] = {}
+        with self.lock:
+            for rec in self._scan(None):
+                name = rec.get("workspace")
+                if not isinstance(name, str) or not name:
+                    continue
+                if inside_memory.is_live(rec, now):
+                    counts[name] = counts.get(name, 0) + 1
+                else:
+                    counts.setdefault(name, 0)
+        counts.setdefault("global", 0)
+        return [{"name": name, "live": counts[name]} for name in sorted(counts)]
+
     def status(self, workspace: str | None = None) -> dict:
         """Seat home, atom counts, pin, milli, and embedder. Optional workspace scope."""
         live_by_kind: dict[str, int] = {}
@@ -392,6 +408,9 @@ def make_handler(store: Store):
             if parsed.path == "/v1/status":
                 workspace = (qs.get("workspace") or [""])[0] or None
                 self._send(200, store.status(workspace))
+                return
+            if parsed.path == "/v1/workspaces":
+                self._send(200, {"workspaces": store.workspaces()})
                 return
             if parsed.path == "/v1/identity":
                 cwd = (qs.get("cwd") or [os.getcwd()])[0]

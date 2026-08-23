@@ -47,6 +47,35 @@ def workspace_from_identity(base: str, cwd: Path) -> str:
     return f"dir:{abs_cwd}"
 
 
+def list_workspaces(
+    base: str,
+    extra: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Workspace ids the writer knows, plus extras (global, current, identity)."""
+    by_name: dict[str, int] = {}
+    url = f"{base.rstrip('/')}/v1/workspaces"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            body = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        body = {}
+    rows = body.get("workspaces") if isinstance(body, dict) else None
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict):
+                name = str(row.get("name") or "").strip()
+                if name:
+                    by_name[name] = int(row.get("live") or 0)
+            elif isinstance(row, str) and row.strip():
+                by_name[row.strip()] = by_name.get(row.strip(), 0)
+    for name in extra or []:
+        cleaned = name.strip()
+        if cleaned:
+            by_name.setdefault(cleaned, 0)
+    by_name.setdefault("global", 0)
+    return [{"name": name, "live": by_name[name]} for name in sorted(by_name)]
+
+
 def fetch_atoms(base: str, workspace: str) -> tuple[list[dict[str, Any]], str]:
     q = urllib.parse.urlencode({"workspace": workspace})
     url = f"{base.rstrip('/')}/v1/atoms?{q}"

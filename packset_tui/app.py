@@ -9,12 +9,16 @@ from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Footer, Header, Input, OptionList, Static
+from textual.widgets.option_list import Option
 
 from packset_tui.atoms import (
     BASE_COLUMNS,
     bump_ts,
     fetch_atoms,
+    list_workspaces,
     packset_url,
     table_columns,
     table_row,
@@ -23,12 +27,62 @@ from packset_tui.atoms import (
 from packset_tui.theme import CSS_FILES
 
 
+class WorkspaceScreen(ModalScreen[str | None]):
+    """Pick a workspace id the writer already has, or type one."""
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "dismiss", "Close", show=False),
+    ]
+
+    def __init__(self, rows: list[dict], current: str) -> None:
+        super().__init__()
+        self._rows = rows
+        self._current = current
+
+    def compose(self) -> ComposeResult:
+        options = [
+            Option(f"{row['name']}  ({row['live']})", id=f"ws-{idx}")
+            for idx, row in enumerate(self._rows)
+        ]
+        with Vertical(id="workspace-dialog"):
+            yield Static("workspace  enter name or pick", id="workspace-hint")
+            yield Input(value=self._current, placeholder="workspace", id="workspace-input")
+            yield OptionList(*options, id="workspace-list")
+
+    def on_mount(self) -> None:
+        self.query_one("#workspace-input", Input).focus()
+        names = [str(row["name"]) for row in self._rows]
+        if self._current in names:
+            self.query_one("#workspace-list", OptionList).highlighted = names.index(
+                self._current
+            )
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        name = event.value.strip()
+        self.dismiss(name or None)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        ident = str(event.option.id or "")
+        if ident.startswith("ws-"):
+            idx = int(ident.removeprefix("ws-"))
+            if 0 <= idx < len(self._rows):
+                self.dismiss(str(self._rows[idx]["name"]))
+                return
+        self.dismiss(None)
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
+
+
 class PacksetApp(App[None]):
     CSS_PATH = CSS_FILES
     TITLE = "packset"
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("b", "bump", "Bump ts"),
         Binding("r", "refresh", "Refresh"),
+        Binding("w", "workspace", "Workspace"),
+        Binding("[", "workspace_prev", "Prev ws"),
+        Binding("]", "workspace_next", "Next ws"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -59,6 +113,17 @@ class PacksetApp(App[None]):
     def _set_status(self, text: str) -> None:
         self.query_one("#status", Static).update(text)
 
+    def _catalog(self) -> list[dict]:
+        return list_workspaces(self.base, extra=[self.workspace, workspace_name(self.base)])
+
+    def set_workspace(self, name: str) -> None:
+        cleaned = name.strip()
+        if not cleaned or cleaned == self.workspace:
+            return
+        self.workspace = cleaned
+        self.sub_title = f"{self.base}  {self.workspace}"
+        self.refresh_table()
+
     def refresh_table(self) -> None:
         table = self.query_one(DataTable)
         atoms, err = fetch_atoms(self.base, self.workspace)
@@ -77,10 +142,39 @@ class PacksetApp(App[None]):
             aid = str(atom.get("id") or "")
             self._ids.append(aid)
             table.add_row(*table_row(atom, columns), key=aid)
-        self._set_status(f"{len(atoms)} atoms  {self.workspace}")
+        hint = ""
+        if not atoms:
+            others = [row for row in self._catalog() if row["name"] != self.workspace and row["live"]]
+            if others:
+                top = others[0]
+                hint = f"  w switch ({top['name']} has {top['live']})"
+        self._set_status(f"{len(atoms)} atoms  {self.workspace}{hint}")
 
     def action_refresh(self) -> None:
         self.refresh_table()
+
+    def action_workspace(self) -> None:
+        def picked(name: str | None) -> None:
+            if name:
+                self.set_workspace(name)
+
+        self.push_screen(WorkspaceScreen(self._catalog(), self.workspace), picked)
+
+    def action_workspace_prev(self) -> None:
+        self._cycle_workspace(-1)
+
+    def action_workspace_next(self) -> None:
+        self._cycle_workspace(1)
+
+    def _cycle_workspace(self, step: int) -> None:
+        names = [str(row["name"]) for row in self._catalog()]
+        if not names:
+            return
+        if self.workspace in names:
+            idx = names.index(self.workspace)
+        else:
+            idx = 0
+        self.set_workspace(names[(idx + step) % len(names)])
 
     def action_bump(self) -> None:
         table = self.query_one(DataTable)
