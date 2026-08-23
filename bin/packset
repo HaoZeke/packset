@@ -146,8 +146,17 @@ case "${1:-ensure}" in
             echo
         fi
         ;;
+    tui)
+        shift
+        if ! py="$(resolve_python)"; then
+            echo "packset: python3 not found" >&2
+            exit 1
+        fi
+        export PYTHONPATH="${root}${PYTHONPATH:+:$PYTHONPATH}"
+        exec $py -m packset_tui "$@"
+        ;;
     *)
-        echo "usage: packset ensure|start|stop|status|port|url|pin [NAME]" >&2
+        echo "usage: packset ensure|start|stop|status|port|url|pin [NAME]|tui" >&2
         exit 2
         ;;
 esac

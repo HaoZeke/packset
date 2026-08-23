@@ -18,6 +18,16 @@ packset pin NAME        # scope retrieve and Remember
 ```
 
 `PACKSET_URL` is the contract. `INSIDE_MEMORY_URL` is an alias.
+Default writer URL is `http://127.0.0.1:8761`.
+
+```
+packset-tui             # Textual DataTable (id, kind, text, ts)
+packset-tui --dump      # GET /v1/atoms as TSV
+packset-tui --bump ID   # POST /v1/atoms/update {workspace, id, fields:{}}
+```
+
+`b` bumps the selected row's `ts`. Urgency is a column only when an atom
+carries that field.
 
 ## Law
 

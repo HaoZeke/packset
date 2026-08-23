@@ -22,5 +22,6 @@ Host panel env: =PACKSET_FUSE= =PACKSET_DIVERSIFY= =PACKSET_DECAY=.
 Default =borda= / =mmr= / =off=. Unknown names fail closed.
 | =packset-client= | HTTP |
 | =packset-milli= | search projection |
+| =packset_tui= | Textual DataTable over GET /v1/atoms |
 
 Clients do not open the LMDB.
