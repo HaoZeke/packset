@@ -441,9 +441,9 @@ def test_search_ranks_live_atoms(packset: Packset) -> None:
     assert len(ids) == 1
     status, raw = packset.get(f"/v1/search?workspace={WS}&q=paper")
     payload = json.loads(raw.decode())
-    assert any(h["field"] == "memory" for h in payload["hits"])
+    assert [h["field"] for h in payload["hits"]] == ["memory"]
     client_hits = inside_policy.fetch_search(packset.url, WS, "joss")
-    assert stored["id"] in [h.get("id") for h in client_hits]
+    assert [h.get("id") for h in client_hits if h.get("field") == "atom"] == [stored["id"]]
 
 
 def test_tombstones_still_disappear_from_pack(packset: Packset) -> None:
@@ -509,7 +509,7 @@ def test_set_pack_matches_workspace_pack_shape(packset: Packset) -> None:
     assert "lessons" not in pack
     kinds = [a["set"] for a in pack["atoms"]]
     assert kinds == ["review"]
-    assert all("zircon" in a["text"] for a in pack["atoms"])
+    assert [a["text"] for a in pack["atoms"]] == ["Remember the zircon latch on reviews."]
 
 
 def test_same_claim_under_two_sets_is_two_atoms(packset: Packset) -> None:
@@ -532,12 +532,10 @@ def test_same_claim_under_two_sets_is_two_atoms(packset: Packset) -> None:
     assert status == 200
     hits = json.loads(raw.decode())["hits"]
     atom_ids = [h.get("id") for h in hits if h.get("field") == "atom"]
-    assert review["id"] in atom_ids
-    assert debug["id"] not in atom_ids
+    assert atom_ids == [review["id"]]
 
     client_hits = inside_policy.fetch_search(packset.url, WS, "zircon", set_name="review")
-    assert review["id"] in [h.get("id") for h in client_hits]
-    assert debug["id"] not in [h.get("id") for h in client_hits]
+    assert [h.get("id") for h in client_hits if h.get("field") == "atom"] == [review["id"]]
 
     _, neighbor = packset.json(
         "POST",
