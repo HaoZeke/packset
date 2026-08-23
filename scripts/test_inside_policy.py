@@ -204,7 +204,7 @@ def test_remote_turn_keeps_cache_pointer() -> None:
     )
     selected = inside_policy.select(pack(), hints)
     assert hints["wants_remote"]
-    assert "cache-pointer" in [atom["kind"] for atom in selected["tail_atoms"]]
+    assert [atom["kind"] for atom in selected["tail_atoms"]] == ["cache-pointer"]
 
 
 def test_head_prefix_is_byte_stable() -> None:
