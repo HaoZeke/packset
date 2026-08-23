@@ -117,59 +117,11 @@ def test_empty_workspace_status_counts_zero(packset: Packset) -> None:
     unscoped = packset.store.status(None)
     assert unscoped["live"] == 1
 
-    def test_get_atom_by_id(self):
-        _, posted = self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Reviews open with a reproducibility check.",
-                "kind": "voice",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-            },
-        )
-        status, raw = self.get(f"/v1/atoms/{posted['id']}?workspace={self.ws}")
-        self.assertEqual(status, 200)
-        got = json.loads(raw.decode())
-        self.assertEqual(got["id"], posted["id"])
-        self.assertEqual(got["text"], posted["text"])
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get(f"/v1/atoms/missing-id?workspace={self.ws}")
-        self.assertEqual(ctx.exception.code, 404)
-        self.store.delete(self.ws, posted["id"])
-        with self.assertRaises(urllib.error.HTTPError) as gone:
-            self.get(f"/v1/atoms/{posted['id']}?workspace={self.ws}")
-        self.assertEqual(gone.exception.code, 404)
 
-    def test_scan_empty_workspace_is_empty(self):
-        self.json_req(
-            "POST",
-            "/v1/atoms",
-            {
-                "workspace": self.ws,
-                "text": "Reviews open with a reproducibility check.",
-                "kind": "voice",
-                "level": "explicit",
-                "about_peer": "rgoswami",
-                "by_peer": "hermes",
-            },
-        )
-        self.assertEqual(self.store._scan(""), [])
-        self.assertEqual(self.store.get("", "any"), None)
-
-    def test_unknown_fuse_is_startup_error(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(SystemExit) as ctx:
-                packsetd.main(["--home", tmp, "--fuse", "not-a-voter"])
-        self.assertIn("unknown fuse", str(ctx.exception))
-
-    def test_unimplemented_fuse_is_startup_error(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(SystemExit) as ctx:
-                packsetd.main(["--home", tmp, "--fuse", "schulze"])
-        self.assertIn("not implemented", str(ctx.exception))
+def test_scan_empty_workspace_is_empty(packset: Packset) -> None:
+    packset.json("POST", "/v1/atoms", voice())
+    assert packset.store._scan("") == []
+    assert packset.store.get("", "any") is None
 
 
 def test_status_empty_and_scoped(packset: Packset) -> None:
@@ -579,3 +531,17 @@ def test_remember_refused_write_returns_400(
             workspace=WS,
         )
     assert ctx.value.code == 400
+
+
+@pytest.mark.parametrize(
+    ("args", "match"),
+    [
+        (["--fuse", "not-a-voter"], "unknown fuse"),
+        (["--fuse", "schulze"], "not implemented"),
+    ],
+    ids=["unknown", "unimplemented"],
+)
+def test_fuse_is_startup_error(tmp_path: Path, args: list[str], match: str) -> None:
+    with pytest.raises(SystemExit, match=match):
+        packsetd.main(["--home", str(tmp_path), *args])
+

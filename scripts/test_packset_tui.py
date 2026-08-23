@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from packset_tui.atoms import (
+from packset_tui.atoms import (  # noqa: E402
     BASE_COLUMNS,
     bump_ts,
     dump_table,
@@ -31,7 +31,7 @@ from packset_tui.atoms import (
     workspace_from_identity,
     workspace_name,
 )
-from packset_tui.cli import main
+from packset_tui.cli import main  # noqa: E402
 
 STORM = ROOT / "packset_tui" / "tokyo_night_storm.tcss"
 WIDGET_CSS = ROOT / "packset_tui" / "storm.tcss"
