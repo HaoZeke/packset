@@ -319,6 +319,14 @@ def is_due(atom: dict[str, Any], now: str | None = None) -> bool:
     return str(due_at) <= (now or utcnow())
 
 
+def latest_atoms(workspace: str, home: Path | None = None) -> list[dict[str, Any]]:
+    """Last non-tombstone record per id. Includes closed live atoms."""
+    seen: dict[str, dict[str, Any]] = {}
+    for rec in load_atoms(workspace, home):
+        seen[rec["id"]] = rec
+    return [a for a in seen.values() if not a.get("tombstone")]
+
+
 def due_atoms(
     workspace: str,
     home: Path | None = None,
@@ -326,10 +334,10 @@ def due_atoms(
     now: str | None = None,
     atoms: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Review queue. `atoms` is the caller set; else the live current set."""
+    """Review queue. `atoms` is the caller set; else latest non-tombstone records."""
     clock = now or utcnow()
     if atoms is None:
-        src = current_atoms(workspace, home)
+        src = latest_atoms(workspace, home)
     else:
         src = [a for a in atoms if isinstance(a, dict)]
     return [a for a in src if is_due(a, clock)]

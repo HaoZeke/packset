@@ -99,7 +99,7 @@ class Store:
             live = [
                 atom
                 for atom in self._scan(workspace)
-                if inside_memory.is_live(atom, now)
+                if inside_memory.is_live(atom, now) or inside_memory.is_due(atom, now)
             ]
             live = inside_memory.filter_live_links(live)
             if set_name:
