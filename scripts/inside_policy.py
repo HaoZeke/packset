@@ -283,13 +283,15 @@ def _selected_text(selected: dict[str, Any]) -> str:
     facts: list[str] = []
     used = 0
     for atom in sorted(selected.get("tail_atoms") or [], key=_atom_sort_key):
-        text = (atom.get("text") or "").strip()
-        if not text:
+        aid = str(atom.get("id") or "").strip()
+        kind = str(atom.get("kind") or "atom").strip() or "atom"
+        if not aid:
             continue
-        if used and used + len(text) + 1 > _ATOM_BUDGET:
+        line = f"`packset:{kind}:{aid}`"
+        if used and used + len(line) + 1 > _ATOM_BUDGET:
             break
-        facts.append(text)
-        used += len(text) + 1
+        facts.append(line)
+        used += len(line) + 1
     attach = (selected.get("attach") or "").strip()
     if attach:
         label = (selected.get("attach_label") or "").strip()

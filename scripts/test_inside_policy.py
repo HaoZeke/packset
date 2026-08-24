@@ -183,7 +183,8 @@ def test_review_turn_gets_voice_and_habit_not_cache() -> None:
     assert selected["user"] == source["user"]
     assert selected["memory"] == source["memory"]
     block = claims(selected)
-    assert "Reviews open with a reproducibility check." in block
+    assert "`packset:habit:h1`" in block
+    assert "Reviews open with a reproducibility check." not in block
     assert "Prefers Conventional Commits" not in block
     assert "Speaks in short sentences" not in block
     assert "Read paper.pdf first" not in block
@@ -239,8 +240,28 @@ def test_cards_and_facts_are_separate_sections() -> None:
     fact_at = block.find("Facts:")
     assert 0 <= card_at < fact_at
     assert "Prefers Conventional Commits" in block[card_at:fact_at]
-    assert "Reviews open with a reproducibility check." in block[fact_at:]
+    assert "`packset:habit:h1`" in block[fact_at:]
+    assert "Reviews open with a reproducibility check." not in block
     assert "Reviews open with a reproducibility check." not in block[card_at:fact_at]
+
+
+def test_selected_text_omits_atom_body() -> None:
+    selected = {
+        "user_bits": "",
+        "memory_bits": "",
+        "head_prefix": "",
+        "tail_atoms": [
+            {
+                "id": "atom-9",
+                "kind": "lesson",
+                "text": "UNIQUE-ATOM-BODY-TOKEN the rest of a long lesson",
+            }
+        ],
+        "attach": "",
+    }
+    block = inside_policy._selected_text(selected)
+    assert "`packset:lesson:atom-9`" in block
+    assert "UNIQUE-ATOM-BODY-TOKEN" not in block
 
 
 def test_extract_accept_does_not_write_memory_md(tmp_path: Path) -> None:
@@ -368,7 +389,8 @@ def test_chat_body_gets_system_then_user() -> None:
     assert roles[0] in ("system", "developer")
     assert roles[1:] == ["user"]
     assert out["messages"][0]["content"].startswith(selected["head_prefix"])
-    assert "Reviews open with a reproducibility check." in out["messages"][0]["content"]
+    assert "`packset:habit:h1`" in out["messages"][0]["content"]
+    assert "Reviews open with a reproducibility check." not in out["messages"][0]["content"]
     assert "End seat memory." in out["messages"][0]["content"]
 
 
