@@ -476,7 +476,9 @@ def select(pack: dict, hints: dict) -> dict[str, Any]:
     live = {
         atom.get("id"): atom
         for atom in atoms
-        if isinstance(atom, dict) and atom.get("id") and inside_memory.is_live(atom)
+        if isinstance(atom, dict)
+        and atom.get("id")
+        and (inside_memory.is_live(atom) or inside_memory.is_due(atom))
     }
     hits = inside_search.search_pack_linear(pack, query, limit=_SEARCH_LIMIT)
     selected = select_from_hits(hits, hints, atoms=live)

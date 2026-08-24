@@ -215,7 +215,7 @@ def document_id(field: str, *, workspace: str = "", atom_id: str = "") -> str:
 
 
 def pack_documents(pack: dict[str, Any]) -> list[dict[str, Any]]:
-    """JSON documents milli indexes. Live atoms only."""
+    """JSON documents milli indexes. Live or due atoms."""
     workspace = str(pack.get("workspace") or "")
     docs: list[dict[str, Any]] = []
     user = pack.get("user") or ""
@@ -246,7 +246,11 @@ def pack_documents(pack: dict[str, Any]) -> list[dict[str, Any]]:
         )
     now = inside_memory.utcnow()
     for atom in pack.get("atoms") or []:
-        if not isinstance(atom, dict) or not inside_memory.is_live(atom, now):
+        if not isinstance(atom, dict):
+            continue
+        if not (
+            inside_memory.is_live(atom, now) or inside_memory.is_due(atom, now)
+        ):
             continue
         docs.append(atom_document(atom))
     return docs
@@ -278,7 +282,11 @@ def _live_atoms(
     now = inside_memory.utcnow()
     out: list[dict[str, Any]] = []
     for atom in pack.get("atoms") or []:
-        if not isinstance(atom, dict) or not inside_memory.is_live(atom, now):
+        if not isinstance(atom, dict):
+            continue
+        if not (
+            inside_memory.is_live(atom, now) or inside_memory.is_due(atom, now)
+        ):
             continue
         if not _atom_in_set(atom, set_name):
             continue
