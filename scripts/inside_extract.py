@@ -17,10 +17,9 @@ from typing import Any
 import inside_memory
 
 _PATTERNS = (
-    (re.compile(r"(?i)^\s*remember(?:\s+that)?[:\s]+(.+)$"), "lesson"),
-    (re.compile(r"(?i)^\s*note that[:\s]+(.+)$"), "lesson"),
-    (re.compile(r"(?i)^\s*from now on[,:]?\s+(.+)$"), "habit"),
-    (re.compile(r"(?i)^\s*prefer[:\s]+(.+)$"), "preference"),
+    (re.compile(r"(?i)^\s*remember\s*:\s*(.+)$"), "lesson"),
+    (re.compile(r"(?i)^\s*from now on\s*:\s*(.+)$"), "habit"),
+    (re.compile(r"(?i)^\s*prefer\s*:\s*(.+)$"), "preference"),
 )
 _FIRST_SENTENCE = re.compile(r"\s*[.!?]+\s*")
 _QUESTION = re.compile(

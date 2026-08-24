@@ -17,9 +17,10 @@ def test_remember_line() -> None:
 
 
 def test_prefer_line() -> None:
-    kind, text = inside_extract.claim_from_user("Prefer conventional commits")
+    kind, text = inside_extract.claim_from_user("Prefer: conventional commits")
     assert kind == "preference"
     assert "conventional" in text
+    assert inside_extract.claim_from_user("Prefer conventional commits") is None
 
 
 def test_quote_prompt_returns_none() -> None:
@@ -40,13 +41,19 @@ def test_question_with_prefer_returns_none() -> None:
 
 def test_atom_kind_and_workspace() -> None:
     atom = inside_extract.atom_from_user(
-        "Note that reviews cite the commit SHA.",
+        "Remember: reviews cite the commit SHA.",
         workspace="global",
     )
     assert atom is not None
     assert atom["kind"] == "lesson"
     assert atom["workspace"] == "global"
     assert "commit SHA" in atom["text"]
+
+
+def test_note_that_and_remember_that_are_not_claims() -> None:
+    assert inside_extract.claim_from_user("Note that the test failed on line 12") is None
+    assert inside_extract.claim_from_user("Remember that: pin the review set") is None
+    assert inside_extract.claim_from_user("From now on, file a ticket first") is None
 
 
 def test_listing_is_dump() -> None:
