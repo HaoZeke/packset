@@ -27,12 +27,16 @@ def _trust(atom: dict[str, Any]) -> float:
         return 0.0
 
 
-def _sort_atoms(atoms: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """trust desc, ts desc, id asc. Stable."""
+def _sort_atoms(
+    atoms: list[dict[str, Any]], *, now: str | None = None
+) -> list[dict[str, Any]]:
+    """Due queue first, then trust desc, ts desc, id asc."""
+    clock = now or inside_memory.utcnow()
     out = list(atoms)
     out.sort(key=lambda atom: str(atom.get("id") or ""))
     out.sort(key=lambda atom: str(atom.get("ts") or ""), reverse=True)
     out.sort(key=lambda atom: _trust(atom), reverse=True)
+    out.sort(key=lambda atom: 0 if inside_memory.is_due(atom, clock) else 1)
     return out
 
 
@@ -180,11 +184,13 @@ def recall(
         return []
     if len(live) <= cap:
         return _finish(live, cap)
+    now = inside_memory.utcnow()
+    due = [a for a in live if inside_memory.is_due(a, now)]
     seed_ids = _resolve_seeds(live, seeds, hints)
-    if not seed_ids:
+    if not seed_ids and not due:
         return []
-    seed_atoms, neighbors = _one_hop(live, seed_ids)
-    ranked = _sort_atoms(neighbors) + _sort_atoms(seed_atoms)
+    seed_atoms, neighbors = _one_hop(live, seed_ids) if seed_ids else ([], [])
+    ranked = _sort_atoms(due) + _sort_atoms(neighbors) + _sort_atoms(seed_atoms)
     seen: set[str] = set()
     picked: list[dict[str, Any]] = []
     for atom in ranked:
