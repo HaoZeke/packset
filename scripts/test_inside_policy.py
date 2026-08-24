@@ -189,6 +189,27 @@ def test_review_turn_gets_voice_and_habit_not_cache() -> None:
     assert "Read paper.pdf first" not in block
 
 
+def test_due_retrieve_withholds_atom_text() -> None:
+    due = {
+        "id": "due1",
+        "kind": "lesson",
+        "field": "atom",
+        "score": 2.0,
+        "text": "UNIQUE-ATOM-BODY-TOKEN review this on the due clock.",
+        "due_at": "2000-01-01T00:00:00.000Z",
+    }
+    selected = inside_policy.select_from_hits(
+        [due],
+        {"user_text": "zircon", "wants_remote": False},
+        atoms={"due1": due},
+    )
+    tails = selected["tail_atoms"]
+    assert tails and tails[0]["id"] == "due1"
+    assert tails[0].get("withheld") is True
+    assert "UNIQUE-ATOM-BODY-TOKEN" not in (tails[0].get("text") or "")
+    assert "`packset:lesson:due1`" in (tails[0].get("text") or "")
+
+
 def test_no_github_omits_cache_pointer() -> None:
     hints = inside_policy.inspect(
         {"messages": [{"role": "user", "content": "summarize the module"}]}

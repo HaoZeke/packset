@@ -379,7 +379,11 @@ def select_from_hits(
             continue
         seen.add(aid)
         seen_text.add(norm)
-        picked.append(atom)
+        rec = dict(atom)
+        if inside_memory.is_due(rec):
+            rec["text"] = f"`packset:{rec.get('kind') or 'atom'}:{aid}`"
+            rec["withheld"] = True
+        picked.append(rec)
         if len(picked) >= _MAX_ATOMS:
             break
     user_bits = "\n".join(user_parts)
