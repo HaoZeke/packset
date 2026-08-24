@@ -524,3 +524,24 @@ def test_retrieve_pin_scopes_due_queue(monkeypatch: pytest.MonkeyPatch) -> None:
     texts = [atom.get("text") or "" for atom in selected["tail_atoms"]]
     assert all("UNIQUE-OTHER-SET-SECRET" not in text for text in texts)
     assert any("`packset:lesson:due-review`" in text for text in texts)
+
+
+def test_select_omits_future_due_even_when_query_matches() -> None:
+    body = pack()
+    body["atoms"].append(
+        {
+            "id": "future1",
+            "kind": "lesson",
+            "text": "Always review with a dated snapshot of the labels.",
+            "tombstone": False,
+            "due_at": "2099-01-01T00:00:00.000Z",
+        }
+    )
+    hints = inside_policy.inspect(
+        {"messages": [{"role": "user", "content": "review this PR"}]}
+    )
+    selected = inside_policy.select(body, hints)
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "future1" not in ids
+    block = claims(selected)
+    assert "dated snapshot of the labels" not in block

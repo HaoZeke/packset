@@ -408,12 +408,19 @@ def select_from_hits(
             text = str(hit.get("text") or "").strip()
             if not text or not hit.get("id"):
                 continue
-            atom = {"id": hit.get("id"), "kind": kind, "text": text}
+            atom = {
+                "id": hit.get("id"),
+                "kind": kind,
+                "text": text,
+                "due_at": hit.get("due_at"),
+            }
         kind = atom.get("kind")
         if kind == _CACHE_KIND:
             if not wants_remote:
                 continue
         elif kind not in _ATOM_KINDS:
+            continue
+        if atom.get("due_at") and not inside_memory.is_due(atom):
             continue
         aid = str(atom.get("id"))
         if aid in seen:
