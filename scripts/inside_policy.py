@@ -793,6 +793,51 @@ def fetch_recall(
     return [atom for atom in atoms if isinstance(atom, dict)]
 
 
+def post_update(
+    url: str,
+    workspace: str,
+    atom_id: str,
+    fields: dict[str, Any],
+) -> dict[str, Any]:
+    """POST {url}/v1/atoms/update. Complementary grade write."""
+    base = (url or "").rstrip("/")
+    if not base:
+        raise ValueError("memory url is empty")
+    payload = json.dumps(
+        {"workspace": workspace, "id": atom_id, "fields": fields}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base}/v1/atoms/update",
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if not isinstance(body, dict):
+        raise ValueError("update response is not an object")
+    return body
+
+
+def grade_due(url: str, workspace: str, due: list[dict[str, Any]]) -> None:
+    """Stretch due_at after a retrieve. Fail-open on a dead update."""
+    now = inside_memory.utcnow()
+    for atom in due:
+        aid = str(atom.get("id") or "")
+        if not aid:
+            continue
+        graded = inside_memory.schedule_review(atom, now=now, recalled=True)
+        try:
+            post_update(
+                url,
+                workspace,
+                aid,
+                {"due_at": graded["due_at"], "review": graded["review"]},
+            )
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+            continue
+
+
 def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
     """Search the pack, then front the due queue from /v1/recall."""
     pin_info = fetch_pin_payload(url, workspace)
@@ -810,6 +855,7 @@ def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
     if pin:
         due = [atom for atom in due if str(atom.get("set") or "") == pin]
     selected["tail_atoms"] = _front_due(due, selected.get("tail_atoms") or [])
+    grade_due(url, workspace, due)
     instructions = str(pin_info.get("instructions") or "").strip()
     if instructions:
         selected["instructions"] = instructions

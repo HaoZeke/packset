@@ -472,6 +472,34 @@ def test_retrieve_fronts_due_from_recall(monkeypatch: pytest.MonkeyPatch) -> Non
     assert any("`packset:lesson:due1`" in text for text in texts)
 
 
+def test_retrieve_grades_due_atom(monkeypatch: pytest.MonkeyPatch) -> None:
+    due = {
+        "id": "due1",
+        "kind": "lesson",
+        "text": "UNIQUE-DUE-SECRET-BODY-TOKEN pin the review set",
+        "due_at": "2000-01-01T00:00:00.000Z",
+    }
+    posted: list[dict[str, object]] = []
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [])
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [due])
+    monkeypatch.setattr(
+        inside_policy,
+        "post_update",
+        lambda url, workspace, atom_id, fields: posted.append(
+            {"url": url, "workspace": workspace, "id": atom_id, "fields": fields}
+        )
+        or {},
+    )
+    inside_policy.retrieve("http://example.invalid", "ws", {"user_text": "sky"})
+    assert len(posted) == 1
+    assert posted[0]["id"] == "due1"
+    assert posted[0]["workspace"] == "ws"
+    new_due = str((posted[0]["fields"] or {}).get("due_at") or "")
+    assert new_due > "2000-01-01T00:00:00.000Z"
+    assert (posted[0]["fields"] or {}).get("review")
+
+
 def test_retrieve_keeps_search_when_recall_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     hits = [
         {
