@@ -30,8 +30,8 @@ def build_prompt(turn: str, items: list[dict[str, Any]]) -> str:
     else:
         for index, item in enumerate(items, start=1):
             kind = item.get("kind") or item.get("field") or "claim"
-            text = " ".join(str(item.get("text") or "").split())
-            lines.append(f"{index}. [{kind}] {text}")
+            aid = item.get("id") or item.get("field") or "claim"
+            lines.append(f"{index}. `packset:{kind}:{aid}`")
     lines.append("")
     lines.append(
         "Reply with NONE or a comma-separated list of claim numbers. No other text."
@@ -134,17 +134,17 @@ def judge(
     items: list[dict[str, Any]],
     complete: Callable[[str], str],
 ) -> list[dict[str, Any]]:
-    """Subset of items the model kept. complete() failure returns items."""
+    """Subset of items the model kept. complete() failure keeps nothing."""
     if not items:
         return []
     prompt = build_prompt(turn, items)
     try:
         raw = complete(prompt)
     except Exception:
-        return list(items)
+        return []
     picked = parse_reply(raw if isinstance(raw, str) else str(raw or ""), len(items))
     if picked is None:
-        return list(items)
+        return []
     if picked:
         return [items[index] for index in picked]
     # Model said NONE. Keep claims the turn already names by token.
