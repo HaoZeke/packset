@@ -422,3 +422,51 @@ def test_input_list_round_trips() -> None:
     again = json.loads(inside_policy.splice(raw, selected))
     assert out["input"] == again["input"]
     assert sum(1 for item in again["input"] if item.get("role") == "system") == 1
+
+
+def test_select_fronts_due_atom_that_search_misses() -> None:
+    body = pack()
+    body["atoms"].append(
+        {
+            "id": "due1",
+            "kind": "lesson",
+            "text": "UNIQUE-DUE-SECRET-BODY-TOKEN pin the review set",
+            "tombstone": False,
+            "due_at": "2000-01-01T00:00:00.000Z",
+        }
+    )
+    hints = inside_policy.inspect(
+        {"messages": [{"role": "user", "content": "What color is the sky?"}]}
+    )
+    selected = inside_policy.select(body, hints)
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due1" in ids
+    texts = [atom.get("text") or "" for atom in selected["tail_atoms"]]
+    assert all("UNIQUE-DUE-SECRET" not in text for text in texts)
+    assert any("`packset:lesson:due1`" in text for text in texts)
+    block = claims(selected)
+    assert "UNIQUE-DUE-SECRET" not in block
+    assert "`packset:lesson:due1`" in block
+
+
+def test_retrieve_fronts_due_from_recall(monkeypatch: pytest.MonkeyPatch) -> None:
+    due = {
+        "id": "due1",
+        "kind": "lesson",
+        "text": "UNIQUE-DUE-SECRET-BODY-TOKEN pin the review set",
+        "due_at": "2000-01-01T00:00:00.000Z",
+    }
+
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [])
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [due])
+    selected = inside_policy.retrieve(
+        "http://example.invalid",
+        "ws",
+        {"user_text": "What color is the sky?"},
+    )
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due1" in ids
+    texts = [atom.get("text") or "" for atom in selected["tail_atoms"]]
+    assert all("UNIQUE-DUE-SECRET" not in text for text in texts)
+    assert any("`packset:lesson:due1`" in text for text in texts)

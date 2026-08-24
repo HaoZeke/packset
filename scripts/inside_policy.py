@@ -5,7 +5,9 @@ A pass on the model wire: look at this request, rewrite the body so the
 model sees a ranked neighbourhood of the pack. Nothing rides every turn.
 The query is the current user turn, not the joined transcript.
 USER.md and MEMORY.md contribute scored paragraphs only. The shim
-retrieves through GET /v1/search (milli BM25, linear fallback). Atoms
+retrieves through GET /v1/search (milli BM25, linear fallback) and
+fronts GET /v1/recall through due_atoms so the review clock reaches
+the Facts tail. Due atom text is withheld to a packset id. Atoms
 are at most MAX_ATOMS, never a kind dump. cache-pointer also needs a
 remote-shaped turn. A pin scopes retrieve to that set; no pin uses
 the pack search. Empty neighbourhood is a no-op splice. A later
@@ -223,6 +225,48 @@ def _atom_sort_key(atom: dict[str, Any]) -> tuple[str, str]:
     return (str(atom.get("id") or ""), atom.get("text") or "")
 
 
+def _fact_sort_key(atom: dict[str, Any]) -> tuple[int, str, str]:
+    due = 0 if atom.get("withheld") or inside_memory.is_due(atom) else 1
+    ident, text = _atom_sort_key(atom)
+    return (due, ident, text)
+
+
+def _due_pointer(atom: dict[str, Any]) -> dict[str, Any]:
+    rec = dict(atom)
+    aid = str(rec.get("id") or "")
+    kind = rec.get("kind") or "atom"
+    rec["text"] = f"`packset:{kind}:{aid}`"
+    rec["withheld"] = True
+    return rec
+
+
+def _front_due(
+    due: list[dict[str, Any]], tail: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for atom in due:
+        if not isinstance(atom, dict):
+            continue
+        aid = str(atom.get("id") or "")
+        if not aid or aid in seen:
+            continue
+        seen.add(aid)
+        out.append(_due_pointer(atom))
+    for atom in tail:
+        if not isinstance(atom, dict):
+            continue
+        aid = str(atom.get("id") or "")
+        if aid and aid in seen:
+            continue
+        if aid:
+            seen.add(aid)
+        out.append(atom)
+        if len(out) >= _MAX_ATOMS:
+            break
+    return out[:_MAX_ATOMS]
+
+
 def _query(hints: dict[str, Any]) -> str:
     parts = [str(hints.get("user_text") or "")]
     for name in hints.get("tool_names") or []:
@@ -282,7 +326,7 @@ def _selected_text(selected: dict[str, Any]) -> str:
             cards.append(head.strip())
     facts: list[str] = []
     used = 0
-    for atom in sorted(selected.get("tail_atoms") or [], key=_atom_sort_key):
+    for atom in sorted(selected.get("tail_atoms") or [], key=_fact_sort_key):
         text = (atom.get("text") or "").strip()
         if not text:
             continue
@@ -415,6 +459,11 @@ def select(pack: dict, hints: dict) -> dict[str, Any]:
     }
     hits = inside_search.search_pack_linear(pack, query, limit=_SEARCH_LIMIT)
     selected = select_from_hits(hits, hints, atoms=live)
+    due = inside_memory.due_atoms(
+        str(pack.get("workspace") or ""),
+        atoms=list(live.values()),
+    )
+    selected["tail_atoms"] = _front_due(due, selected.get("tail_atoms") or [])
     selected["user"] = user
     selected["memory"] = memory
     return selected
@@ -708,14 +757,49 @@ def fetch_search(
     return [hit for hit in hits if isinstance(hit, dict)]
 
 
+def fetch_recall(
+    url: str,
+    workspace: str,
+    *,
+    limit: int = 64,
+    query: str | None = None,
+) -> list[dict[str, Any]]:
+    """GET {url}/v1/recall?workspace=&limit=&q=."""
+    base = (url or "").rstrip("/")
+    if not base:
+        raise ValueError("memory url is empty")
+    fields: dict[str, Any] = {
+        "workspace": workspace,
+        "limit": max(0, int(limit)),
+    }
+    if query:
+        fields["q"] = query
+    params = urllib.parse.urlencode(fields)
+    target = f"{base}/v1/recall?{params}"
+    with urllib.request.urlopen(target, timeout=5) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("recall response is not an object")
+    atoms = payload.get("atoms")
+    if not isinstance(atoms, list):
+        raise ValueError("recall response atoms are not a list")
+    return [atom for atom in atoms if isinstance(atom, dict)]
+
+
 def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
-    """Search the pack, or the pinned set when one is set."""
+    """Search the pack, then front the due queue from /v1/recall."""
     pin_info = fetch_pin_payload(url, workspace)
     pin = str(pin_info.get("set") or "").strip()
+    query = _query(hints)
     selected = select_from_hits(
-        fetch_search(url, workspace, _query(hints), set_name=pin or None),
+        fetch_search(url, workspace, query, set_name=pin or None),
         hints,
     )
+    due = inside_memory.due_atoms(
+        workspace,
+        atoms=fetch_recall(url, workspace, query=query or None),
+    )
+    selected["tail_atoms"] = _front_due(due, selected.get("tail_atoms") or [])
     instructions = str(pin_info.get("instructions") or "").strip()
     if instructions:
         selected["instructions"] = instructions

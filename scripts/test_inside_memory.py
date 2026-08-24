@@ -402,6 +402,10 @@ def test_due_at_does_not_change_live_set(tmp_path: Path) -> None:
     assert len(inside_memory.current_atoms(WS, tmp_path)) == 1
     queue = inside_memory.due_atoms(WS, tmp_path, now=now)
     assert [a["id"] for a in queue] == [stored["id"]]
+    inline = inside_memory.due_atoms(
+        WS, now=now, atoms=[stored, {"id": "skip", "kind": "lesson"}]
+    )
+    assert [a["id"] for a in inline] == [stored["id"]]
 
 
 def test_missing_due_at_is_not_due() -> None:
