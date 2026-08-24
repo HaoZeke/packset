@@ -100,6 +100,44 @@ def test_extract_accept_commits_atom(tmp_path: Path) -> None:
     assert inside_extract.apply_pack("extractAccept", proposal) is not None
 
 
+def test_fenced_splice_does_not_propose(tmp_path: Path) -> None:
+    live = inside_memory.make_atom(
+        workspace="global",
+        text="always pin the zircon index",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    inside_memory.add_atom(live, home=tmp_path)
+    got = inside_extract.extract_propose(
+        "always pin the zircon index",
+        workspace="global",
+        when="compaction",
+        home=tmp_path,
+    )
+    assert got is None
+    assert inside_extract.list_proposals("global", home=tmp_path) == []
+
+
+def test_new_prose_still_proposes_beside_fence(tmp_path: Path) -> None:
+    live = inside_memory.make_atom(
+        workspace="global",
+        text="always pin the zircon index",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    inside_memory.add_atom(live, home=tmp_path)
+    got = inside_extract.extract_propose(
+        "Reviews close after the SHA is cited.",
+        workspace="global",
+        when="compaction",
+        home=tmp_path,
+    )
+    assert got is not None
+    assert "SHA" in got["text"]
+
+
 def test_remember_still_commits_without_inbox(tmp_path: Path) -> None:
     atom = inside_extract.atom_from_user(
         "Remember: always pin the zircon index.",

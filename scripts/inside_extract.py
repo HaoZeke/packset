@@ -164,6 +164,39 @@ def _append_proposal(workspace: str, rec: dict[str, Any], home: Path | None = No
         handle.write(json.dumps(rec, ensure_ascii=True) + "\n")
 
 
+def _norm_claim(text: str) -> str:
+    return " ".join((text or "").lower().split()).rstrip(".,;:")
+
+
+def fence_texts(workspace: str, home: Path | None = None) -> set[str]:
+    """Cards and live atoms already in the splice. Compaction must not re-capture them."""
+    out: set[str] = set()
+    for path in (
+        inside_memory.user_path(home),
+        inside_memory.memory_path(workspace, home),
+    ):
+        blob = inside_memory.read_text(path)
+        for part in inside_memory._entries(blob):
+            n = _norm_claim(part)
+            if n:
+                out.add(n)
+    for atom in inside_memory.current_atoms(workspace, home):
+        n = _norm_claim(str(atom.get("text") or ""))
+        if n:
+            out.add(n)
+    return out
+
+
+def is_fenced(claim: str, fence: set[str]) -> bool:
+    n = _norm_claim(claim)
+    if not n:
+        return False
+    for item in fence:
+        if n == item or n in item or item in n:
+            return True
+    return False
+
+
 def extract_propose(
     text: str,
     *,
@@ -171,6 +204,7 @@ def extract_propose(
     when: str,
     job: str = "extract",
     home: Path | None = None,
+    fence: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Cheap extract. Inbox only. Forbidden off compaction."""
     if not cheap_allowed(job, when):
@@ -180,6 +214,9 @@ def extract_propose(
         return None
     claim = _FIRST_SENTENCE.split(blob, 1)[0].strip().rstrip(".,;:")
     if len(claim) < 8:
+        return None
+    wall = fence if fence is not None else fence_texts(workspace, home)
+    if is_fenced(claim, wall):
         return None
     rec = {
         "schema": PROPOSAL_SCHEMA,

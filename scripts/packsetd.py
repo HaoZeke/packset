@@ -195,8 +195,18 @@ class Store:
         text = body.get("text") if isinstance(body.get("text"), str) else ""
         when = body.get("when") or "onDemand"
         job = body.get("job") or "extract"
+        fence = inside_extract.fence_texts(workspace, self.home)
+        for atom in self.current(workspace):
+            n = inside_extract._norm_claim(str(atom.get("text") or ""))
+            if n:
+                fence.add(n)
         rec = inside_extract.extract_propose(
-            text, workspace=workspace, when=when, job=job, home=self.home
+            text,
+            workspace=workspace,
+            when=when,
+            job=job,
+            home=self.home,
+            fence=fence,
         )
         if rec is None:
             raise inside_memory.AtomError("nothing to propose")

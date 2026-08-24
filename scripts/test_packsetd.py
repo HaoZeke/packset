@@ -543,6 +543,24 @@ def test_extract_on_coding_post_is_forbidden(packset: Packset) -> None:
     assert json.loads(raw.decode())["atoms"] == []
 
 
+def test_extract_skips_already_live_atom(packset: Packset) -> None:
+    packset.json("POST", "/v1/atoms", voice(text="always pin the zircon index"))
+    with pytest.raises(HTTPError) as ctx:
+        packset.json(
+            "POST",
+            "/v1/proposals",
+            {
+                "workspace": WS,
+                "text": "always pin the zircon index",
+                "when": "compaction",
+                "job": "extract",
+            },
+        )
+    assert ctx.value.code == 400
+    _, inbox = packset.get(f"/v1/proposals?workspace={WS}")
+    assert json.loads(inbox.decode())["proposals"] == []
+
+
 def test_extract_propose_then_accept(packset: Packset) -> None:
     status, body = packset.json(
         "POST",
