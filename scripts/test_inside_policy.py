@@ -183,7 +183,8 @@ def test_review_turn_gets_voice_and_habit_not_cache() -> None:
     assert selected["user"] == source["user"]
     assert selected["memory"] == source["memory"]
     block = claims(selected)
-    assert "Reviews open with a reproducibility check." in block
+    assert "`packset:habit:h1`" in block
+    assert "Reviews open with a reproducibility check." not in block
     assert "Prefers Conventional Commits" not in block
     assert "Speaks in short sentences" not in block
     assert "Read paper.pdf first" not in block
@@ -239,7 +240,8 @@ def test_cards_and_facts_are_separate_sections() -> None:
     fact_at = block.find("Facts:")
     assert 0 <= card_at < fact_at
     assert "Prefers Conventional Commits" in block[card_at:fact_at]
-    assert "Reviews open with a reproducibility check." in block[fact_at:]
+    assert "`packset:habit:h1`" in block[fact_at:]
+    assert "Reviews open with a reproducibility check." not in block[fact_at:]
     assert "Reviews open with a reproducibility check." not in block[card_at:fact_at]
 
 
@@ -394,7 +396,8 @@ def test_chat_body_gets_system_then_user() -> None:
     assert roles[0] in ("system", "developer")
     assert roles[1:] == ["user"]
     assert out["messages"][0]["content"].startswith(selected["head_prefix"])
-    assert "Reviews open with a reproducibility check." in out["messages"][0]["content"]
+    assert "`packset:habit:h1`" in out["messages"][0]["content"]
+    assert "Reviews open with a reproducibility check." not in out["messages"][0]["content"]
     assert "End seat memory." in out["messages"][0]["content"]
 
 
@@ -543,7 +546,8 @@ def test_retrieve_keeps_search_when_recall_fails(monkeypatch: pytest.MonkeyPatch
     selected = inside_policy.retrieve(
         "http://127.0.0.1:9", "ws", {"user_text": "keep it brief"}
     )
-    assert "Be brief." in claims(selected)
+    assert "`packset:habit:v1`" in claims(selected)
+    assert "Be brief." not in claims(selected)
 
 
 def test_retrieve_pin_scopes_due_queue(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -629,3 +633,27 @@ def test_retrieve_due_without_query_omits_future(monkeypatch: pytest.MonkeyPatch
     assert "UNIQUE-DUE-NO-QUERY-TOKEN" not in block
     assert "`packset:lesson:due1`" in block
     assert "dated snapshot of the labels" not in block
+
+
+def test_retrieve_omits_future_due_from_search_hits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hits = [
+        {
+            "field": "atom",
+            "id": "future1",
+            "kind": "lesson",
+            "text": "Always review with a dated snapshot of the labels.",
+            "due_at": "2099-01-01T00:00:00.000Z",
+            "score": 4.0,
+        }
+    ]
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: hits)
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [])
+    selected = inside_policy.retrieve(
+        "http://example.invalid", "ws", {"user_text": "review this PR"}
+    )
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "future1" not in ids
+    assert "dated snapshot of the labels" not in claims(selected)

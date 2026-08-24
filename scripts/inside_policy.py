@@ -327,7 +327,10 @@ def _selected_text(selected: dict[str, Any]) -> str:
     facts: list[str] = []
     used = 0
     for atom in sorted(selected.get("tail_atoms") or [], key=_fact_sort_key):
-        text = (atom.get("text") or "").strip()
+        if not isinstance(atom, dict):
+            continue
+        rec = atom if atom.get("withheld") else _due_pointer(atom)
+        text = (rec.get("text") or "").strip()
         if not text:
             continue
         if used and used + len(text) + 1 > _ATOM_BUDGET:

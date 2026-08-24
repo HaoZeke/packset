@@ -551,6 +551,7 @@ def search_pack_linear(
                 "id": atom.get("id"),
                 "kind": atom.get("kind"),
                 "text": atom.get("text") or "",
+                "due_at": atom.get("due_at"),
                 "score": relevance + 0.1 * trust + _recency(atom.get("ts")),
             }
         )
