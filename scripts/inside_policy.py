@@ -435,6 +435,8 @@ def select_from_hits(
             continue
         if atom.get("due_at") and not inside_memory.is_due(atom):
             continue
+        if atom.get("due_at") and not inside_memory.is_due(atom):
+            continue
         aid = str(atom.get("id"))
         if aid in seen:
             continue

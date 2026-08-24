@@ -195,6 +195,70 @@ def test_review_turn_gets_voice_and_habit_not_cache() -> None:
     assert "Read paper.pdf first" not in block
 
 
+def test_select_due_without_query_omits_future() -> None:
+    body = pack()
+    body["atoms"].extend(
+        [
+            {
+                "id": "due1",
+                "kind": "lesson",
+                "text": "UNIQUE-DUE-NO-QUERY-TOKEN pin the zircon index",
+                "tombstone": False,
+                "due_at": "2000-01-01T00:00:00.000Z",
+            },
+            {
+                "id": "future1",
+                "kind": "lesson",
+                "text": "Always review with a dated snapshot of the labels.",
+                "tombstone": False,
+                "due_at": "2099-01-01T00:00:00.000Z",
+            },
+        ]
+    )
+    hints = inside_policy.inspect(
+        {"messages": [{"role": "user", "content": "review this PR"}]}
+    )
+    selected = inside_policy.select(body, hints)
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due1" in ids
+    assert "future1" not in ids
+    block = claims(selected)
+    assert "UNIQUE-DUE-NO-QUERY-TOKEN" in block
+    assert "dated snapshot of the labels" not in block
+
+
+def test_retrieve_due_without_query_omits_future(monkeypatch: pytest.MonkeyPatch) -> None:
+    due = {
+        "field": "atom",
+        "id": "due1",
+        "kind": "lesson",
+        "score": 2.1,
+        "text": "UNIQUE-DUE-NO-QUERY-TOKEN pin the zircon index",
+        "due_at": "2000-01-01T00:00:00.000Z",
+    }
+    future = {
+        "field": "atom",
+        "id": "future1",
+        "kind": "lesson",
+        "score": 4.0,
+        "text": "Always review with a dated snapshot of the labels.",
+        "due_at": "2099-01-01T00:00:00.000Z",
+    }
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [due, future])
+    selected = inside_policy.retrieve(
+        "http://example.invalid",
+        "ws",
+        {"user_text": "review this PR", "wants_remote": False},
+    )
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due1" in ids
+    assert "future1" not in ids
+    block = claims(selected)
+    assert "UNIQUE-DUE-NO-QUERY-TOKEN" in block
+    assert "dated snapshot of the labels" not in block
+
+
 def test_no_github_omits_cache_pointer() -> None:
     hints = inside_policy.inspect(
         {"messages": [{"role": "user", "content": "summarize the module"}]}
