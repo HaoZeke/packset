@@ -172,17 +172,23 @@ def test_switch_then_clear_returns_empty(monkeypatch: pytest.MonkeyPatch) -> Non
     assert claims(inside_policy.retrieve("http://127.0.0.1:9", "global", hints)) == ""
 
 
-def test_remember_without_pin_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(inside_policy, "fetch_pin", lambda *_a, **_k: "")
+def test_remember_without_pin_still_posts(monkeypatch: pytest.MonkeyPatch) -> None:
     posted: list[Any] = []
-    monkeypatch.setattr(inside_extract, "post_atom", lambda *_a, **_k: posted.append(1))
+
+    def post(_url: str, atom: dict[str, Any]) -> dict[str, Any]:
+        posted.append(atom)
+        return atom
+
+    monkeypatch.setattr(inside_policy, "fetch_pin", lambda *_a, **_k: "")
+    monkeypatch.setattr(inside_extract, "post_atom", post)
     got = inside_extract.extract_user_text(
         "Remember: always pin the zircon index.",
         url="http://127.0.0.1:9",
         workspace="global",
     )
-    assert got is None
-    assert posted == []
+    assert got is not None
+    assert len(posted) == 1
+    assert not posted[0].get("set")
 
 
 def test_remember_pin_fetch_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
