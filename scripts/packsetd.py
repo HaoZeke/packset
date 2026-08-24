@@ -188,6 +188,29 @@ class Store:
             inside_search.delete_documents([atom_id], self.milli_dir)
         return tomb
 
+    def propose(self, body: dict) -> dict:
+        workspace = body.get("workspace") or ""
+        if not workspace:
+            raise inside_memory.AtomError("workspace required")
+        text = body.get("text") if isinstance(body.get("text"), str) else ""
+        when = body.get("when") or "onDemand"
+        job = body.get("job") or "extract"
+        rec = inside_extract.extract_propose(
+            text, workspace=workspace, when=when, job=job, home=self.home
+        )
+        if rec is None:
+            raise inside_memory.AtomError("nothing to propose")
+        return rec
+
+    def proposals(self, workspace: str) -> list[dict]:
+        return inside_extract.list_proposals(workspace, home=self.home)
+
+    def accept(self, workspace: str, proposal_id: str) -> dict:
+        stored = inside_extract.accept_proposal(
+            proposal_id, workspace=workspace, home=self.home
+        )
+        return self.add(stored)
+
     def _upsert(self, atom: dict) -> None:
         payload = dict(atom)
         if "links" not in payload or payload["links"] is None:
@@ -474,6 +497,12 @@ def make_handler(store: Store):
                 except inside_memory.AtomError as exc:
                     return self._err(400, str(exc))
                 return
+            if parsed.path == "/v1/proposals":
+                workspace = (qs.get("workspace") or [""])[0]
+                if not workspace:
+                    return self._err(400, "workspace required")
+                self._send(200, {"proposals": store.proposals(workspace)})
+                return
             if parsed.path == "/v1/atoms":
                 workspace = (qs.get("workspace") or [""])[0]
                 if not workspace:
@@ -624,6 +653,14 @@ def make_handler(store: Store):
             except ValueError as exc:
                 return self._err(400, str(exc))
             try:
+                if parsed.path == "/v1/proposals":
+                    return self._send(200, store.propose(body))
+                if parsed.path == "/v1/proposals/accept":
+                    workspace = body.get("workspace") or ""
+                    proposal_id = body.get("id") or ""
+                    if not workspace or not proposal_id:
+                        return self._err(400, "workspace and id required")
+                    return self._send(200, store.accept(workspace, proposal_id))
                 if parsed.path == "/v1/atoms":
                     return self._send(200, store.add(body))
                 if parsed.path == "/v1/atoms/update":
@@ -653,6 +690,8 @@ def make_handler(store: Store):
                             workspace, text, label=body.get("label") or ""
                         ),
                     )
+            except inside_extract.CheapError as exc:
+                return self._err(403, str(exc))
             except (inside_memory.AtomError, KeyError) as exc:
                 return self._err(400, str(exc))
             self._err(404, "not found")

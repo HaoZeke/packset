@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Turn an explicit remember/prefer line into one seat atom.
+"""Seated Remember plus compaction extract.
 
-Every harness POSTs through the shim. This is the write that
-session-end extract was supposed to be: one claim, when the
-user says to keep it. Dedup is memd's job.
+Remember (claim_from_user) writes an atom when the operator
+says to keep a line. Cheap extract writes a Proposal inbox
+row and commits nothing until accept.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 import inside_memory
@@ -117,6 +118,115 @@ def extract_user_text(
     if atom is None:
         return None
     return post_atom(url, atom)
+
+
+CHEAP_ALLOWED = frozenset(
+    {
+        ("extract", "compaction"),
+        ("linkRewrite", "compaction"),
+        ("fidelity", "onDemand"),
+        ("dueSuggest", "onDemand"),
+    }
+)
+PROPOSAL_SCHEMA = "inside.proposal/v1"
+
+
+class CheapError(ValueError):
+    """Cheap-model job is not allowed at this when."""
+
+
+def cheap_allowed(job: str, when: str) -> bool:
+    return (job, when) in CHEAP_ALLOWED
+
+
+def proposals_path(workspace: str, home: Path | None = None) -> Path:
+    return inside_memory.workspace_dir(workspace, home) / "proposals.jsonl"
+
+
+def list_proposals(workspace: str, home: Path | None = None) -> list[dict[str, Any]]:
+    path = proposals_path(workspace, home)
+    if not path.exists():
+        return []
+    seen: dict[str, dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        if isinstance(rec, dict) and rec.get("id"):
+            seen[rec["id"]] = rec
+    return [p for p in seen.values() if p.get("status") == "open"]
+
+
+def _append_proposal(workspace: str, rec: dict[str, Any], home: Path | None = None) -> None:
+    path = proposals_path(workspace, home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(rec, ensure_ascii=True) + "\n")
+
+
+def extract_propose(
+    text: str,
+    *,
+    workspace: str,
+    when: str,
+    job: str = "extract",
+    home: Path | None = None,
+) -> dict[str, Any] | None:
+    """Cheap extract. Inbox only. Forbidden off compaction."""
+    if not cheap_allowed(job, when):
+        raise CheapError(f"{job} is not allowed on {when}")
+    blob = (text or "").strip()
+    if not blob or is_tool_dump(blob):
+        return None
+    claim = _FIRST_SENTENCE.split(blob, 1)[0].strip().rstrip(".,;:")
+    if len(claim) < 8:
+        return None
+    rec = {
+        "schema": PROPOSAL_SCHEMA,
+        "id": inside_memory.new_id(),
+        "workspace": workspace,
+        "text": claim,
+        "job": job,
+        "when": when,
+        "status": "open",
+        "ts": inside_memory.utcnow(),
+    }
+    _append_proposal(workspace, rec, home)
+    return rec
+
+
+def accept_proposal(
+    proposal_id: str, *, workspace: str, home: Path | None = None
+) -> dict[str, Any]:
+    open_ones = {p["id"]: p for p in list_proposals(workspace, home)}
+    if proposal_id not in open_ones:
+        raise CheapError(f"no open proposal {proposal_id}")
+    rec = dict(open_ones[proposal_id])
+    atom = inside_memory.make_atom(
+        workspace=workspace,
+        text=rec["text"],
+        kind="lesson",
+        about_peer="user",
+        by_peer="extract",
+        level="derived",
+    )
+    stored = inside_memory.add_atom(atom, home=home)
+    rec["status"] = "accepted"
+    rec["atom_id"] = stored["id"]
+    rec["ts"] = inside_memory.utcnow()
+    _append_proposal(workspace, rec, home)
+    return stored
+
+
+def apply_pack(kind: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Mirror Lean applyPack: extractPropose commits nothing."""
+    if kind == "remember":
+        return payload
+    if kind == "extractPropose":
+        return None
+    if kind == "extractAccept":
+        return {"text": payload["text"]}
+    raise CheapError(f"unknown pack write {kind}")
 
 
 def is_tool_dump(text: str) -> bool:

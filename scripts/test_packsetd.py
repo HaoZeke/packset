@@ -526,6 +526,53 @@ def test_same_claim_under_two_sets_is_two_atoms(packset: Packset) -> None:
     assert neighbor["id"] in live[debug["id"]]["links"]
 
 
+def test_extract_on_coding_post_is_forbidden(packset: Packset) -> None:
+    with pytest.raises(HTTPError) as ctx:
+        packset.json(
+            "POST",
+            "/v1/proposals",
+            {
+                "workspace": WS,
+                "text": "Reviews close after the SHA is cited.",
+                "when": "onDemand",
+                "job": "extract",
+            },
+        )
+    assert ctx.value.code == 403
+    _, raw = packset.get(f"/v1/atoms?workspace={WS}")
+    assert json.loads(raw.decode())["atoms"] == []
+
+
+def test_extract_propose_then_accept(packset: Packset) -> None:
+    status, body = packset.json(
+        "POST",
+        "/v1/proposals",
+        {
+            "workspace": WS,
+            "text": "Reviews close after the SHA is cited.",
+            "when": "compaction",
+            "job": "extract",
+        },
+    )
+    assert status == 200
+    assert body["schema"] == "inside.proposal/v1"
+    assert body["status"] == "open"
+    _, raw = packset.get(f"/v1/atoms?workspace={WS}")
+    assert json.loads(raw.decode())["atoms"] == []
+    _, inbox = packset.get(f"/v1/proposals?workspace={WS}")
+    listed = json.loads(inbox.decode())["proposals"]
+    assert [p["id"] for p in listed] == [body["id"]]
+    _, accepted = packset.json(
+        "POST",
+        "/v1/proposals/accept",
+        {"workspace": WS, "id": body["id"]},
+    )
+    assert accepted["text"] == body["text"]
+    _, raw = packset.get(f"/v1/atoms?workspace={WS}")
+    live = json.loads(raw.decode())["atoms"]
+    assert [a["id"] for a in live] == [accepted["id"]]
+
+
 def test_remember_refused_write_returns_400(
     packset: Packset, monkeypatch: pytest.MonkeyPatch
 ) -> None:

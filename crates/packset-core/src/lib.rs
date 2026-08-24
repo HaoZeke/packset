@@ -11,6 +11,7 @@
 
 pub mod atom;
 pub mod borda;
+pub mod cheap;
 pub mod comb;
 pub mod copeland;
 pub mod decay;
@@ -26,6 +27,7 @@ pub mod tideman;
 
 pub use atom::{entity_jaccard, is_due, is_live, SCHEMA as ATOM_SCHEMA};
 pub use borda::{borda_merge, Ballot};
+pub use cheap::{allowed as cheap_allowed, CheapJob, CheapWhen};
 pub use comb::{combmnz_merge, combsum_merge, ScoredBallot};
 pub use copeland::copeland_merge;
 pub use decay::temporal_decay;
