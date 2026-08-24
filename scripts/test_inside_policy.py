@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -216,6 +217,48 @@ def test_head_prefix_is_byte_stable() -> None:
     assert first["head_prefix"].encode("utf-8") == second["head_prefix"].encode("utf-8")
     assert "Reviews open with a reproducibility check." in first["tail_atoms"][0]["text"]
     assert "Speaks in short sentences." not in first["head_prefix"]
+
+
+def test_cards_and_facts_are_separate_sections() -> None:
+    selected = {
+        "user_bits": "Prefers Conventional Commits.",
+        "memory_bits": "",
+        "instructions": "",
+        "head_prefix": "Seat memory:\nPrefers Conventional Commits.",
+        "tail_atoms": [
+            {
+                "id": "h1",
+                "kind": "habit",
+                "text": "Reviews open with a reproducibility check.",
+            }
+        ],
+        "attach": "",
+    }
+    block = inside_policy._selected_text(selected)
+    card_at = block.find("Cards:")
+    fact_at = block.find("Facts:")
+    assert 0 <= card_at < fact_at
+    assert "Prefers Conventional Commits" in block[card_at:fact_at]
+    assert "Reviews open with a reproducibility check." in block[fact_at:]
+    assert "Reviews open with a reproducibility check." not in block[card_at:fact_at]
+
+
+def test_extract_accept_does_not_write_memory_md(tmp_path: Path) -> None:
+    import inside_extract
+
+    inside_memory.set_memory("global", "Read paper.pdf first.\n", home=tmp_path)
+    proposal = inside_extract.extract_propose(
+        "Reviews close after the SHA is cited.",
+        workspace="global",
+        when="compaction",
+        home=tmp_path,
+    )
+    assert proposal is not None
+    inside_extract.accept_proposal(proposal["id"], workspace="global", home=tmp_path)
+    assert (
+        inside_memory.read_text(inside_memory.memory_path("global", tmp_path))
+        == "Read paper.pdf first.\n"
+    )
 
 
 def test_unrelated_turn_selects_nothing() -> None:

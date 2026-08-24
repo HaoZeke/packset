@@ -243,43 +243,66 @@ def _scored_paragraphs(text: str, query: str) -> str:
 
 _BLOCK_OPEN = "Seat memory:"
 _BLOCK_CLOSE = "End seat memory."
+_CARD_MARK = "Cards:"
+_FACT_MARK = "Facts:"
+_ATOM_BUDGET = 800
 
 
 def _head_prefix(user: str, memory: str, voice_atoms: list[dict[str, Any]]) -> str:
+    """Cards only. voice_atoms is ignored; facts stay on the tail."""
+    del voice_atoms
     parts: list[str] = [_BLOCK_OPEN]
     if (user or "").strip():
         parts.append(user.strip())
     if (memory or "").strip():
         parts.append(memory.strip())
-    for atom in sorted(voice_atoms, key=_atom_sort_key):
-        text = (atom.get("text") or "").strip()
-        if text:
-            parts.append(text)
     if len(parts) == 1:
         return ""
     return "\n".join(parts)
 
 
 def _selected_text(selected: dict[str, Any]) -> str:
-    head = selected.get("head_prefix") or ""
-    inner: list[str] = []
+    cards: list[str] = []
     instructions = (selected.get("instructions") or "").strip()
     if instructions:
-        inner.append(instructions)
-    if head.startswith(_BLOCK_OPEN):
-        rest = head[len(_BLOCK_OPEN) :].strip("\n")
-        if rest:
-            inner.append(rest)
-    elif head.strip():
-        inner.append(head.strip())
+        cards.append(instructions)
+    user_bits = (selected.get("user_bits") or "").strip()
+    memory_bits = (selected.get("memory_bits") or "").strip()
+    if user_bits:
+        cards.append(user_bits)
+    if memory_bits:
+        cards.append(memory_bits)
+    if not cards:
+        head = selected.get("head_prefix") or ""
+        if head.startswith(_BLOCK_OPEN):
+            rest = head[len(_BLOCK_OPEN) :].strip("\n")
+            if rest:
+                cards.append(rest)
+        elif head.strip():
+            cards.append(head.strip())
+    facts: list[str] = []
+    used = 0
     for atom in sorted(selected.get("tail_atoms") or [], key=_atom_sort_key):
         text = (atom.get("text") or "").strip()
-        if text:
-            inner.append(text)
+        if not text:
+            continue
+        if used and used + len(text) + 1 > _ATOM_BUDGET:
+            break
+        facts.append(text)
+        used += len(text) + 1
     attach = (selected.get("attach") or "").strip()
     if attach:
         label = (selected.get("attach_label") or "").strip()
-        inner.append(f"{label}: {attach}" if label else attach)
+        extra = f"{label}: {attach}" if label else attach
+        if used + len(extra) + 1 <= _ATOM_BUDGET:
+            facts.append(extra)
+    inner: list[str] = []
+    if cards:
+        inner.append(_CARD_MARK)
+        inner.extend(cards)
+    if facts:
+        inner.append(_FACT_MARK)
+        inner.extend(facts)
     if not inner:
         return ""
     return _BLOCK_OPEN + "\n" + "\n".join(inner) + "\n" + _BLOCK_CLOSE
