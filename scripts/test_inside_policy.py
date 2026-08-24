@@ -243,6 +243,32 @@ def test_cards_and_facts_are_separate_sections() -> None:
     assert "Reviews open with a reproducibility check." not in block[card_at:fact_at]
 
 
+def test_due_fact_keeps_budget_over_earlier_id() -> None:
+    due_text = "Due lesson " + ("alpha " * 80)
+    live_text = "Live lesson " + ("beta " * 80)
+    assert len(due_text) + len(live_text) > inside_policy._ATOM_BUDGET
+    selected = {
+        "user_bits": "",
+        "memory_bits": "",
+        "instructions": "",
+        "head_prefix": "",
+        "tail_atoms": [
+            {"id": "a1", "kind": "lesson", "text": live_text},
+            {
+                "id": "z9",
+                "kind": "lesson",
+                "text": due_text,
+                "due_at": "2000-01-01T00:00:00.000Z",
+            },
+        ],
+        "attach": "",
+    }
+    block = inside_policy._selected_text(selected)
+    facts = block[block.find("Facts:") :]
+    assert "Due lesson" in facts
+    assert "Live lesson" not in facts
+
+
 def test_extract_accept_does_not_write_memory_md(tmp_path: Path) -> None:
     import inside_extract
 

@@ -223,6 +223,12 @@ def _atom_sort_key(atom: dict[str, Any]) -> tuple[str, str]:
     return (str(atom.get("id") or ""), atom.get("text") or "")
 
 
+def _fact_sort_key(atom: dict[str, Any]) -> tuple[int, str, str]:
+    due = 0 if inside_memory.is_due(atom) else 1
+    ident, text = _atom_sort_key(atom)
+    return (due, ident, text)
+
+
 def _query(hints: dict[str, Any]) -> str:
     parts = [str(hints.get("user_text") or "")]
     for name in hints.get("tool_names") or []:
@@ -282,7 +288,7 @@ def _selected_text(selected: dict[str, Any]) -> str:
             cards.append(head.strip())
     facts: list[str] = []
     used = 0
-    for atom in sorted(selected.get("tail_atoms") or [], key=_atom_sort_key):
+    for atom in sorted(selected.get("tail_atoms") or [], key=_fact_sort_key):
         text = (atom.get("text") or "").strip()
         if not text:
             continue
@@ -364,7 +370,12 @@ def select_from_hits(
             text = str(hit.get("text") or "").strip()
             if not text or not hit.get("id"):
                 continue
-            atom = {"id": hit.get("id"), "kind": kind, "text": text}
+            atom = {
+                "id": hit.get("id"),
+                "kind": kind,
+                "text": text,
+                "due_at": hit.get("due_at"),
+            }
         kind = atom.get("kind")
         if kind == _CACHE_KIND:
             if not wants_remote:
