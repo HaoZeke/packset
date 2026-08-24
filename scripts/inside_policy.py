@@ -793,12 +793,16 @@ def fetch_recall(
     return [atom for atom in atoms if isinstance(atom, dict)]
 
 
-def post_grade(url: str, workspace: str, atom_id: str) -> dict[str, Any]:
+def post_grade(
+    url: str, workspace: str, atom_id: str, *, recalled: bool = True
+) -> dict[str, Any]:
     """POST {url}/v1/grade. Complementary review-clock write."""
     base = (url or "").rstrip("/")
     if not base:
         raise ValueError("memory url is empty")
-    payload = json.dumps({"workspace": workspace, "id": atom_id}).encode("utf-8")
+    payload = json.dumps(
+        {"workspace": workspace, "id": atom_id, "recalled": bool(recalled)}
+    ).encode("utf-8")
     req = urllib.request.Request(
         f"{base}/v1/grade",
         data=payload,

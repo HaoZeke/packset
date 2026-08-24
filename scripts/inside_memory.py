@@ -345,12 +345,17 @@ def schedule_review(
     now: str | None = None,
     interval_s: int | None = None,
     recalled: bool = False,
+    lapse: bool = False,
 ) -> dict[str, Any]:
     """Set due_at. Leave valid_to alone. First write queues a test, not a close."""
     clock = now or utcnow()
     out = dict(atom)
     review = dict(out.get("review") or {})
-    if recalled:
+    if lapse:
+        ease = max(1.3, float(review.get("ease") or REVIEW_EASE) - 0.2)
+        span = DEFAULT_REVIEW_INTERVAL_S
+        review = {"reps": 0, "interval_s": span, "ease": ease, "last": clock}
+    elif recalled:
         reps = int(review.get("reps") or 0) + 1
         prev = int(review.get("interval_s") or DEFAULT_REVIEW_INTERVAL_S)
         ease = float(review.get("ease") or REVIEW_EASE)

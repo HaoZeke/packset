@@ -243,6 +243,32 @@ def test_cards_and_facts_are_separate_sections() -> None:
     assert "Reviews open with a reproducibility check." not in block[card_at:fact_at]
 
 
+def test_due_fact_keeps_budget_over_earlier_id() -> None:
+    due_text = "Due lesson " + ("alpha " * 80)
+    live_text = "Live lesson " + ("beta " * 80)
+    assert len(due_text) + len(live_text) > inside_policy._ATOM_BUDGET
+    selected = {
+        "user_bits": "",
+        "memory_bits": "",
+        "instructions": "",
+        "head_prefix": "",
+        "tail_atoms": [
+            {"id": "a1", "kind": "lesson", "text": live_text},
+            {
+                "id": "z9",
+                "kind": "lesson",
+                "text": due_text,
+                "due_at": "2000-01-01T00:00:00.000Z",
+            },
+        ],
+        "attach": "",
+    }
+    block = inside_policy._selected_text(selected)
+    facts = block[block.find("Facts:") :]
+    assert "Due lesson" in facts
+    assert "Live lesson" not in facts
+
+
 def test_extract_accept_does_not_write_memory_md(tmp_path: Path) -> None:
     import inside_extract
 
@@ -569,4 +595,37 @@ def test_select_omits_future_due_even_when_query_matches() -> None:
     ids = [atom["id"] for atom in selected["tail_atoms"]]
     assert "future1" not in ids
     block = claims(selected)
+    assert "dated snapshot of the labels" not in block
+
+
+def test_retrieve_due_without_query_omits_future(monkeypatch: pytest.MonkeyPatch) -> None:
+    due = {
+        "id": "due1",
+        "kind": "lesson",
+        "text": "UNIQUE-DUE-NO-QUERY-TOKEN pin the review set",
+        "due_at": "2000-01-01T00:00:00.000Z",
+    }
+    future = {
+        "field": "atom",
+        "id": "future1",
+        "kind": "lesson",
+        "score": 4.0,
+        "text": "Always review with a dated snapshot of the labels.",
+        "due_at": "2099-01-01T00:00:00.000Z",
+    }
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [future])
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [due, future])
+    monkeypatch.setattr(inside_policy, "post_grade", lambda *_a, **_k: {"ok": True})
+    selected = inside_policy.retrieve(
+        "http://example.invalid",
+        "ws",
+        {"user_text": "review this PR", "wants_remote": False},
+    )
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due1" in ids
+    assert "future1" not in ids
+    block = claims(selected)
+    assert "UNIQUE-DUE-NO-QUERY-TOKEN" not in block
+    assert "`packset:lesson:due1`" in block
     assert "dated snapshot of the labels" not in block
