@@ -28,7 +28,9 @@ import inside_search
 
 # Files are paragraph-scored. Atoms are ranked. Nothing is a default
 # head. USER/MEMORY caps bound the files; the atom cap bounds the rest.
-_ATOM_KINDS = frozenset({"voice", "preference", "habit", "lesson", "goal"})
+_CARD_KINDS = frozenset({"voice", "preference", "habit"})
+_FACT_KINDS = frozenset({"lesson", "goal", "conclusion", "belief"})
+_ATOM_KINDS = _CARD_KINDS | _FACT_KINDS
 _CACHE_KIND = "cache-pointer"
 _MAX_ATOMS = 4
 _SEARCH_LIMIT = 16
@@ -316,6 +318,10 @@ def _selected_text(selected: dict[str, Any]) -> str:
         cards.append(user_bits)
     if memory_bits:
         cards.append(memory_bits)
+    for atom in selected.get("head_atoms") or []:
+        text = (atom.get("text") or "").strip()
+        if text:
+            cards.append(text)
     if not cards:
         head = selected.get("head_prefix") or ""
         if head.startswith(_BLOCK_OPEN):
@@ -380,6 +386,7 @@ def select_from_hits(
     user_parts: list[str] = []
     memory_parts: list[str] = []
     picked: list[dict[str, Any]] = []
+    card_atoms: list[dict[str, Any]] = []
     seen: set[str] = set()
     seen_text: set[str] = set()
     ranked = (
@@ -421,7 +428,9 @@ def select_from_hits(
         if kind == _CACHE_KIND:
             if not wants_remote:
                 continue
-        elif kind not in _ATOM_KINDS:
+        elif kind in _CARD_KINDS:
+            pass
+        elif kind not in _FACT_KINDS:
             continue
         if atom.get("due_at") and not inside_memory.is_due(atom):
             continue
@@ -433,6 +442,9 @@ def select_from_hits(
             continue
         seen.add(aid)
         seen_text.add(norm)
+        if kind in _CARD_KINDS:
+            card_atoms.append(atom)
+            continue
         picked.append(atom)
         if len(picked) >= _MAX_ATOMS:
             break
@@ -443,7 +455,7 @@ def select_from_hits(
         "memory": "",
         "user_bits": user_bits,
         "memory_bits": memory_bits,
-        "head_atoms": [],
+        "head_atoms": card_atoms,
         "tail_atoms": picked,
         "head_prefix": _head_prefix(user_bits, memory_bits, []),
     }
