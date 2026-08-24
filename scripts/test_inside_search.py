@@ -124,6 +124,19 @@ def test_due_atom_hits_without_query_overlap() -> None:
     assert quiet["id"] not in ids
 
 
+def test_engine_search_leads_with_due_atom() -> None:
+    due = voice(
+        text="Review this lesson on the due clock.",
+        due_at="2000-01-01T00:00:00.000Z",
+    )
+    quiet = voice(text="Unrelated high trust habit.", trust=9.0)
+    pack = {"user": "", "memory": "", "atoms": [due, quiet]}
+    hits, _engine = inside_search.search_pack_with_engine(pack, "zircon")
+    ids = [h["id"] for h in hits]
+    assert ids and ids[0] == due["id"]
+    assert quiet["id"] not in ids
+
+
 def test_expired_atom_absent() -> None:
     stale = inside_memory.make_atom(
         workspace=WS,

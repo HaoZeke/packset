@@ -985,6 +985,56 @@ def lexical_search(
     return search_pack_linear(pack, query, limit=limit, set_name=set_name), "linear"
 
 
+def due_atom_hits(
+    pack: dict[str, Any],
+    *,
+    set_name: str | None = None,
+) -> list[dict[str, Any]]:
+    """Live atoms whose due_at is now. Query overlap is not required."""
+    now = inside_memory.utcnow()
+    hits: list[dict[str, Any]] = []
+    for atom in pack.get("atoms") or []:
+        if not isinstance(atom, dict) or not inside_memory.is_live(atom, now):
+            continue
+        if not _atom_in_set(atom, set_name):
+            continue
+        if not inside_memory.is_due(atom, now):
+            continue
+        try:
+            trust = float(atom.get("trust") if atom.get("trust") is not None else 1.0)
+        except (TypeError, ValueError):
+            trust = 1.0
+        hits.append(
+            {
+                "field": "atom",
+                "id": atom.get("id"),
+                "kind": atom.get("kind"),
+                "text": atom.get("text") or "",
+                "score": 2.0 + 0.1 * trust + _recency(atom.get("ts")),
+            }
+        )
+    hits.sort(key=lambda h: (-float(h["score"]), str(h.get("id") or "")))
+    return hits
+
+
+def _front_due(
+    due: list[dict[str, Any]], ranked: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for hit in due + ranked:
+        key = _hit_key(hit)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(hit)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def search_pack_with_engine(
     pack: dict[str, Any],
     query: str,
@@ -993,7 +1043,7 @@ def search_pack_with_engine(
     index_dir: Path | None = None,
     set_name: str | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
-    """Ranked hits plus which engine produced them."""
+    """Ranked hits plus which engine produced them. Due atoms lead."""
     if not _tokens(query):
         return [], "linear"
     dense = dense_hits(pack, query, limit=limit, set_name=set_name)
@@ -1001,8 +1051,11 @@ def search_pack_with_engine(
         pack, query, limit=limit, index_dir=index_dir, set_name=set_name
     )
     if dense:
-        merged = _merge_dense(ranked, dense, max(0, int(limit)))
-        return merged, f"{engine}+dense"
+        ranked = _merge_dense(ranked, dense, max(0, int(limit)))
+        engine = f"{engine}+dense"
+    due = due_atom_hits(pack, set_name=set_name)
+    if due:
+        ranked = _front_due(due, ranked, max(0, int(limit)))
     return ranked, engine
 
 
