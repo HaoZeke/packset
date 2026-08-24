@@ -60,6 +60,28 @@ def test_memory_overflow_is_an_error(tmp_path: Path) -> None:
         inside_memory.set_memory(WS, "y" * (inside_memory.MEMORY_CAP + 1), home=tmp_path)
 
 
+def test_card_overflow_archives_the_rejected_text(tmp_path: Path) -> None:
+    user_line = "Keep the user latch on reviews.\n"
+    user_blob = user_line * ((inside_memory.USER_CAP // len(user_line)) + 2)
+    with pytest.raises(inside_memory.MemoryOverflow):
+        inside_memory.set_user(user_blob, home=tmp_path)
+    mem_line = "Keep the zircon latch on reviews.\n"
+    mem_blob = mem_line * ((inside_memory.MEMORY_CAP // len(mem_line)) + 2)
+    with pytest.raises(inside_memory.MemoryOverflow):
+        inside_memory.set_memory(WS, mem_blob, home=tmp_path)
+    day = inside_memory.utcnow()[:10]
+    user_day = inside_memory.read_text(
+        inside_memory.archive_path("global", day=day, home=tmp_path)
+    )
+    mem_day = inside_memory.read_text(
+        inside_memory.archive_path(WS, day=day, home=tmp_path)
+    )
+    assert "user latch" in user_day
+    assert "zircon latch" in mem_day
+    assert inside_memory.read_text(inside_memory.user_path(tmp_path)) == ""
+    assert inside_memory.read_text(inside_memory.memory_path(WS, tmp_path)) == ""
+
+
 def test_user_under_cap_round_trips(tmp_path: Path) -> None:
     inside_memory.set_user("Prefers Conventional Commits.\n", home=tmp_path)
     assert "Conventional Commits" in inside_memory.read_text(inside_memory.user_path(tmp_path))
