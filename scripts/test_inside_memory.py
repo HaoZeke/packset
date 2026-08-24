@@ -542,6 +542,26 @@ def test_recalled_true_stretches_stability() -> None:
     assert int(second["review"]["reps"]) == 1
 
 
+def test_lapse_cuts_stability_and_raises_difficulty() -> None:
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="Remember that the review clock is a keep-testing queue.",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    first = inside_memory.schedule_review(atom, now="2026-08-24T00:00:00.000Z")
+    s0 = float(first["review"]["stability"])
+    d0 = float(first["review"]["difficulty"])
+    failed = inside_memory.schedule_review(
+        first, now="2026-08-25T00:00:00.000Z", lapse=True
+    )
+    assert float(failed["review"]["stability"]) < s0
+    assert float(failed["review"]["difficulty"]) > d0
+    assert failed["review"]["difficulty"] != failed["review"]["ease"]
+    assert int(failed["review"]["reps"]) == 0
+
+
 def test_tombstones_still_disappear_from_current(tmp_path: Path) -> None:
     atom = inside_memory.make_atom(
         workspace=WS,
