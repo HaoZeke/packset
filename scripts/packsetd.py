@@ -176,6 +176,17 @@ class Store:
             self._milli_upsert([updated, *rewritten])
         return updated
 
+    def grade(self, workspace: str, atom_id: str) -> dict:
+        current = {a["id"]: a for a in self.current(workspace)}
+        if atom_id not in current:
+            raise inside_memory.AtomError(f"no current atom {atom_id}")
+        graded = inside_memory.schedule_review(current[atom_id], recalled=True)
+        return self.update(
+            workspace,
+            atom_id,
+            {"due_at": graded["due_at"], "review": graded["review"]},
+        )
+
     def delete(self, workspace: str, atom_id: str) -> dict:
         with self.lock:
             current = {a["id"]: a for a in self.current(workspace)}
@@ -680,6 +691,12 @@ def make_handler(store: Store):
                             body["workspace"], body["id"], body.get("fields") or {}
                         ),
                     )
+                if parsed.path == "/v1/grade":
+                    workspace = body.get("workspace") or ""
+                    atom_id = body.get("id") or ""
+                    if not workspace or not atom_id:
+                        return self._err(400, "workspace and id required")
+                    return self._send(200, store.grade(workspace, atom_id))
                 if parsed.path == "/v1/atoms/delete":
                     return self._send(
                         200, store.delete(body["workspace"], body["id"])

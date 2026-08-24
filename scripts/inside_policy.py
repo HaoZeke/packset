@@ -793,21 +793,14 @@ def fetch_recall(
     return [atom for atom in atoms if isinstance(atom, dict)]
 
 
-def post_update(
-    url: str,
-    workspace: str,
-    atom_id: str,
-    fields: dict[str, Any],
-) -> dict[str, Any]:
-    """POST {url}/v1/atoms/update. Complementary grade write."""
+def post_grade(url: str, workspace: str, atom_id: str) -> dict[str, Any]:
+    """POST {url}/v1/grade. Complementary review-clock write."""
     base = (url or "").rstrip("/")
     if not base:
         raise ValueError("memory url is empty")
-    payload = json.dumps(
-        {"workspace": workspace, "id": atom_id, "fields": fields}
-    ).encode("utf-8")
+    payload = json.dumps({"workspace": workspace, "id": atom_id}).encode("utf-8")
     req = urllib.request.Request(
-        f"{base}/v1/atoms/update",
+        f"{base}/v1/grade",
         data=payload,
         method="POST",
         headers={"Content-Type": "application/json"},
@@ -815,25 +808,18 @@ def post_update(
     with urllib.request.urlopen(req, timeout=5) as response:
         body = json.loads(response.read().decode("utf-8"))
     if not isinstance(body, dict):
-        raise ValueError("update response is not an object")
+        raise ValueError("grade response is not an object")
     return body
 
 
 def grade_due(url: str, workspace: str, due: list[dict[str, Any]]) -> None:
-    """Stretch due_at after a retrieve. Fail-open on a dead update."""
-    now = inside_memory.utcnow()
+    """Stretch due_at after a retrieve. Fail-open on a dead grade."""
     for atom in due:
         aid = str(atom.get("id") or "")
         if not aid:
             continue
-        graded = inside_memory.schedule_review(atom, now=now, recalled=True)
         try:
-            post_update(
-                url,
-                workspace,
-                aid,
-                {"due_at": graded["due_at"], "review": graded["review"]},
-            )
+            post_grade(url, workspace, aid)
         except (urllib.error.URLError, TimeoutError, ValueError, OSError):
             continue
 

@@ -615,6 +615,26 @@ def test_remember_refused_write_returns_400(
     assert ctx.value.code == 400
 
 
+def test_grade_stretches_due_at(packset: Packset) -> None:
+    _, stored = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Review this lesson on the due clock.",
+            kind="lesson",
+            due_at="2000-01-01T00:00:00.000Z",
+        ),
+    )
+    status, body = packset.json(
+        "POST",
+        "/v1/grade",
+        {"workspace": WS, "id": stored["id"]},
+    )
+    assert status == 200
+    assert body["due_at"] > "2000-01-01T00:00:00.000Z"
+    assert (body.get("review") or {}).get("reps") == 1
+
+
 @pytest.mark.parametrize(
     ("args", "match"),
     [

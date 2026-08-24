@@ -485,19 +485,16 @@ def test_retrieve_grades_due_atom(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [due])
     monkeypatch.setattr(
         inside_policy,
-        "post_update",
-        lambda url, workspace, atom_id, fields: posted.append(
-            {"url": url, "workspace": workspace, "id": atom_id, "fields": fields}
+        "post_grade",
+        lambda url, workspace, atom_id: posted.append(
+            {"url": url, "workspace": workspace, "id": atom_id}
         )
-        or {},
+        or {"due_at": "2000-01-02T00:00:00.000Z"},
     )
     inside_policy.retrieve("http://example.invalid", "ws", {"user_text": "sky"})
-    assert len(posted) == 1
-    assert posted[0]["id"] == "due1"
-    assert posted[0]["workspace"] == "ws"
-    new_due = str((posted[0]["fields"] or {}).get("due_at") or "")
-    assert new_due > "2000-01-01T00:00:00.000Z"
-    assert (posted[0]["fields"] or {}).get("review")
+    assert posted == [
+        {"url": "http://example.invalid", "workspace": "ws", "id": "due1"}
+    ]
 
 
 def test_retrieve_keeps_search_when_recall_fails(monkeypatch: pytest.MonkeyPatch) -> None:
