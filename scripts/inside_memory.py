@@ -10,7 +10,7 @@ import json
 import re
 import uuid
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,8 @@ _SECRET = re.compile(
 _CAPITALIZED_RUN = re.compile(r"\b[A-Z][A-Za-z0-9]{1,}\b")
 _BACKTICK_NAME = re.compile(r"`([^`]+)`")
 LINK_THRESHOLD = 0.3
+DEFAULT_REVIEW_INTERVAL_S = 86400
+REVIEW_EASE = 2.5
 
 
 class MemoryOverflow(RuntimeError):
@@ -198,6 +200,7 @@ def make_atom(
     source: dict[str, Any] | None = None,
     valid_from: str | None = None,
     valid_to: str | None = None,
+    due_at: str | None = None,
     links: Iterable[str] | None = None,
     entities: Iterable[str] | None = None,
     trust: float = 1.0,
@@ -218,6 +221,7 @@ def make_atom(
         "ts": now,
         "valid_from": valid_from or now,
         "valid_to": valid_to,
+        "due_at": due_at,
         "links": list(links or []),
         "embedding": None,
         "trust": float(trust),
@@ -273,6 +277,66 @@ def is_live(atom: dict[str, Any], now: str | None = None) -> bool:
     if valid_to is None or valid_to == "":
         return True
     return str(valid_to) > (now or utcnow())
+
+
+def is_due(atom: dict[str, Any], now: str | None = None) -> bool:
+    """Review clock. Missing due_at is not due. Ignores valid_to."""
+    due_at = atom.get("due_at")
+    if due_at is None or due_at == "":
+        return False
+    return str(due_at) <= (now or utcnow())
+
+
+def due_atoms(
+    workspace: str, home: Path | None = None, *, now: str | None = None
+) -> list[dict[str, Any]]:
+    clock = now or utcnow()
+    return [a for a in current_atoms(workspace, home) if is_due(a, clock)]
+
+
+def close_live(atom: dict[str, Any], at: str) -> dict[str, Any]:
+    """Close the live set. due_at is untouched."""
+    closed = dict(atom)
+    closed["valid_to"] = at
+    return closed
+
+
+def _shift_iso(now: str, seconds: int) -> str:
+    dt = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    return (dt + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def schedule_review(
+    atom: dict[str, Any],
+    *,
+    now: str | None = None,
+    interval_s: int | None = None,
+    recalled: bool = False,
+) -> dict[str, Any]:
+    """Set due_at. Leave valid_to alone. First write queues a test, not a close."""
+    clock = now or utcnow()
+    out = dict(atom)
+    review = dict(out.get("review") or {})
+    if recalled:
+        reps = int(review.get("reps") or 0) + 1
+        prev = int(review.get("interval_s") or DEFAULT_REVIEW_INTERVAL_S)
+        ease = float(review.get("ease") or REVIEW_EASE)
+        if reps == 1:
+            nxt = DEFAULT_REVIEW_INTERVAL_S
+        elif reps == 2:
+            nxt = 6 * DEFAULT_REVIEW_INTERVAL_S
+        else:
+            nxt = int(prev * ease)
+        review = {"reps": reps, "interval_s": nxt, "ease": ease}
+        span = nxt
+    else:
+        span = interval_s if interval_s is not None else DEFAULT_REVIEW_INTERVAL_S
+        review.setdefault("reps", 0)
+        review.setdefault("interval_s", span)
+        review.setdefault("ease", REVIEW_EASE)
+    out["due_at"] = _shift_iso(clock, span)
+    out["review"] = review
+    return out
 
 
 def extract_entities(atom: dict[str, Any]) -> set[str]:

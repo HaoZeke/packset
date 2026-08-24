@@ -383,6 +383,78 @@ def test_cache_pointer_refresh_updates_text_and_validity(tmp_path: Path) -> None
     assert live[0]["text"] == new_text
 
 
+def test_due_at_does_not_change_live_set(tmp_path: Path) -> None:
+    past = "2000-01-01T00:00:00.000Z"
+    future = "2099-01-01T00:00:00.000Z"
+    now = "2026-08-24T12:00:00.000Z"
+    due_live = inside_memory.make_atom(
+        workspace=WS,
+        text="Review this lesson on the due clock.",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+        valid_to=future,
+        due_at=past,
+    )
+    stored = inside_memory.add_atom(due_live, home=tmp_path)
+    assert inside_memory.is_live(stored, now)
+    assert inside_memory.is_due(stored, now)
+    assert len(inside_memory.current_atoms(WS, tmp_path)) == 1
+    queue = inside_memory.due_atoms(WS, tmp_path, now=now)
+    assert [a["id"] for a in queue] == [stored["id"]]
+
+
+def test_missing_due_at_is_not_due() -> None:
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="No review clock on this voice line.",
+        kind="voice",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    now = "2026-08-24T12:00:00.000Z"
+    assert inside_memory.is_live(atom, now)
+    assert not inside_memory.is_due(atom, now)
+
+
+def test_close_live_preserves_due_at() -> None:
+    due = "2026-08-25T00:00:00.000Z"
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="Closing validity must not clear the review clock.",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+        due_at=due,
+    )
+    closed = inside_memory.close_live(atom, at="2026-08-24T12:00:00.000Z")
+    assert closed["due_at"] == due
+    assert closed["valid_to"] == "2026-08-24T12:00:00.000Z"
+    assert not inside_memory.is_live(closed, "2026-08-24T12:00:00.000Z")
+
+
+def test_schedule_review_does_not_close_validity() -> None:
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="Remember that the review clock is a keep-testing queue.",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    assert atom.get("valid_to") is None
+    scheduled = inside_memory.schedule_review(
+        atom,
+        now="2026-08-24T00:00:00.000Z",
+        interval_s=86400,
+    )
+    assert scheduled.get("valid_to") is None
+    assert scheduled["due_at"] == "2026-08-25T00:00:00.000Z"
+    assert scheduled["review"]["reps"] == 0
+    assert inside_memory.is_live(scheduled, "2026-08-24T12:00:00.000Z")
+    assert not inside_memory.is_due(scheduled, "2026-08-24T12:00:00.000Z")
+    assert inside_memory.is_due(scheduled, "2026-08-25T00:00:00.000Z")
+
+
 def test_tombstones_still_disappear_from_current(tmp_path: Path) -> None:
     atom = inside_memory.make_atom(
         workspace=WS,
