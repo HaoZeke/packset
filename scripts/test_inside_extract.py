@@ -140,6 +140,28 @@ def test_compact_day_reads_archive_not_memory(tmp_path: Path) -> None:
     assert hits == []
 
 
+def test_compact_day_fences_lmdb_atoms(tmp_path: Path) -> None:
+    inside_memory.append_archive(
+        "global",
+        "always pin the zircon index",
+        day="2026-08-24",
+        home=tmp_path,
+    )
+    lmdb_atom = {
+        "id": "lmdb-1",
+        "kind": "lesson",
+        "text": "always pin the zircon index",
+    }
+    proposed = inside_extract.compact_day(
+        "global",
+        day="2026-08-24",
+        home=tmp_path,
+        extra_atoms=[lmdb_atom],
+    )
+    assert proposed == []
+    assert inside_extract.list_proposals("global", home=tmp_path) == []
+
+
 def test_fenced_splice_does_not_propose(tmp_path: Path) -> None:
     live = inside_memory.make_atom(
         workspace="global",

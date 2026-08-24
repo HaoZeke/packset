@@ -557,6 +557,24 @@ def test_extract_skips_already_live_atom(packset: Packset) -> None:
             },
         )
     assert ctx.value.code == 400
+
+
+def test_compact_fences_lmdb_atom(packset: Packset) -> None:
+    packset.json("POST", "/v1/atoms", voice(text="always pin the zircon index"))
+    inside_memory.append_archive(
+        WS,
+        "always pin the zircon index",
+        day="2026-08-24",
+        home=packset.home,
+    )
+    status, body = packset.json(
+        "POST",
+        "/v1/compact",
+        {"workspace": WS, "day": "2026-08-24"},
+    )
+    assert status == 200
+    assert body["n"] == 0
+    assert body["proposals"] == []
     _, inbox = packset.get(f"/v1/proposals?workspace={WS}")
     assert json.loads(inbox.decode())["proposals"] == []
 

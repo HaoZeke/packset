@@ -165,7 +165,11 @@ def _norm_claim(text: str) -> str:
     return " ".join((text or "").lower().split()).rstrip(".,;:")
 
 
-def fence_texts(workspace: str, home: Path | None = None) -> set[str]:
+def fence_texts(
+    workspace: str,
+    home: Path | None = None,
+    extra_atoms: list[dict[str, Any]] | None = None,
+) -> set[str]:
     """Cards and live atoms already in the splice. Compaction must not re-capture them."""
     out: set[str] = set()
     for path in (
@@ -178,6 +182,10 @@ def fence_texts(workspace: str, home: Path | None = None) -> set[str]:
             if n:
                 out.add(n)
     for atom in inside_memory.current_atoms(workspace, home):
+        n = _norm_claim(str(atom.get("text") or ""))
+        if n:
+            out.add(n)
+    for atom in extra_atoms or []:
         n = _norm_claim(str(atom.get("text") or ""))
         if n:
             out.add(n)
@@ -195,15 +203,24 @@ def is_fenced(claim: str, fence: set[str]) -> bool:
 
 
 def compact_day(
-    workspace: str, *, day: str | None = None, home: Path | None = None
+    workspace: str,
+    *,
+    day: str | None = None,
+    home: Path | None = None,
+    extra_atoms: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Mine one archive day into Proposals. Disk keeps the day file."""
     path = inside_memory.archive_path(workspace, day=day, home=home)
     blob = inside_memory.read_text(path)
+    wall = fence_texts(workspace, home, extra_atoms=extra_atoms)
     out: list[dict[str, Any]] = []
     for part in inside_memory._entries(blob):
         rec = extract_propose(
-            part, workspace=workspace, when="compaction", home=home
+            part,
+            workspace=workspace,
+            when="compaction",
+            home=home,
+            fence=wall,
         )
         if rec is not None:
             out.append(rec)
