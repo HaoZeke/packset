@@ -144,7 +144,11 @@ def set_user(text: str, home: Path | None = None) -> None:
 
 
 def set_memory(workspace: str, text: str, home: Path | None = None) -> None:
-    write_capped(memory_path(workspace, home), text, MEMORY_CAP)
+    try:
+        write_capped(memory_path(workspace, home), text, MEMORY_CAP)
+    except MemoryOverflow:
+        append_archive(workspace, text, home=home)
+        raise
 
 
 def _entries(text: str) -> list[str]:
