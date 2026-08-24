@@ -526,6 +526,29 @@ def test_same_claim_under_two_sets_is_two_atoms(packset: Packset) -> None:
     assert neighbor["id"] in live[debug["id"]]["links"]
 
 
+def test_compact_day_proposes_from_archive(packset: Packset) -> None:
+    inside_memory.append_archive(
+        WS,
+        "Keep the zircon latch on reviews.",
+        day="2026-08-24",
+        home=packset.home,
+    )
+    status, body = packset.json(
+        "POST",
+        "/v1/compact",
+        {"workspace": WS, "day": "2026-08-24"},
+    )
+    assert status == 200
+    assert body["n"] == 1
+    assert "zircon" in body["proposals"][0]["text"]
+    _, raw = packset.get(f"/v1/atoms?workspace={WS}")
+    assert json.loads(raw.decode())["atoms"] == []
+    day = inside_memory.read_text(
+        inside_memory.archive_path(WS, day="2026-08-24", home=packset.home)
+    )
+    assert "zircon" in day
+
+
 def test_extract_on_coding_post_is_forbidden(packset: Packset) -> None:
     with pytest.raises(HTTPError) as ctx:
         packset.json(
