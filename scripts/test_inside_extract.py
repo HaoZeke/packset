@@ -8,6 +8,7 @@ import pytest
 
 import inside_extract
 import inside_memory
+import inside_search
 
 
 def test_remember_line() -> None:
@@ -98,6 +99,38 @@ def test_extract_accept_commits_atom(tmp_path: Path) -> None:
     live = inside_memory.current_atoms("global", tmp_path)
     assert [a["id"] for a in live] == [atom["id"]]
     assert inside_extract.apply_pack("extractAccept", proposal) is not None
+
+
+def test_compact_day_reads_archive_not_memory(tmp_path: Path) -> None:
+    inside_memory.append_archive(
+        "global",
+        "The review latch is the zircon pin.",
+        day="2026-08-24",
+        home=tmp_path,
+    )
+    inside_memory.append_archive(
+        "global",
+        "The review latch is the zircon pin.",
+        day="2026-08-24",
+        home=tmp_path,
+    )
+    path = inside_memory.archive_path("global", day="2026-08-24", home=tmp_path)
+    assert path.name == "2026-08-24.md"
+    text = inside_memory.read_text(path)
+    assert text.count("zircon pin") == 1
+    proposed = inside_extract.compact_day(
+        "global", day="2026-08-24", home=tmp_path
+    )
+    assert len(proposed) == 1
+    assert "zircon" in proposed[0]["text"]
+    pack = {
+        "user": "",
+        "memory": "",
+        "atoms": [],
+        "archive": text,
+    }
+    hits = inside_search.search_pack_linear(pack, "zircon", limit=8)
+    assert hits == []
 
 
 def test_fenced_splice_does_not_propose(tmp_path: Path) -> None:

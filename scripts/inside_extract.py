@@ -197,6 +197,22 @@ def is_fenced(claim: str, fence: set[str]) -> bool:
     return False
 
 
+def compact_day(
+    workspace: str, *, day: str | None = None, home: Path | None = None
+) -> list[dict[str, Any]]:
+    """Mine one archive day into Proposals. Disk keeps the day file."""
+    path = inside_memory.archive_path(workspace, day=day, home=home)
+    blob = inside_memory.read_text(path)
+    out: list[dict[str, Any]] = []
+    for part in inside_memory._entries(blob):
+        rec = extract_propose(
+            part, workspace=workspace, when="compaction", home=home
+        )
+        if rec is not None:
+            out.append(rec)
+    return out
+
+
 def extract_propose(
     text: str,
     *,

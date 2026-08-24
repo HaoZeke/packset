@@ -94,6 +94,30 @@ def atoms_path(workspace: str, home: Path | None = None) -> Path:
     return workspace_dir(workspace, home) / "atoms.jsonl"
 
 
+def archive_dir(workspace: str, home: Path | None = None) -> Path:
+    return workspace_dir(workspace, home) / "archive"
+
+
+def archive_path(
+    workspace: str, *, day: str | None = None, home: Path | None = None
+) -> Path:
+    stamp = day or utcnow()[:10]
+    return archive_dir(workspace, home) / f"{stamp}.md"
+
+
+def append_archive(
+    workspace: str,
+    text: str,
+    *,
+    day: str | None = None,
+    home: Path | None = None,
+) -> Path:
+    """One day file per workspace. Duplicate lines are a no-op."""
+    path = archive_path(workspace, day=day, home=home)
+    add_entry(path, text, cap=1_000_000)
+    return path
+
+
 def read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
