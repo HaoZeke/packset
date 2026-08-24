@@ -7,15 +7,13 @@ pub fn claim_from_user(text: &str) -> Option<(&'static str, String)> {
         return None;
     }
     let lower = last.to_ascii_lowercase();
-    let (kind, rest) = if let Some(r) = strip_prefix_ci(&lower, last, "remember that") {
+    let (kind, rest) = if let Some(r) = strip_prefix_ci(&lower, last, "remember that:") {
         ("lesson", r)
-    } else if let Some(r) = strip_prefix_ci(&lower, last, "remember") {
+    } else if let Some(r) = strip_prefix_ci(&lower, last, "remember:") {
         ("lesson", r)
-    } else if let Some(r) = strip_prefix_ci(&lower, last, "note that") {
-        ("lesson", r)
-    } else if let Some(r) = strip_prefix_ci(&lower, last, "from now on") {
+    } else if let Some(r) = strip_prefix_ci(&lower, last, "from now on:") {
         ("habit", r)
-    } else if let Some(r) = strip_prefix_ci(&lower, last, "prefer") {
+    } else if let Some(r) = strip_prefix_ci(&lower, last, "prefer:") {
         ("preference", r)
     } else {
         return None;
@@ -73,6 +71,12 @@ mod tests {
         let (k, c) = claim_from_user("Remember: always pin the review set").unwrap();
         assert_eq!(k, "lesson");
         assert!(c.contains("pin the review set"));
+    }
+
+    #[test]
+    fn note_that_is_not_remember() {
+        assert!(claim_from_user("Note that the test failed on line 12").is_none());
+        assert!(claim_from_user("Prefer conventional commits").is_none());
     }
 
     #[test]
