@@ -470,3 +470,57 @@ def test_retrieve_fronts_due_from_recall(monkeypatch: pytest.MonkeyPatch) -> Non
     texts = [atom.get("text") or "" for atom in selected["tail_atoms"]]
     assert all("UNIQUE-DUE-SECRET" not in text for text in texts)
     assert any("`packset:lesson:due1`" in text for text in texts)
+
+
+def test_retrieve_keeps_search_when_recall_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    hits = [
+        {
+            "field": "atom",
+            "id": "v1",
+            "kind": "habit",
+            "text": "Be brief.",
+            "score": 4.0,
+        }
+    ]
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: hits)
+
+    def boom(*_a: object, **_k: object) -> list[dict[str, object]]:
+        raise TimeoutError("recall down")
+
+    monkeypatch.setattr(inside_policy, "fetch_recall", boom)
+    selected = inside_policy.retrieve(
+        "http://127.0.0.1:9", "ws", {"user_text": "keep it brief"}
+    )
+    assert "Be brief." in claims(selected)
+
+
+def test_retrieve_pin_scopes_due_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    other = {
+        "id": "due-other",
+        "kind": "lesson",
+        "text": "UNIQUE-OTHER-SET-SECRET",
+        "due_at": "2000-01-01T00:00:00.000Z",
+        "set": "other",
+    }
+    pinned = {
+        "id": "due-review",
+        "kind": "lesson",
+        "text": "UNIQUE-PIN-SET-SECRET",
+        "due_at": "2000-01-01T00:00:00.000Z",
+        "set": "review",
+    }
+    monkeypatch.setattr(
+        inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": "review"}
+    )
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [])
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [other, pinned])
+    selected = inside_policy.retrieve(
+        "http://example.invalid", "ws", {"user_text": "sky"}
+    )
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due-review" in ids
+    assert "due-other" not in ids
+    texts = [atom.get("text") or "" for atom in selected["tail_atoms"]]
+    assert all("UNIQUE-OTHER-SET-SECRET" not in text for text in texts)
+    assert any("`packset:lesson:due-review`" in text for text in texts)

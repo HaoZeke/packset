@@ -795,10 +795,13 @@ def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
         fetch_search(url, workspace, query, set_name=pin or None),
         hints,
     )
-    due = inside_memory.due_atoms(
-        workspace,
-        atoms=fetch_recall(url, workspace, query=query or None),
-    )
+    try:
+        recalled = fetch_recall(url, workspace, query=query or None)
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        recalled = []
+    due = inside_memory.due_atoms(workspace, atoms=recalled)
+    if pin:
+        due = [atom for atom in due if str(atom.get("set") or "") == pin]
     selected["tail_atoms"] = _front_due(due, selected.get("tail_atoms") or [])
     instructions = str(pin_info.get("instructions") or "").strip()
     if instructions:
