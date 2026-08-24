@@ -14,6 +14,14 @@ pub fn is_live(tombstone: bool, valid_to: Option<&str>, now: &str) -> bool {
     }
 }
 
+/// Review clock. Missing `due_at` is not due. Independent of `valid_to`.
+pub fn is_due(due_at: Option<&str>, now: &str) -> bool {
+    match due_at {
+        None | Some("") => false,
+        Some(due) => due <= now,
+    }
+}
+
 /// Jaccard on entity sets. Empty intersection is 0.
 pub fn entity_jaccard<'a, I, J>(left: I, right: J) -> f64
 where
@@ -53,6 +61,20 @@ mod tests {
             "2026-08-20T00:00:00Z"
         ));
         assert!(!is_live(true, None, "2026-08-20T00:00:00Z"));
+    }
+
+    #[test]
+    fn due_independent_of_live() {
+        let now = "2026-08-20T00:00:00Z";
+        assert!(!is_due(None, now));
+        assert!(!is_due(Some(""), now));
+        assert!(!is_due(Some("2026-08-21T00:00:00Z"), now));
+        assert!(is_due(Some("2026-08-19T00:00:00Z"), now));
+        assert!(is_due(Some(now), now));
+        assert!(is_live(false, Some("2099-01-01T00:00:00Z"), now));
+        assert!(is_due(Some("2026-08-19T00:00:00Z"), now));
+        assert!(!is_live(false, Some("2000-01-01T00:00:00Z"), now));
+        assert!(is_due(Some("2026-08-19T00:00:00Z"), now));
     }
 
     #[test]

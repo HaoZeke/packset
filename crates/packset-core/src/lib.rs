@@ -24,7 +24,7 @@ pub mod rrf;
 pub mod schulze;
 pub mod tideman;
 
-pub use atom::{entity_jaccard, is_live, SCHEMA as ATOM_SCHEMA};
+pub use atom::{entity_jaccard, is_due, is_live, SCHEMA as ATOM_SCHEMA};
 pub use borda::{borda_merge, Ballot};
 pub use comb::{combmnz_merge, combsum_merge, ScoredBallot};
 pub use copeland::copeland_merge;
