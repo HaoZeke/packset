@@ -7,6 +7,7 @@ Deletes are tombstones. The JSONL is the log.
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from collections.abc import Iterable
@@ -49,6 +50,8 @@ _BACKTICK_NAME = re.compile(r"`([^`]+)`")
 LINK_THRESHOLD = 0.3
 DEFAULT_REVIEW_INTERVAL_S = 86400
 REVIEW_EASE = 2.5
+DEFAULT_STABILITY = 1.0
+DEFAULT_DIFFICULTY = 5.0
 
 
 class MemoryOverflow(RuntimeError):
@@ -355,6 +358,17 @@ def _shift_iso(now: str, seconds: int) -> str:
     return (dt + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
+def _review_elapsed_days(last: str | None, clock: str) -> float:
+    if not last:
+        return 0.0
+    try:
+        a = datetime.fromisoformat(last.replace("Z", "+00:00"))
+        b = datetime.fromisoformat(clock.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return max(0.0, (b - a).total_seconds() / 86400.0)
+
+
 def schedule_review(
     atom: dict[str, Any],
     *,
@@ -363,31 +377,47 @@ def schedule_review(
     recalled: bool = False,
     lapse: bool = False,
 ) -> dict[str, Any]:
-    """Set due_at. Leave valid_to alone. First write queues a test, not a close."""
+    """Set due_at from stability/difficulty. Leave valid_to alone."""
     clock = now or utcnow()
     out = dict(atom)
     review = dict(out.get("review") or {})
+    stability = float(review.get("stability") or DEFAULT_STABILITY)
+    difficulty = float(review.get("difficulty") or DEFAULT_DIFFICULTY)
     if lapse:
         ease = max(1.3, float(review.get("ease") or REVIEW_EASE) - 0.2)
         span = DEFAULT_REVIEW_INTERVAL_S
-        review = {"reps": 0, "interval_s": span, "ease": ease, "last": clock}
+        review = {
+            "reps": 0,
+            "interval_s": span,
+            "ease": ease,
+            "stability": DEFAULT_STABILITY,
+            "difficulty": min(10.0, difficulty + 0.2),
+            "last": clock,
+        }
     elif recalled:
         reps = int(review.get("reps") or 0) + 1
-        prev = int(review.get("interval_s") or DEFAULT_REVIEW_INTERVAL_S)
-        ease = float(review.get("ease") or REVIEW_EASE)
-        if reps == 1:
-            nxt = DEFAULT_REVIEW_INTERVAL_S
-        elif reps == 2:
-            nxt = 6 * DEFAULT_REVIEW_INTERVAL_S
-        else:
-            nxt = int(prev * ease)
-        review = {"reps": reps, "interval_s": nxt, "ease": ease}
-        span = nxt
+        elapsed = _review_elapsed_days(review.get("last"), clock)
+        retr = 0.9 ** (elapsed / stability) if stability > 0 else 0.0
+        retr = min(0.99, max(0.01, retr))
+        difficulty = min(10.0, max(1.0, difficulty - 0.15))
+        stability = stability * (1.0 + math.exp(1.0 - difficulty / 10.0) * (1.0 - retr))
+        span = int(max(1.0, stability) * 86400)
+        review = {
+            "reps": reps,
+            "interval_s": span,
+            "ease": REVIEW_EASE,
+            "stability": stability,
+            "difficulty": difficulty,
+            "last": clock,
+        }
     else:
         span = interval_s if interval_s is not None else DEFAULT_REVIEW_INTERVAL_S
         review.setdefault("reps", 0)
         review.setdefault("interval_s", span)
         review.setdefault("ease", REVIEW_EASE)
+        review.setdefault("stability", DEFAULT_STABILITY)
+        review.setdefault("difficulty", DEFAULT_DIFFICULTY)
+        review.setdefault("last", clock)
     out["due_at"] = _shift_iso(clock, span)
     out["review"] = review
     return out
