@@ -82,6 +82,20 @@ def test_card_overflow_archives_the_rejected_text(tmp_path: Path) -> None:
     assert inside_memory.read_text(inside_memory.memory_path(WS, tmp_path)) == ""
 
 
+def test_second_overflow_same_day_dedups(tmp_path: Path) -> None:
+    line = "Keep the zircon latch on reviews.\n"
+    blob = line * ((inside_memory.MEMORY_CAP // len(line)) + 2)
+    with pytest.raises(inside_memory.MemoryOverflow):
+        inside_memory.set_memory(WS, blob, home=tmp_path)
+    with pytest.raises(inside_memory.MemoryOverflow):
+        inside_memory.set_memory(WS, blob, home=tmp_path)
+    day = inside_memory.utcnow()[:10]
+    archived = inside_memory.read_text(
+        inside_memory.archive_path(WS, day=day, home=tmp_path)
+    )
+    assert archived.count(blob.strip()) == 1
+
+
 def test_user_under_cap_round_trips(tmp_path: Path) -> None:
     inside_memory.set_user("Prefers Conventional Commits.\n", home=tmp_path)
     assert "Conventional Commits" in inside_memory.read_text(inside_memory.user_path(tmp_path))
