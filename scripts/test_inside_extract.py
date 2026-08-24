@@ -106,6 +106,25 @@ def test_extract_accept_commits_atom(tmp_path: Path) -> None:
     live = inside_memory.current_atoms("global", tmp_path)
     assert [a["id"] for a in live] == [atom["id"]]
     assert inside_extract.apply_pack("extractAccept", proposal) is not None
+    assert proposal["verdict"] == "SUPPORTED"
+
+
+def test_extract_accept_rejects_nei(tmp_path: Path) -> None:
+    proposal = inside_extract.extract_propose(
+        "Hallucinated claim about the zircon latch.",
+        workspace="global",
+        when="compaction",
+        home=tmp_path,
+        transcript="The review queue is the bottleneck.",
+    )
+    assert proposal is not None
+    assert proposal["verdict"] == "NEI"
+    assert proposal["span"] == proposal["text"]
+    with pytest.raises(inside_extract.CheapError, match="NEI"):
+        inside_extract.accept_proposal(
+            proposal["id"], workspace="global", home=tmp_path
+        )
+    assert inside_memory.current_atoms("global", tmp_path) == []
 
 
 def test_compact_day_reads_archive_not_memory(tmp_path: Path) -> None:
