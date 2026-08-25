@@ -31,5 +31,5 @@ Clients do not open the LMDB.
 =scripts/keep_testing_vs_lru.py= is the named keep-testing vs LRU
 protocol (Hu 2025 p.59). Same pack. Keep-testing arm is
 =schedule_review= plus =recall= due-first. LRU arm is last-budget
-accessed ids. The metric is later-horizon long-tail hit. SCORECARD
-Measured stays empty until a run.
+accessed ids. The metric is later-horizon long-tail hit. Last run:
+=docs/orgmode/keep-testing-vs-lru.org=.

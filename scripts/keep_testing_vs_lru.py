@@ -258,7 +258,7 @@ def main() -> None:
     parser.add_argument(
         "--write",
         type=Path,
-        default=None,
+        default=ROOT / "docs/orgmode/keep-testing-vs-lru.org",
         help="write org results to this path",
     )
     args = parser.parse_args()

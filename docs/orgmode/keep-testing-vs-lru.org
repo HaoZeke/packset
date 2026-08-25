@@ -1,0 +1,15 @@
+#+title: keep-testing vs LRU
+#+options: toc:nil num:nil
+
+Protocol: =keep-testing-vs-lru-v1=
+Packset SHA: =f9ddeeb84defaa978c7cbb216884e2c9cdc0504f=
+Citation: Hu 2025 p.59 LRU may eliminate long-tail knowledge
+
+Same pack. Keep-testing arm is =schedule_review= + =recall= due-first.
+LRU arm is last-budget accessed ids. Probe is later-horizon tail hit.
+
+| Split | keep-testing tail hit | LRU tail hit | delta |
+| textbook 8 tail / budget 8 | 1.000 | 0.000 | +1.000 |
+| crowded 16 tail / budget 8 | 0.500 | 0.000 | +0.500 |
+| zipf n=64 draws=200 tail=16 | 0.500 | 0.000 | +0.500 |
+
