@@ -228,6 +228,15 @@ class Store:
     def proposals(self, workspace: str) -> list[dict]:
         return inside_extract.list_proposals(workspace, home=self.home)
 
+    def compact(self, workspace: str, day: str | None = None) -> dict:
+        proposed = inside_extract.compact_day(
+            workspace,
+            day=day,
+            home=self.home,
+            extra_atoms=self.current(workspace),
+        )
+        return {"proposals": proposed, "n": len(proposed)}
+
     def accept(self, workspace: str, proposal_id: str) -> dict:
         stored = inside_extract.accept_proposal(
             proposal_id, workspace=workspace, home=self.home
@@ -676,6 +685,12 @@ def make_handler(store: Store):
             except ValueError as exc:
                 return self._err(400, str(exc))
             try:
+                if parsed.path == "/v1/compact":
+                    workspace = body.get("workspace") or ""
+                    if not workspace:
+                        return self._err(400, "workspace required")
+                    day = body.get("day") or None
+                    return self._send(200, store.compact(workspace, day))
                 if parsed.path == "/v1/proposals":
                     return self._send(200, store.propose(body))
                 if parsed.path == "/v1/proposals/accept":
