@@ -793,6 +793,41 @@ def fetch_recall(
     return [atom for atom in atoms if isinstance(atom, dict)]
 
 
+def post_grade(
+    url: str, workspace: str, atom_id: str, *, recalled: bool = True
+) -> dict[str, Any]:
+    """POST {url}/v1/grade. Complementary review-clock write."""
+    base = (url or "").rstrip("/")
+    if not base:
+        raise ValueError("memory url is empty")
+    payload = json.dumps(
+        {"workspace": workspace, "id": atom_id, "recalled": bool(recalled)}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base}/v1/grade",
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if not isinstance(body, dict):
+        raise ValueError("grade response is not an object")
+    return body
+
+
+def grade_due(url: str, workspace: str, due: list[dict[str, Any]]) -> None:
+    """Stretch due_at after a retrieve. Fail-open on a dead grade."""
+    for atom in due:
+        aid = str(atom.get("id") or "")
+        if not aid:
+            continue
+        try:
+            post_grade(url, workspace, aid)
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+            continue
+
+
 def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
     """Search the pack, then front the due queue from /v1/recall."""
     pin_info = fetch_pin_payload(url, workspace)
@@ -810,6 +845,7 @@ def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
     if pin:
         due = [atom for atom in due if str(atom.get("set") or "") == pin]
     selected["tail_atoms"] = _front_due(due, selected.get("tail_atoms") or [])
+    grade_due(url, workspace, due)
     instructions = str(pin_info.get("instructions") or "").strip()
     if instructions:
         selected["instructions"] = instructions
