@@ -653,6 +653,7 @@ def test_extract_propose_then_accept(packset: Packset) -> None:
         {
             "workspace": WS,
             "text": "Reviews close after the SHA is cited.",
+            "transcript": "The review notes that reviews close after the SHA is cited.",
             "when": "compaction",
             "job": "extract",
         },
@@ -660,6 +661,7 @@ def test_extract_propose_then_accept(packset: Packset) -> None:
     assert status == 200
     assert body["schema"] == "inside.proposal/v1"
     assert body["status"] == "open"
+    assert body["verdict"] == "SUPPORTED"
     _, raw = packset.get(f"/v1/atoms?workspace={WS}")
     assert json.loads(raw.decode())["atoms"] == []
     _, inbox = packset.get(f"/v1/proposals?workspace={WS}")
@@ -674,6 +676,30 @@ def test_extract_propose_then_accept(packset: Packset) -> None:
     _, raw = packset.get(f"/v1/atoms?workspace={WS}")
     live = json.loads(raw.decode())["atoms"]
     assert [a["id"] for a in live] == [accepted["id"]]
+
+
+def test_extract_propose_without_transcript_is_nei(packset: Packset) -> None:
+    status, body = packset.json(
+        "POST",
+        "/v1/proposals",
+        {
+            "workspace": WS,
+            "text": "Reviews close after the SHA is cited.",
+            "when": "compaction",
+            "job": "extract",
+        },
+    )
+    assert status == 200
+    assert body["verdict"] == "NEI"
+    with pytest.raises(HTTPError) as ctx:
+        packset.json(
+            "POST",
+            "/v1/proposals/accept",
+            {"workspace": WS, "id": body["id"]},
+        )
+    assert ctx.value.code == 403
+    _, raw = packset.get(f"/v1/atoms?workspace={WS}")
+    assert json.loads(raw.decode())["atoms"] == []
 
 
 def test_remember_refused_write_returns_400(

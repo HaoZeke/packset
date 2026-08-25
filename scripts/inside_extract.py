@@ -221,6 +221,7 @@ def compact_day(
             when="compaction",
             home=home,
             fence=wall,
+            transcript=blob,
         )
         if rec is not None:
             out.append(rec)
@@ -260,7 +261,6 @@ def extract_propose(
     wall = fence if fence is not None else fence_texts(workspace, home)
     if is_fenced(claim, wall):
         return None
-    source = transcript if transcript is not None else blob
     rec = {
         "schema": PROPOSAL_SCHEMA,
         "id": inside_memory.new_id(),
@@ -271,8 +271,8 @@ def extract_propose(
         "status": "open",
         "ts": inside_memory.utcnow(),
         "span": claim,
-        "verdict": fidelity_verdict(claim, source),
-        "transcript": source,
+        "verdict": fidelity_verdict(claim, transcript),
+        "transcript": transcript or "",
     }
     _append_proposal(workspace, rec, home)
     return rec
@@ -285,7 +285,7 @@ def accept_proposal(
     if proposal_id not in open_ones:
         raise CheapError(f"no open proposal {proposal_id}")
     rec = dict(open_ones[proposal_id])
-    if rec.get("verdict") not in (None, "SUPPORTED"):
+    if rec.get("verdict") != "SUPPORTED":
         raise CheapError(f"extractAccept rejected: {rec.get('verdict')}")
     atom = inside_memory.make_atom(
         workspace=workspace,

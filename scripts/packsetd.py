@@ -232,6 +232,9 @@ class Store:
             job=job,
             home=self.home,
             fence=fence,
+            transcript=body.get("transcript")
+            if isinstance(body.get("transcript"), str)
+            else None,
         )
         if rec is None:
             raise inside_memory.AtomError("nothing to propose")

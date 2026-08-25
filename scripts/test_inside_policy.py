@@ -358,6 +358,7 @@ def test_extract_accept_does_not_write_memory_md(tmp_path: Path) -> None:
         workspace="global",
         when="compaction",
         home=tmp_path,
+        transcript="The notes say reviews close after the SHA is cited.",
     )
     assert proposal is not None
     inside_extract.accept_proposal(proposal["id"], workspace="global", home=tmp_path)

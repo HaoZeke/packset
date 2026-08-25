@@ -96,6 +96,7 @@ def test_extract_accept_commits_atom(tmp_path: Path) -> None:
         workspace="global",
         when="compaction",
         home=tmp_path,
+        transcript="The notes say reviews close after the SHA is cited.",
     )
     assert proposal is not None
     atom = inside_extract.accept_proposal(
