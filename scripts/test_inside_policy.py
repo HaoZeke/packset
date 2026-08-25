@@ -799,3 +799,40 @@ def test_retrieve_stretches_due_atom(monkeypatch: pytest.MonkeyPatch) -> None:
     assert int(review.get("reps") or 0) == 1
     assert float(review.get("stability") or 0.0) > 1.0
     assert review.get("difficulty") != review.get("ease")
+
+
+def test_retrieve_grade_success_skips_local_stretch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    due = {
+        "field": "atom",
+        "id": "due1",
+        "kind": "lesson",
+        "score": 4.0,
+        "text": "Review this lesson on the due clock.",
+        "due_at": "2000-01-01T00:00:00.000Z",
+        "review": {
+            "reps": 0,
+            "interval_s": 86400,
+            "ease": 2.5,
+            "stability": 1.0,
+            "difficulty": 5.0,
+            "last": "2000-01-01T00:00:00.000Z",
+        },
+    }
+    posted: list[str] = []
+
+    def post_grade(_url: str, _ws: str, atom_id: str, **_k: object) -> dict:
+        posted.append(atom_id)
+        return {"id": atom_id, "review": {"reps": 1}}
+
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [due])
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [due])
+    monkeypatch.setattr(inside_policy, "post_grade", post_grade)
+    selected = inside_policy.retrieve(
+        "http://example.invalid", "ws", {"user_text": "review this lesson"}
+    )
+    assert posted == ["due1"]
+    review = (selected["tail_atoms"][0].get("review") or {}) if selected["tail_atoms"] else {}
+    assert int(review.get("reps") or 0) == 0

@@ -190,10 +190,7 @@ def recall(
     if len(live) <= cap:
         return _finish(live, cap)
     now = inside_memory.utcnow()
-    due = [
-        inside_memory.schedule_review(a, now=now, recalled=True)
-        for a in inside_memory.due_atoms(workspace, home, now=now, atoms=live)
-    ]
+    due = inside_memory.due_atoms(workspace, home, now=now, atoms=live)
     seed_ids = _resolve_seeds(live, seeds, hints)
     if not seed_ids and not due:
         return []

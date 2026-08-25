@@ -46,8 +46,8 @@ def test_due_atom_beats_high_trust_not_due_when_over_budget() -> None:
     assert "due1" in ids
     assert ids[0] == "due1"
     due_row = next(row for row in out if row["id"] == "due1")
-    assert int(due_row["review"]["reps"]) == 1
-    assert "stability" in due_row["review"]
+    assert inside_memory.is_due(due_row, "2026-08-24T12:00:00.000Z")
+    assert int((due_row.get("review") or {}).get("reps") or 0) == 0
 
 
 def test_closed_due_atom_still_recalls() -> None:
