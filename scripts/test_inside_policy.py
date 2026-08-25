@@ -773,6 +773,32 @@ def test_retrieve_omits_future_due_from_search_hits(
     assert "dated snapshot of the labels" not in claims(selected)
 
 
+def test_retrieve_fail_open_recall_fronts_search_due(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    due = {
+        "field": "atom",
+        "id": "closed-due",
+        "kind": "lesson",
+        "score": 4.0,
+        "text": "Closing validity must not drop the review queue.",
+        "due_at": "2000-01-01T00:00:00.000Z",
+        "valid_to": "2000-01-02T00:00:00.000Z",
+    }
+
+    def boom(*_a, **_k):
+        raise TimeoutError("recall down")
+
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [due])
+    monkeypatch.setattr(inside_policy, "fetch_recall", boom)
+    selected = inside_policy.retrieve(
+        "http://example.invalid", "ws", {"user_text": "review this lesson"}
+    )
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "closed-due" in ids
+
+
 def test_retrieve_stretches_due_atom(monkeypatch: pytest.MonkeyPatch) -> None:
     due = {
         "field": "atom",

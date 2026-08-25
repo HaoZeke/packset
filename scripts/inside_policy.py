@@ -864,7 +864,17 @@ def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
         recalled = fetch_recall(url, workspace, query=query or None)
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         recalled = []
-    due = inside_memory.due_atoms(workspace, atoms=recalled)
+    search_tail = list(selected.get("tail_atoms") or [])
+    due_recall = inside_memory.due_atoms(workspace, atoms=recalled)
+    due_search = inside_memory.due_atoms(workspace, atoms=search_tail)
+    seen_due: set[str] = set()
+    due: list[dict[str, Any]] = []
+    for atom in due_recall + due_search:
+        aid = str(atom.get("id") or "")
+        if not aid or aid in seen_due:
+            continue
+        seen_due.add(aid)
+        due.append(atom)
     if pin:
         due = [atom for atom in due if str(atom.get("set") or "") == pin]
     selected["tail_atoms"] = _front_due(due, selected.get("tail_atoms") or [])
