@@ -423,6 +423,7 @@ def select_from_hits(
                 "kind": kind,
                 "text": text,
                 "due_at": hit.get("due_at"),
+                "review": hit.get("review"),
             }
         kind = atom.get("kind")
         if kind == _CACHE_KIND:
@@ -846,7 +847,7 @@ def grade_due(url: str, workspace: str, due: list[dict[str, Any]]) -> None:
 
 
 def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
-    """Search the pack, then front the due queue from /v1/recall."""
+    """Search the pack, front the due queue from /v1/recall, stretch due tails."""
     pin_info = fetch_pin_payload(url, workspace)
     pin = str(pin_info.get("set") or "").strip()
     query = _query(hints)
@@ -863,6 +864,14 @@ def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
         due = [atom for atom in due if str(atom.get("set") or "") == pin]
     selected["tail_atoms"] = _front_due(due, selected.get("tail_atoms") or [])
     grade_due(url, workspace, due)
+    tail = list(selected.get("tail_atoms") or [])
+    stretched: list[dict[str, Any]] = []
+    for atom in tail:
+        if inside_memory.is_due(atom):
+            stretched.append(inside_memory.schedule_review(atom, recalled=True))
+        else:
+            stretched.append(atom)
+    selected["tail_atoms"] = stretched
     instructions = str(pin_info.get("instructions") or "").strip()
     if instructions:
         selected["instructions"] = instructions

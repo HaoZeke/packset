@@ -516,6 +516,50 @@ def test_schedule_review_does_not_close_validity() -> None:
     assert inside_memory.is_live(scheduled, "2026-08-24T12:00:00.000Z")
     assert not inside_memory.is_due(scheduled, "2026-08-24T12:00:00.000Z")
     assert inside_memory.is_due(scheduled, "2026-08-25T00:00:00.000Z")
+    assert scheduled["review"]["stability"] == inside_memory.DEFAULT_STABILITY
+    assert scheduled["review"]["difficulty"] == inside_memory.DEFAULT_DIFFICULTY
+    assert scheduled["review"]["difficulty"] != scheduled["review"]["ease"]
+
+
+def test_recalled_true_stretches_stability() -> None:
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="Remember that the review clock is a keep-testing queue.",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    first = inside_memory.schedule_review(atom, now="2026-08-24T00:00:00.000Z")
+    s0 = float(first["review"]["stability"])
+    d0 = float(first["review"]["difficulty"])
+    second = inside_memory.schedule_review(
+        first, now="2026-08-25T00:00:00.000Z", recalled=True
+    )
+    assert float(second["review"]["stability"]) > s0
+    assert float(second["review"]["difficulty"]) < d0
+    assert second["review"]["difficulty"] != second["review"]["ease"]
+    assert second["due_at"] > first["due_at"]
+    assert int(second["review"]["reps"]) == 1
+
+
+def test_lapse_cuts_stability_and_raises_difficulty() -> None:
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="Remember that the review clock is a keep-testing queue.",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    first = inside_memory.schedule_review(atom, now="2026-08-24T00:00:00.000Z")
+    s0 = float(first["review"]["stability"])
+    d0 = float(first["review"]["difficulty"])
+    failed = inside_memory.schedule_review(
+        first, now="2026-08-25T00:00:00.000Z", lapse=True
+    )
+    assert float(failed["review"]["stability"]) < s0
+    assert float(failed["review"]["difficulty"]) > d0
+    assert failed["review"]["difficulty"] != failed["review"]["ease"]
+    assert int(failed["review"]["reps"]) == 0
 
 
 def test_tombstones_still_disappear_from_current(tmp_path: Path) -> None:

@@ -45,6 +45,9 @@ def test_due_atom_beats_high_trust_not_due_when_over_budget() -> None:
     ids = [row["id"] for row in out]
     assert "due1" in ids
     assert ids[0] == "due1"
+    due_row = next(row for row in out if row["id"] == "due1")
+    assert int(due_row["review"]["reps"]) == 1
+    assert "stability" in due_row["review"]
 
 
 def test_closed_due_atom_still_recalls() -> None:

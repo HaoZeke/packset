@@ -702,3 +702,34 @@ def test_retrieve_omits_future_due_from_search_hits(
     ids = [atom["id"] for atom in selected["tail_atoms"]]
     assert "future1" not in ids
     assert "dated snapshot of the labels" not in claims(selected)
+
+
+def test_retrieve_stretches_due_atom(monkeypatch: pytest.MonkeyPatch) -> None:
+    due = {
+        "field": "atom",
+        "id": "due1",
+        "kind": "lesson",
+        "score": 4.0,
+        "text": "Review this lesson on the due clock.",
+        "due_at": "2000-01-01T00:00:00.000Z",
+        "review": {
+            "reps": 0,
+            "interval_s": 86400,
+            "ease": 2.5,
+            "stability": 1.0,
+            "difficulty": 5.0,
+            "last": "2000-01-01T00:00:00.000Z",
+        },
+    }
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [due])
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [])
+    selected = inside_policy.retrieve(
+        "http://example.invalid", "ws", {"user_text": "review this lesson"}
+    )
+    tails = selected["tail_atoms"]
+    assert tails and tails[0]["id"] == "due1"
+    review = tails[0].get("review") or {}
+    assert int(review.get("reps") or 0) == 1
+    assert float(review.get("stability") or 0.0) > 1.0
+    assert review.get("difficulty") != review.get("ease")
