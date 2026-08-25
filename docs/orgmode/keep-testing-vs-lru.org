@@ -1,0 +1,23 @@
+#+title: keep-testing vs LRU
+#+options: toc:nil num:nil
+
+Protocol: =keep-testing-due_at-vs-lru-v2=
+Packset SHA: =f0b51a55c4d50fdf84e36fd8bd59b53a102dc2a2=
+Citation: Hu 2025 p.59 LRU may eliminate long-tail knowledge
+
+Same pack. Same Zipf stream. Keep-testing arm is =recall= due-first
+plus =schedule_review(recalled=True)= on a spliced due atom.
+LRU arm is last-budget accessed ids. Primary metric is interference
+tail slot rate (fraction of splice slots that are tail ranks 8-63).
+Rest-seat probe is seedless =recall= at hour 168; an empty window
+means the due queue is caught up. No query-id pin.
+
+n_atoms=64 budget=8 n_tail=56 hours=168 seed=42 stretch_n=256
+
+| Metric | keep-testing | LRU | delta |
+| interference tail slot | 0.6658 | 0.4195 | +0.2463 |
+| final-day tail slot | 0.1667 | 0.3646 | -0.1979 |
+| last-stream tail hit | 0.0000 | 0.0357 | -0.0357 |
+| rest-seat tail hit | 0.0000 | 0.0357 | -0.0357 |
+| tail coverage | 1.0000 | 0.4821 | |
+
