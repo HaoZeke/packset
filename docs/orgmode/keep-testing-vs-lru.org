@@ -30,9 +30,9 @@ Run:
 * Measured
 
 Real run: =.pixi/envs/default/bin/python scripts/keep_testing_vs_lru.py --json=
-seed=42. SHA stamped after the protocol commit.
+seed=42. packset SHA =19badc65bbecdc90c885f0a3e4d06df227d53127=.
 
 | Arm | Tail hits | Tail n | Rate | SHA |
-| LRU | 2 | 56 | 0.0357 | |
-| keep-testing | 48 | 56 | 0.8571 | |
-| delta (keep-testing - LRU) | 46 | 56 | 0.8214 | |
+| LRU | 2 | 56 | 0.0357 | 19badc6 |
+| keep-testing | 48 | 56 | 0.8571 | 19badc6 |
+| delta (keep-testing - LRU) | 46 | 56 | 0.8214 | 19badc6 |
