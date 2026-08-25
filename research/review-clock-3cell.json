@@ -1,0 +1,62 @@
+{
+  "cells": {
+    "always_include": {
+      "per_seat_hit_rate": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "seat_later_target_splice_hit_rate": 0.0,
+      "target_test_trials": 0,
+      "week_later_mean_retrievability": 0.484139
+    },
+    "fsrs": {
+      "per_seat_hit_rate": [
+        0.0,
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.2
+      ],
+      "seat_later_target_splice_hit_rate": 0.171429,
+      "target_test_trials": 48,
+      "week_later_mean_retrievability": 0.678334
+    },
+    "never_review": {
+      "per_seat_hit_rate": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "seat_later_target_splice_hit_rate": 0.0,
+      "target_test_trials": 0,
+      "week_later_mean_retrievability": 0.484139
+    }
+  },
+  "delta": {
+    "hit_rate_fsrs_minus_always_include": 0.171429,
+    "hit_rate_fsrs_minus_never_review": 0.171429,
+    "retrievability_fsrs_minus_always_include": 0.194195,
+    "retrievability_fsrs_minus_never_review": 0.194195
+  },
+  "fsrs_beats_always_include": true,
+  "fsrs_beats_never_review": true,
+  "n_crowd": 80,
+  "n_targets": 40,
+  "packset_sha": "e3af8607afad98cf59b79c6d8e2b16468ec08288",
+  "probe": "2026-08-08T00:00:00.000Z",
+  "protocol": "review-clock-3cell",
+  "seat_days": 7,
+  "seat_limit": 8,
+  "t0": "2026-08-01T00:00:00.000Z"
+}
