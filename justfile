@@ -6,6 +6,9 @@ test-py:
 lint:
     .pixi/envs/default/bin/ruff check scripts
 
+review-clock-3cell:
+    .pixi/envs/default/bin/python scripts/review_clock_3cell.py
+
 milli:
     #!/usr/bin/env bash
     set -euo pipefail
