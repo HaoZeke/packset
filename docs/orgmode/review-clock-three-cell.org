@@ -19,7 +19,7 @@ keep-test 0.429/0.000/0.000 (FSRS/always/never); week-later R
 
 keep-test is lesson appearances in day-1..7 splices over 56
 opportunities. Week-later R is mean FSRS-lite retrievability of
-the lesson set at day 7. Packset SHA =a9283a7efc3cba5540581a6523369169e8ba5c86=.
+the lesson set at day 7. Packset SHA =6f8338cd69830fda768368f6bf5b98e09db36138=.
 
 Numbers come from =scripts/review_clock_eval.py=. They are not
 invented. JSON: [[file:../../research/review-clock-three-cell.json][research/review-clock-three-cell.json]].

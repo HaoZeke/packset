@@ -193,7 +193,7 @@
   },
   "fsrs_beats_always_include": true,
   "fsrs_beats_never_review": true,
-  "packset_sha": "a9283a7efc3cba5540581a6523369169e8ba5c86",
+  "packset_sha": "6f8338cd69830fda768368f6bf5b98e09db36138",
   "protocol": "review-clock-three-cell",
   "ranking": [
     "fsrs",
