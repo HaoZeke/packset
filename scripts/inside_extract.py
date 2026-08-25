@@ -227,6 +227,17 @@ def compact_day(
     return out
 
 
+def fidelity_verdict(claim: str, transcript: str | None) -> str:
+    """SUPPORTED if the claim is in the transcript. Else NEI."""
+    n = _norm_claim(claim)
+    if not n:
+        return "NEI"
+    source = _norm_claim(transcript or "")
+    if source and (n == source or n in source or source in n):
+        return "SUPPORTED"
+    return "NEI"
+
+
 def extract_propose(
     text: str,
     *,
@@ -235,6 +246,7 @@ def extract_propose(
     job: str = "extract",
     home: Path | None = None,
     fence: set[str] | None = None,
+    transcript: str | None = None,
 ) -> dict[str, Any] | None:
     """Cheap extract. Inbox only. Forbidden off compaction."""
     if not cheap_allowed(job, when):
@@ -248,6 +260,7 @@ def extract_propose(
     wall = fence if fence is not None else fence_texts(workspace, home)
     if is_fenced(claim, wall):
         return None
+    source = transcript if transcript is not None else blob
     rec = {
         "schema": PROPOSAL_SCHEMA,
         "id": inside_memory.new_id(),
@@ -257,6 +270,9 @@ def extract_propose(
         "when": when,
         "status": "open",
         "ts": inside_memory.utcnow(),
+        "span": claim,
+        "verdict": fidelity_verdict(claim, source),
+        "transcript": source,
     }
     _append_proposal(workspace, rec, home)
     return rec
@@ -269,6 +285,8 @@ def accept_proposal(
     if proposal_id not in open_ones:
         raise CheapError(f"no open proposal {proposal_id}")
     rec = dict(open_ones[proposal_id])
+    if rec.get("verdict") not in (None, "SUPPORTED"):
+        raise CheapError(f"extractAccept rejected: {rec.get('verdict')}")
     atom = inside_memory.make_atom(
         workspace=workspace,
         text=rec["text"],
