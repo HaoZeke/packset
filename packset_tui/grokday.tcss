@@ -1,0 +1,96 @@
+/* GrokDay tokens. Canvas #eeeeee. Foreground #262626. Blue #2F64D2. */
+
+$storm-bg: #eeeeee;
+$storm-fg: #262626;
+$storm-blue: #2F64D2;
+$storm-comment: #767676;
+$storm-cyan: #0082AA;
+$storm-green: #378E23;
+$storm-magenta: #7D4BC6;
+$storm-red: #CD3048;
+$storm-yellow: #A27612;
+$storm-bg-dark: #eaeaea;
+$storm-select: #c8d6f0;
+
+$background: #eeeeee;
+$foreground: #262626;
+$primary: #2F64D2;
+$secondary: #767676;
+$accent: #0082AA;
+$success: #378E23;
+$warning: #A27612;
+$error: #CD3048;
+$surface: #eaeaea;
+
+Screen {
+    layout: vertical;
+    background: #eeeeee;
+    color: #262626;
+}
+
+Header {
+    background: #eaeaea;
+    color: #2F64D2;
+}
+
+Footer {
+    background: #eaeaea;
+    color: #767676;
+}
+
+#status {
+    dock: bottom;
+    height: 1;
+    padding: 0 1;
+    background: #eaeaea;
+    color: #767676;
+}
+
+DataTable {
+    height: 1fr;
+    width: 1fr;
+    background: #eeeeee;
+    color: #262626;
+}
+
+DataTable > .datatable--cursor {
+    background: #c8d6f0;
+    color: #262626;
+}
+
+DataTable > .datatable--header {
+    background: #eaeaea;
+    color: #2F64D2;
+    text-style: bold;
+}
+
+DataTable > .datatable--odd-row {
+    background: #eaeaea;
+}
+
+#workspace-dialog {
+    width: 72;
+    height: auto;
+    max-height: 80%;
+    padding: 1 1;
+    background: #eaeaea;
+    border: tall #2F64D2;
+}
+
+#workspace-hint {
+    color: #2F64D2;
+    padding: 0 0 1 0;
+}
+
+#workspace-input {
+    background: #eeeeee;
+    color: #262626;
+    border: tall #767676;
+}
+
+#workspace-list {
+    height: auto;
+    max-height: 16;
+    background: #eeeeee;
+    color: #262626;
+}

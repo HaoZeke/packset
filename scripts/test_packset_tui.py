@@ -267,6 +267,20 @@ class PacksetTuiTests(unittest.TestCase):
         self.assertIn("DataTable", widgets)
         self.assertIn("height: 1fr", widgets)
 
+    def test_grokday_tokens(self):
+        from packset_tui.theme import css_files, seat_prefers_light
+
+        os.environ["GROK_THEME"] = "auto"
+        os.environ["GROKOS_COLOR_SCHEME"] = "prefer-light"
+        self.assertTrue(seat_prefers_light())
+        files = css_files()
+        self.assertEqual(files[0].name, "grokday.tcss")
+        text = files[0].read_text(encoding="utf-8")
+        self.assertIn("#eeeeee", text)
+        self.assertIn("#262626", text)
+        self.assertIn("#2F64D2", text)
+        self.assertIn("DataTable", text)
+
     def test_app_datatable_and_bump_binding(self):
         try:
             import asyncio
