@@ -441,6 +441,34 @@ def test_splice_twice_is_idempotent() -> None:
     assert len(heads) == 1
 
 
+def test_splice_twice_with_cards_is_one_system() -> None:
+    selected = {
+        "user": "Prefers Conventional Commits.\n",
+        "memory": "",
+        "user_bits": "Prefers Conventional Commits.",
+        "memory_bits": "",
+        "head_prefix": inside_policy._head_prefix("Prefers Conventional Commits.", "", []),
+        "tail_atoms": [
+            {"id": "h1", "kind": "habit", "text": "Reviews open with a reproducibility check."}
+        ],
+        "attach": "",
+        "instructions": "",
+    }
+    assert selected["head_prefix"].startswith("Seat memory:\nCards:")
+    body = {"messages": [{"role": "user", "content": "review this PR"}]}
+    once = inside_policy.splice(body, selected)
+    twice = inside_policy.splice(once, selected)
+    first = json.loads(once)
+    second = json.loads(twice)
+    heads = [
+        message for message in second["messages"] if message.get("role") in ("system", "developer")
+    ]
+    assert len(heads) == 1
+    want = inside_policy._selected_text(selected)
+    assert heads[0]["content"] == want
+    assert first["messages"] == second["messages"]
+
+
 def test_input_list_round_trips() -> None:
     selected = selected_for()
     raw = inside_policy.splice(

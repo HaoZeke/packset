@@ -296,12 +296,11 @@ def _head_prefix(user: str, memory: str, voice_atoms: list[dict[str, Any]]) -> s
     """Cards only. voice_atoms is ignored; facts stay on the tail."""
     del voice_atoms
     parts: list[str] = [_BLOCK_OPEN]
-    if (user or "").strip():
-        parts.append(user.strip())
-    if (memory or "").strip():
-        parts.append(memory.strip())
-    if len(parts) == 1:
+    cards = [p for p in ((user or "").strip(), (memory or "").strip()) if p]
+    if not cards:
         return ""
+    parts.append(_CARD_MARK)
+    parts.extend(cards)
     return "\n".join(parts)
 
 
