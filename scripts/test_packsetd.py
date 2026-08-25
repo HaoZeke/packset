@@ -377,6 +377,38 @@ def test_recall_returns_live_atoms(packset: Packset) -> None:
     assert stale["id"] not in ids
 
 
+def test_closed_due_atom_stays_on_recall_and_retrieve(packset: Packset) -> None:
+    _, stored = packset.json(
+        "POST",
+        "/v1/atoms",
+        voice(
+            text="Closed live still due zircon latch.",
+            kind="lesson",
+            due_at="2000-01-01T00:00:00.000Z",
+        ),
+    )
+    packset.json(
+        "POST",
+        "/v1/atoms/update",
+        {
+            "workspace": WS,
+            "id": stored["id"],
+            "fields": {
+                "valid_to": "2000-01-02T00:00:00.000Z",
+                "due_at": stored["due_at"],
+            },
+        },
+    )
+    status, raw = packset.get(f"/v1/recall?workspace={WS}&limit=64")
+    assert status == 200
+    ids = [atom["id"] for atom in json.loads(raw.decode())["atoms"]]
+    assert stored["id"] in ids
+    selected = inside_policy.retrieve(
+        packset.url, WS, {"user_text": "zircon latch", "wants_remote": False}
+    )
+    assert stored["id"] in [atom["id"] for atom in selected["tail_atoms"]]
+
+
 def test_search_ranks_live_atoms(packset: Packset) -> None:
     packset.json("PUT", "/v1/memory", {"workspace": WS, "text": "Read paper.pdf first.\n"})
     _, stored = packset.json(

@@ -47,6 +47,19 @@ def test_due_atom_beats_high_trust_not_due_when_over_budget() -> None:
     assert ids[0] == "due1"
 
 
+def test_closed_due_atom_still_recalls() -> None:
+    closed = atom(
+        "closed-due",
+        text="Closed live but still due.",
+        due_at="2000-01-01T00:00:00.000Z",
+    )
+    closed["valid_to"] = "2000-01-02T00:00:00.000Z"
+    hot = atom("hot", text="High trust not due.", trust=9.0)
+    out = inside_recall.recall(WS, seeds=["hot"], atoms=crowd(70) + [closed, hot], limit=8)
+    ids = [row["id"] for row in out]
+    assert "closed-due" in ids
+
+
 def test_small_pack_returns_every_live_atom() -> None:
     atoms = [
         atom("a", kind="voice", text="Speaks in short sentences."),

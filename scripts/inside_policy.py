@@ -7,7 +7,8 @@ The query is the current user turn, not the joined transcript.
 USER.md and MEMORY.md contribute scored paragraphs only. The shim
 retrieves through GET /v1/search (milli BM25, linear fallback) and
 fronts GET /v1/recall through due_atoms so the review clock reaches
-the Facts tail. Due atom text is withheld to a packset id. Atoms
+the Facts tail and close_live cannot drop a still-due atom from
+retrieve. Due atom text is withheld to a packset id. Atoms
 are at most MAX_ATOMS, never a kind dump. cache-pointer also needs a
 remote-shaped turn. A pin scopes retrieve to that set; no pin uses
 the pack search. Empty neighbourhood is a no-op splice. A later
@@ -476,7 +477,9 @@ def select(pack: dict, hints: dict) -> dict[str, Any]:
     live = {
         atom.get("id"): atom
         for atom in atoms
-        if isinstance(atom, dict) and atom.get("id") and inside_memory.is_live(atom)
+        if isinstance(atom, dict)
+        and atom.get("id")
+        and (inside_memory.is_live(atom) or inside_memory.is_due(atom))
     }
     hits = inside_search.search_pack_linear(pack, query, limit=_SEARCH_LIMIT)
     selected = select_from_hits(hits, hints, atoms=live)

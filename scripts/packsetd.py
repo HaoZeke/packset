@@ -99,7 +99,7 @@ class Store:
             live = [
                 atom
                 for atom in self._scan(workspace)
-                if inside_memory.is_live(atom, now)
+                if inside_memory.is_live(atom, now) or inside_memory.is_due(atom, now)
             ]
             live = inside_memory.filter_live_links(live)
             if set_name:
@@ -293,12 +293,17 @@ class Store:
         live = [
             inside_search.atom_document(atom)
             for atom in atoms
-            if inside_memory.is_live(atom, now) and atom.get("id")
+            if atom.get("id")
+            and (
+                inside_memory.is_live(atom, now) or inside_memory.is_due(atom, now)
+            )
         ]
         dead = [
             str(atom.get("id"))
             for atom in atoms
-            if atom.get("id") and not inside_memory.is_live(atom, now)
+            if atom.get("id")
+            and not inside_memory.is_live(atom, now)
+            and not inside_memory.is_due(atom, now)
         ]
         if live:
             inside_search.upsert_documents(live, self.milli_dir)

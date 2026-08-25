@@ -73,19 +73,24 @@ def _live_set(
     home: Path | None,
     atoms: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    if atoms is None:
-        return inside_memory.current_atoms(workspace, home)
     now = inside_memory.utcnow()
-    live: list[dict[str, Any]] = []
+    if atoms is None:
+        current = inside_memory.current_atoms(workspace, home)
+        due = inside_memory.due_atoms(workspace, home, now=now)
+        seen = {a["id"]: a for a in current}
+        for atom in due:
+            seen.setdefault(atom["id"], atom)
+        return list(seen.values())
+    visible: list[dict[str, Any]] = []
     for atom in atoms:
         if not isinstance(atom, dict):
             continue
-        if not inside_memory.is_live(atom, now):
+        if not inside_memory.is_live(atom, now) and not inside_memory.is_due(atom, now):
             continue
         rec = dict(atom)
         rec["links"] = list(atom.get("links") or [])
-        live.append(rec)
-    return inside_memory.filter_live_links(live)
+        visible.append(rec)
+    return inside_memory.filter_live_links(visible)
 
 
 def _tokens(text: str) -> set[str]:

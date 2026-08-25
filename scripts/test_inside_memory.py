@@ -473,6 +473,29 @@ def test_close_live_preserves_due_at() -> None:
     assert not inside_memory.is_live(closed, "2026-08-24T12:00:00.000Z")
 
 
+def test_closed_due_atom_stays_in_due_queue(tmp_path: Path) -> None:
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="Closing validity must not drop the review queue.",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+        due_at="2000-01-01T00:00:00.000Z",
+    )
+    stored = inside_memory.add_atom(atom, home=tmp_path)
+    inside_memory.update_atom(
+        WS,
+        stored["id"],
+        {"valid_to": "2000-01-02T00:00:00.000Z", "due_at": stored["due_at"]},
+        home=tmp_path,
+    )
+    now = "2026-08-24T12:00:00.000Z"
+    live = inside_memory.current_atoms(WS, tmp_path)
+    assert stored["id"] not in {a["id"] for a in live}
+    due = inside_memory.due_atoms(WS, tmp_path, now=now)
+    assert stored["id"] in {a["id"] for a in due}
+
+
 def test_schedule_review_does_not_close_validity() -> None:
     atom = inside_memory.make_atom(
         workspace=WS,
