@@ -1,0 +1,38 @@
+#+TITLE: Protocol :: keep-testing due_at vs LRU eviction
+#+DATE: [2026-08-25 Tue]
+#+FILETAGS: :packset:sota:review-clock:lru:
+
+Hu 2025 p.59 LRU kills the long tail. Karpicke 2008 keep-testing
+is the review queue.
+
+* Protocol
+
+Name: =keep-testing-due_at-vs-lru=
+Script: =scripts/keep_testing_vs_lru.py=
+Same pack. Two arms. One delayed test.
+
+- Pack: 64 lesson atoms, splice budget 8, Zipf s=1.2 queries.
+- Encode at 2026-08-01T00:00:00.000Z.
+- Interference: 168 hourly queries (seven days).
+- Delayed test at hour 168. Tail = ranks 8..63 (56 atoms).
+- LRU arm: recency cache of size 8. =evict_lru= drops oldest =lru_last=.
+- Keep-testing arm: =schedule_review= / =is_due=. Queried due atom is
+  pinned into the window and stretched on success. Scheduled atoms
+  stay in the pack.
+- Hit: the queried tail atom is in the size-8 window at test time.
+
+Run:
+
+#+begin_src bash
+.pixi/envs/default/bin/python scripts/keep_testing_vs_lru.py --json
+#+end_src
+
+* Measured
+
+Real run: =.pixi/envs/default/bin/python scripts/keep_testing_vs_lru.py --json=
+seed=42. SHA stamped after the protocol commit.
+
+| Arm | Tail hits | Tail n | Rate | SHA |
+| LRU | 2 | 56 | 0.0357 | |
+| keep-testing | 48 | 56 | 0.8571 | |
+| delta (keep-testing - LRU) | 46 | 56 | 0.8214 | |

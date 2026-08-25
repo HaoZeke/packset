@@ -25,3 +25,7 @@ Default =borda= / =mmr= / =off=. Unknown names fail closed.
 | =packset_tui= | Textual DataTable over GET /v1/atoms |
 
 Clients do not open the LMDB.
+
+Review clock measurement: [[file:keep-testing-vs-lru.org][keep-testing due_at vs LRU]].
+Run =scripts/keep_testing_vs_lru.py=. SCORECARD Measured stays
+empty until that run.
