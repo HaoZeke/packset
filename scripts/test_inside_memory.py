@@ -577,7 +577,7 @@ def test_tombstones_still_disappear_from_current(tmp_path: Path) -> None:
     assert log[-1]["tombstone"]
 
 
-def test_hermes_home_view_is_write_through(tmp_path: Path) -> None:
+def test_hermes_home_view_is_read_only(tmp_path: Path) -> None:
     inside_memory.set_user("No thanks.\n", home=tmp_path)
     inside_memory.set_memory(WS, "Read paper.pdf first.\n", home=tmp_path)
     isolated = tmp_path / "hermes-inside"
@@ -587,13 +587,17 @@ def test_hermes_home_view_is_write_through(tmp_path: Path) -> None:
         workspace=WS,
         pack_home=tmp_path,
     )
-    assert views["user"].is_symlink()
-    assert views["memory"].is_symlink()
+    assert not views["user"].is_symlink()
+    assert not views["memory"].is_symlink()
     assert views["user"].read_text(encoding="utf-8") == "No thanks.\n"
     assert views["memory"].read_text(encoding="utf-8") == "Read paper.pdf first.\n"
-    views["memory"].write_text("Updated via Hermes.\n", encoding="utf-8")
+    import pytest
+
+    with pytest.raises(PermissionError):
+        views["memory"].write_text("Updated via Hermes.\n", encoding="utf-8")
     assert (
-        inside_memory.read_text(inside_memory.memory_path(WS, tmp_path)) == "Updated via Hermes.\n"
+        inside_memory.read_text(inside_memory.memory_path(WS, tmp_path))
+        == "Read paper.pdf first.\n"
     )
     assert not (isolated / "memory.sqlite").exists()
     assert not (isolated / "memory.lmdb").exists()
@@ -610,10 +614,11 @@ def test_pi_home_view_writes_agents_snapshot(tmp_path: Path) -> None:
         workspace=WS,
         pack_home=tmp_path,
     )
-    assert views["user"].is_symlink()
-    assert views["memory"].is_symlink()
+    assert not views["user"].is_symlink()
+    assert not views["memory"].is_symlink()
     agents = views["agents"].read_text(encoding="utf-8")
     assert "Seat memory (view)" in agents
+    assert "not write targets" in agents
     assert "Be brief." not in agents
     assert "Open with a check." not in agents
     assert "USER.md" in agents
