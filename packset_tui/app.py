@@ -24,7 +24,7 @@ from packset_tui.atoms import (
     table_row,
     workspace_name,
 )
-from packset_tui.theme import CSS_FILES
+from packset_tui.theme import CSS_FILES, apply_seat_theme
 
 
 class WorkspaceScreen(ModalScreen[str | None]):
@@ -92,6 +92,7 @@ class PacksetApp(App[None]):
         workspace: str | None = None,
     ) -> None:
         super().__init__()
+        apply_seat_theme(self)
         self.base = (base or packset_url()).rstrip("/")
         self.workspace = workspace or workspace_name(self.base)
         self._ids: list[str] = []
@@ -105,6 +106,7 @@ class PacksetApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        apply_seat_theme(self)
         table = self.query_one(DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True

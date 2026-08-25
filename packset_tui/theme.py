@@ -49,4 +49,9 @@ def css_files() -> list[Path]:
     return [TUI_DIR / "tokyo_night_storm.tcss", TUI_DIR / "storm.tcss"]
 
 
+def apply_seat_theme(app: object) -> None:
+    """Textual 8 defaults to textual-dark; that paints DataTable/Footer Storm."""
+    app.theme = "textual-light" if seat_prefers_light() else "tokyo-night"  # type: ignore[attr-defined]
+
+
 CSS_FILES = css_files()

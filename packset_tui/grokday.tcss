@@ -21,6 +21,15 @@ $success: #378E23;
 $warning: #A27612;
 $error: #CD3048;
 $surface: #eaeaea;
+$panel: #eaeaea;
+$footer-background: #eaeaea;
+$footer-foreground: #262626;
+$footer-key-background: #2F64D2;
+$footer-key-foreground: #eeeeee;
+$footer-description-background: #eaeaea;
+$footer-description-foreground: #262626;
+$footer-item-background: #eaeaea;
+$header-background: #eaeaea;
 
 Screen {
     layout: vertical;
