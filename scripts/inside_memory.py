@@ -143,11 +143,22 @@ def write_capped(path: Path, text: str, cap: int) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _mine_overflow(workspace: str, home: Path | None) -> None:
+    """Overflow already archived the day. Mine it now. Keep the original error."""
+    import inside_extract
+
+    try:
+        inside_extract.compact_day(workspace, home=home)
+    except (OSError, ValueError, AtomError):
+        return
+
+
 def set_user(text: str, home: Path | None = None) -> None:
     try:
         write_capped(user_path(home), text, USER_CAP)
     except MemoryOverflow:
         append_archive("global", text, home=home)
+        _mine_overflow("global", home)
         raise
 
 
@@ -156,6 +167,7 @@ def set_memory(workspace: str, text: str, home: Path | None = None) -> None:
         write_capped(memory_path(workspace, home), text, MEMORY_CAP)
     except MemoryOverflow:
         append_archive(workspace, text, home=home)
+        _mine_overflow(workspace, home)
         raise
 
 

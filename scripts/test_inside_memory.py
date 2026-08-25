@@ -82,6 +82,26 @@ def test_card_overflow_archives_the_rejected_text(tmp_path: Path) -> None:
     assert inside_memory.read_text(inside_memory.memory_path(WS, tmp_path)) == ""
 
 
+def test_overflow_calls_compact_day(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import inside_extract
+
+    mined: list[str] = []
+
+    def compact_day(workspace: str, **_k: object) -> list:
+        mined.append(workspace)
+        return []
+
+    monkeypatch.setattr(inside_extract, "compact_day", compact_day)
+    with pytest.raises(inside_memory.MemoryOverflow):
+        inside_memory.set_user("x" * (inside_memory.USER_CAP + 1), home=tmp_path)
+    with pytest.raises(inside_memory.MemoryOverflow):
+        inside_memory.set_memory(WS, "y" * (inside_memory.MEMORY_CAP + 1), home=tmp_path)
+    assert mined == ["global", WS]
+    day = inside_memory.utcnow()[:10]
+    assert inside_memory.archive_path("global", day=day, home=tmp_path).exists()
+    assert inside_memory.archive_path(WS, day=day, home=tmp_path).exists()
+
+
 def test_second_overflow_same_day_dedups(tmp_path: Path) -> None:
     line = "Keep the zircon latch on reviews.\n"
     blob = line * ((inside_memory.MEMORY_CAP // len(line)) + 2)
