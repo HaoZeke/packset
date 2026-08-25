@@ -2,7 +2,6 @@
 """Named protocol: keep-testing due_at vs LRU eviction (Hu 2025 p.59).
 
 Same pack. Two arms. Long-tail hit rate at a later horizon.
-GrokOS-42bh / GrokOS-96iq. Not a sort-order unit test.
 """
 
 from __future__ import annotations
