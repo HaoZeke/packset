@@ -186,10 +186,13 @@ def test_review_turn_gets_voice_and_habit_not_cache() -> None:
     card_at = block.find("Cards:")
     fact_at = block.find("Facts:")
     habit = "Reviews open with a reproducibility check."
-    assert habit in block[card_at:fact_at] if fact_at != -1 else habit in block[card_at:]
+    pointer = "`packset:habit:h1`"
+    card_span = block[card_at:fact_at] if fact_at != -1 else block[card_at:]
+    assert habit not in block
+    assert pointer in card_span
     if fact_at != -1:
         assert habit not in block[fact_at:]
-        assert "`packset:habit:h1`" not in block[fact_at:]
+        assert pointer not in block[fact_at:]
     assert "Prefers Conventional Commits" not in block
     assert "Speaks in short sentences" not in block
     assert "Read paper.pdf first" not in block
@@ -294,6 +297,27 @@ def test_head_prefix_is_byte_stable() -> None:
         a.get("text") for a in first["tail_atoms"]
     ]
     assert "Speaks in short sentences." not in first["head_prefix"]
+
+
+def test_card_atoms_are_pointers_unless_allowed() -> None:
+    selected = {
+        "user_bits": "",
+        "memory_bits": "",
+        "instructions": "",
+        "head_atoms": [
+            {
+                "id": "h1",
+                "kind": "habit",
+                "text": "Reviews open with a reproducibility check.",
+            }
+        ],
+        "tail_atoms": [],
+        "attach": "",
+    }
+    block = inside_policy._selected_text(selected)
+    assert "Reviews open with a reproducibility check." not in block
+    assert "`packset:habit:h1`" in block
+    assert inside_policy.atom_body_allowed("h1") is False
 
 
 def test_cards_and_facts_are_separate_sections() -> None:
@@ -476,9 +500,10 @@ def test_chat_body_gets_system_then_user() -> None:
     assert roles[1:] == ["user"]
     assert out["messages"][0]["content"].startswith(selected["head_prefix"])
     content = out["messages"][0]["content"]
-    assert "Reviews open with a reproducibility check." in content
+    assert "Reviews open with a reproducibility check." not in content
+    assert "`packset:habit:h1`" in content
     if "Facts:" in content:
-        assert "Reviews open with a reproducibility check." not in content.split("Facts:", 1)[1]
+        assert "`packset:habit:h1`" not in content.split("Facts:", 1)[1]
     assert "End seat memory." in out["messages"][0]["content"]
 
 
@@ -656,10 +681,12 @@ def test_retrieve_keeps_search_when_recall_fails(monkeypatch: pytest.MonkeyPatch
         "http://127.0.0.1:9", "ws", {"user_text": "keep it brief"}
     )
     block = claims(selected)
-    assert "Be brief." in block
+    assert "Be brief." not in block
+    assert "`packset:habit:v1`" in block
     fact_at = block.find("Facts:")
     if fact_at != -1:
         assert "Be brief." not in block[fact_at:]
+        assert "`packset:habit:v1`" not in block[fact_at:]
 
 
 def test_retrieve_pin_scopes_due_queue(monkeypatch: pytest.MonkeyPatch) -> None:

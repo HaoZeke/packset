@@ -243,6 +243,18 @@ def _due_pointer(atom: dict[str, Any]) -> dict[str, Any]:
     return rec
 
 
+def atom_body_allowed(atom_id: str) -> bool:
+    """Default deny. Janet packset-atom-allowed? may return true for this id."""
+    del atom_id
+    return False
+
+
+def _atom_prompt_text(atom: dict[str, Any]) -> dict[str, Any]:
+    if atom.get("withheld") or atom_body_allowed(str(atom.get("id") or "")):
+        return atom
+    return _due_pointer(atom)
+
+
 def _front_due(
     due: list[dict[str, Any]], tail: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -319,7 +331,8 @@ def _selected_text(selected: dict[str, Any]) -> str:
     if memory_bits:
         cards.append(memory_bits)
     for atom in selected.get("head_atoms") or []:
-        text = (atom.get("text") or "").strip()
+        rec = _atom_prompt_text(atom) if isinstance(atom, dict) else {}
+        text = (rec.get("text") or "").strip()
         if text:
             cards.append(text)
     if not cards:
@@ -335,7 +348,7 @@ def _selected_text(selected: dict[str, Any]) -> str:
     for atom in sorted(selected.get("tail_atoms") or [], key=_fact_sort_key):
         if not isinstance(atom, dict):
             continue
-        rec = atom if atom.get("withheld") else _due_pointer(atom)
+        rec = _atom_prompt_text(atom)
         text = (rec.get("text") or "").strip()
         if not text:
             continue
@@ -518,6 +531,7 @@ def items_from_selected(selected: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "field": "atom",
                 "kind": atom.get("kind") or "atom",
+                "id": atom.get("id"),
                 "text": text,
                 "atom": atom,
             }
