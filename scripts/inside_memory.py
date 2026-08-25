@@ -397,14 +397,13 @@ def schedule_review(
     stability = float(review.get("stability") or DEFAULT_STABILITY)
     difficulty = float(review.get("difficulty") or DEFAULT_DIFFICULTY)
     if lapse:
-        ease = max(1.3, float(review.get("ease") or REVIEW_EASE) - 0.2)
         difficulty = min(10.0, max(1.0, difficulty + 0.2))
         stability = max(0.1, stability * 0.5)
         span = int(max(1.0, stability) * 86400)
         review = {
             "reps": 0,
             "interval_s": span,
-            "ease": ease,
+            "ease": REVIEW_EASE,
             "stability": stability,
             "difficulty": difficulty,
             "last": clock,

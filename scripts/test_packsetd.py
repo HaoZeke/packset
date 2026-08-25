@@ -768,8 +768,11 @@ def test_grade_lapse_resets_reps(packset: Packset) -> None:
         {"workspace": WS, "id": stored["id"], "recalled": False},
     )
     assert status == 200
-    assert (body.get("review") or {}).get("reps") == 0
-    assert float((body.get("review") or {}).get("ease") or 2.5) < 2.5
+    review = body.get("review") or {}
+    assert review.get("reps") == 0
+    assert float(review.get("stability") or 1.0) < 1.0
+    assert float(review.get("difficulty") or 5.0) > 5.0
+    assert review.get("difficulty") != review.get("ease")
 
 
 @pytest.mark.parametrize(
