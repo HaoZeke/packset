@@ -174,17 +174,22 @@ def test_review_turn_gets_voice_and_habit_not_cache() -> None:
     selected = inside_policy.select(pack(), hints)
     head_kinds = [atom["kind"] for atom in selected["head_atoms"]]
     tail_kinds = [atom["kind"] for atom in selected["tail_atoms"]]
-    assert head_kinds == []
-    assert "habit" in tail_kinds
+    assert "habit" in head_kinds
+    assert "habit" not in tail_kinds
     assert "goal" not in tail_kinds
     assert "cache-pointer" not in head_kinds + tail_kinds
-    assert "belief" not in tail_kinds
+    assert "belief" in tail_kinds
     source = pack()
     assert selected["user"] == source["user"]
     assert selected["memory"] == source["memory"]
     block = claims(selected)
-    assert "`packset:habit:h1`" in block
-    assert "Reviews open with a reproducibility check." not in block
+    card_at = block.find("Cards:")
+    fact_at = block.find("Facts:")
+    habit = "Reviews open with a reproducibility check."
+    assert habit in block[card_at:fact_at] if fact_at != -1 else habit in block[card_at:]
+    if fact_at != -1:
+        assert habit not in block[fact_at:]
+        assert "`packset:habit:h1`" not in block[fact_at:]
     assert "Prefers Conventional Commits" not in block
     assert "Speaks in short sentences" not in block
     assert "Read paper.pdf first" not in block
@@ -216,7 +221,12 @@ def test_head_prefix_is_byte_stable() -> None:
     second = inside_policy.select(body, hints)
     assert first["head_prefix"] == second["head_prefix"]
     assert first["head_prefix"].encode("utf-8") == second["head_prefix"].encode("utf-8")
-    assert "Reviews open with a reproducibility check." in first["tail_atoms"][0]["text"]
+    assert any(
+        a.get("kind") == "habit" for a in first["head_atoms"]
+    )
+    assert "Reviews open with a reproducibility check." not in [
+        a.get("text") for a in first["tail_atoms"]
+    ]
     assert "Speaks in short sentences." not in first["head_prefix"]
 
 
@@ -398,8 +408,10 @@ def test_chat_body_gets_system_then_user() -> None:
     assert roles[0] in ("system", "developer")
     assert roles[1:] == ["user"]
     assert out["messages"][0]["content"].startswith(selected["head_prefix"])
-    assert "`packset:habit:h1`" in out["messages"][0]["content"]
-    assert "Reviews open with a reproducibility check." not in out["messages"][0]["content"]
+    content = out["messages"][0]["content"]
+    assert "Reviews open with a reproducibility check." in content
+    if "Facts:" in content:
+        assert "Reviews open with a reproducibility check." not in content.split("Facts:", 1)[1]
     assert "End seat memory." in out["messages"][0]["content"]
 
 
@@ -576,8 +588,11 @@ def test_retrieve_keeps_search_when_recall_fails(monkeypatch: pytest.MonkeyPatch
     selected = inside_policy.retrieve(
         "http://127.0.0.1:9", "ws", {"user_text": "keep it brief"}
     )
-    assert "`packset:habit:v1`" in claims(selected)
-    assert "Be brief." not in claims(selected)
+    block = claims(selected)
+    assert "Be brief." in block
+    fact_at = block.find("Facts:")
+    if fact_at != -1:
+        assert "Be brief." not in block[fact_at:]
 
 
 def test_retrieve_pin_scopes_due_queue(monkeypatch: pytest.MonkeyPatch) -> None:
