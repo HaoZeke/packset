@@ -382,6 +382,21 @@ def _review_elapsed_days(last: str | None, clock: str) -> float:
     return max(0.0, (b - a).total_seconds() / 86400.0)
 
 
+def retrievability(atom: dict[str, Any], now: str | None = None) -> float:
+    """FSRS-lite R(t) = 0.9 ** (elapsed_days / stability). Unscheduled is 0."""
+    clock = now or utcnow()
+    review = atom.get("review") or {}
+    try:
+        stability = float(review.get("stability") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if stability <= 0.0:
+        return 0.0
+    elapsed = _review_elapsed_days(review.get("last"), clock)
+    retr = 0.9 ** (elapsed / stability)
+    return min(0.99, max(0.01, retr))
+
+
 def schedule_review(
     atom: dict[str, Any],
     *,

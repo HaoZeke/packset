@@ -28,6 +28,10 @@ Clients do not open the LMDB.
 
 * Review clock eval
 
+=scripts/review_clock_eval.py= is the named review-clock-three-cell
+protocol (FSRS due_at re-inject vs always-include vs never-review).
+Last run: =docs/orgmode/review-clock-three-cell.org=.
+
 =scripts/keep_testing_vs_lru.py= is the named keep-testing vs LRU
 protocol (Hu 2025 p.59). Same pack. Keep-testing arm is
 =schedule_review= plus =recall= due-first. LRU arm is last-budget

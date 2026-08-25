@@ -516,6 +516,20 @@ def test_closed_due_atom_stays_in_due_queue(tmp_path: Path) -> None:
     assert stored["id"] in {a["id"] for a in due}
 
 
+def test_retrievability_matches_schedule_formula() -> None:
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="Keep-testing claim.",
+        kind="lesson",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    first = inside_memory.schedule_review(atom, now="2026-08-01T00:00:00.000Z")
+    assert inside_memory.retrievability(first, "2026-08-01T00:00:00.000Z") == 0.99
+    week = inside_memory.retrievability(first, "2026-08-08T00:00:00.000Z")
+    assert abs(week - (0.9**7)) < 1e-9
+
+
 def test_schedule_review_does_not_close_validity() -> None:
     atom = inside_memory.make_atom(
         workspace=WS,
