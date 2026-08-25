@@ -713,7 +713,9 @@ def test_select_omits_future_due_even_when_query_matches() -> None:
     assert "dated snapshot of the labels" not in block
 
 
-def test_retrieve_due_without_query_omits_future(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_retrieve_fronts_recall_due_and_omits_future(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     due = {
         "id": "due1",
         "kind": "lesson",
