@@ -6,32 +6,24 @@ import inside_memory
 import keep_testing_vs_lru as proto
 
 
-def test_lru_evicts_oldest_last_access() -> None:
-    atoms = proto.make_pack()
-    for i, atom in enumerate(atoms):
-        atom["lru_last"] = proto._shift_hours(proto.ENCODE_AT, i)
-    held = proto.lru_window(atoms, budget=3)
-    ids = [atom["id"] for atom in held]
-    assert ids == ["a063", "a062", "a061"]
-    incoming = dict(atoms[0])
-    incoming["lru_last"] = proto._shift_hours(proto.ENCODE_AT, 100)
-    after = proto.evict_lru(held, incoming, budget=3)
-    after_ids = {atom["id"] for atom in after}
-    assert "a000" in after_ids
-    assert "a061" not in after_ids
+def test_protocol_name_and_sha() -> None:
+    result = proto.run(seed=proto.SEED)
+    assert result["protocol"] == "keep-testing-due_at-vs-lru-v2"
+    assert len(result["sha"]) == 40
+    int(result["sha"], 16)
 
 
-def test_keep_testing_pins_queried_due_atom() -> None:
-    atoms = proto.encode_keep_testing(proto.make_pack())
-    clock = proto._shift_hours(proto.ENCODE_AT, 48)
-    assert inside_memory.is_due(atoms[40], clock)
-    window = proto.keep_testing_window(atoms, clock, query_id="a040", budget=8)
-    assert window[0]["id"] == "a040"
-    assert inside_memory.is_due(window[0], clock)
+def test_same_query_stream_both_arms() -> None:
+    rng = proto.random.Random(proto.SEED)
+    queries = proto.sample_queries(rng)
+    result = proto.run(seed=proto.SEED)
+    assert result["queries"] == queries
+    assert len(queries) == proto.INTERFERENCE_HOURS
+    assert set(queries) <= set(proto.atom_ids())
 
 
-def test_schedule_review_is_the_keep_testing_clock() -> None:
-    atom = proto.make_pack()[0]
+def test_schedule_review_stretch_on_success() -> None:
+    atom = proto.make_pack()[40]
     first = inside_memory.schedule_review(atom, now=proto.ENCODE_AT)
     later = proto._shift_hours(proto.ENCODE_AT, 24)
     assert inside_memory.is_due(first, later)
@@ -41,15 +33,58 @@ def test_schedule_review_is_the_keep_testing_clock() -> None:
     assert stretched.get("valid_to") is None
 
 
-def test_protocol_keep_testing_beats_lru_on_long_tail() -> None:
+def test_keep_testing_window_does_not_pin_query() -> None:
+    pack = proto.encode_keep_testing(proto.make_pack())
+    clock = proto._shift_hours(proto.ENCODE_AT, 24)
+    tail_id = proto.tail_ids()[-1]
+    window = proto.keep_testing_window(pack, now=clock, seeds=[tail_id], budget=proto.BUDGET)
+    ids = [atom["id"] for atom in window]
+    assert len(ids) == proto.BUDGET
+    assert ids == proto.atom_ids()[: proto.BUDGET]
+    assert tail_id not in ids
+
+
+def test_lru_evicts_oldest() -> None:
+    lru = proto.LruWindow(3)
+    lru.access(["a000", "a001", "a002"])
+    lru.access(["a003"])
+    assert "a000" not in lru.ids()
+    assert lru.ids() == ["a001", "a002", "a003"]
+
+
+def test_same_budget_windows_and_real_stretch() -> None:
     result = proto.run(seed=proto.SEED)
-    assert result["protocol"] == proto.PROTOCOL
-    assert result["n_tail"] == proto.N_ATOMS - proto.BUDGET
-    assert result["lru_tail_hits"] < result["keep_testing_tail_hits"]
-    assert result["delta_tail_hit_rate"] > 0.0
-    assert 0.0 <= result["lru_tail_hit_rate"] <= 1.0
-    assert 0.0 <= result["keep_testing_tail_hit_rate"] <= 1.0
-    assert result["keep_testing_queue_retention"] == 1.0
-    assert result["sha"]
-    assert result["encode_at"] == proto.ENCODE_AT
-    assert result["test_at"] == proto.test_at()
+    assert result["budget"] == proto.BUDGET
+    assert len(result["lru_probe_window"]) == proto.BUDGET
+    assert len(result["keep_testing_probe_window"]) <= proto.BUDGET
+    assert len(result["keep_testing_last_window"]) <= proto.BUDGET
+    assert result["stretch_n"] > 0
+    assert result["keep_testing_store_n"] == proto.N_ATOMS
+    assert result["lru_store_n"] == proto.BUDGET
+
+
+def test_delta_is_not_due_over_budget_occupancy() -> None:
+    result = proto.run(seed=proto.SEED)
+    occupancy_8_8 = 1.0
+    occupancy_16_8 = 0.5
+    assert result["keep_testing_probe_tail_hit"] != occupancy_8_8
+    assert result["keep_testing_probe_tail_hit"] != occupancy_16_8
+    assert result["keep_testing_slot_tail"] != occupancy_16_8
+    n_due = proto.N_ATOMS
+    assert result["delta_slot_tail"] != n_due / proto.BUDGET
+
+
+def test_keep_testing_beats_lru_on_long_tail() -> None:
+    result = proto.run(seed=proto.SEED)
+    assert result["delta_slot_tail"] > 0.0
+    assert result["keep_testing_slot_tail"] > result["lru_slot_tail"]
+    assert result["keep_testing_tail_coverage"] >= result["lru_tail_coverage"]
+
+
+def test_deterministic() -> None:
+    a = proto.run(seed=proto.SEED)
+    b = proto.run(seed=proto.SEED)
+    drop = {"measured_at"}
+    assert {k: v for k, v in a.items() if k not in drop} == {
+        k: v for k, v in b.items() if k not in drop
+    }

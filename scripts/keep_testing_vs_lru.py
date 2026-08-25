@@ -1,35 +1,44 @@
 #!/usr/bin/env python3
-"""Named protocol: keep-testing due_at vs LRU eviction on one pack.
+"""Named protocol: keep-testing due_at vs LRU eviction (Hu 2025 p.59).
 
-Hu 2025 p.59: LRU drops long-tail knowledge. Karpicke 2008: keep-testing
-is the review queue. This run is the measurement; it is not a sort-order
-unit test. SCORECARD Measured stays empty until this script is executed.
+Same pack. Same Zipf query stream. Same splice budget on both arms.
+Keep-testing arm is recall() due-first plus schedule_review(recalled=True)
+on a spliced due atom (at most once per day). LRU arm is last-budget
+accessed ids. The store on the keep-testing arm stays the full pack;
+eviction under comparison is the size-8 splice, not deletion.
+
+SCORECARD Measured stays empty until this script is executed.
 """
+
 from __future__ import annotations
 
+import argparse
 import json
 import random
 import subprocess
-import sys
-from datetime import datetime, timedelta, timezone
+from collections import OrderedDict
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import inside_memory
+import inside_recall
 
-PROTOCOL = "keep-testing-due_at-vs-lru"
+PROTOCOL = "keep-testing-due_at-vs-lru-v2"
+WS = "git:example.com/keep-testing-vs-lru"
 N_ATOMS = 64
 BUDGET = 8
 SEED = 42
 ZIPF_S = 1.2
 ENCODE_AT = "2026-08-01T00:00:00.000Z"
 INTERFERENCE_HOURS = 7 * 24
+GRADE_COOLDOWN_H = 24
 HOUR_S = 3600
-WS = "git:github.com/HaoZeke/packset"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def packset_sha(repo: Path | None = None) -> str:
-    root = repo or Path(__file__).resolve().parents[1]
+    root = repo or ROOT
     out = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
@@ -51,16 +60,24 @@ def test_at() -> str:
     return _shift_hours(ENCODE_AT, INTERFERENCE_HOURS)
 
 
+def atom_ids() -> list[str]:
+    return [f"a{i:03d}" for i in range(N_ATOMS)]
+
+
+def tail_ids() -> list[str]:
+    return [f"a{i:03d}" for i in range(BUDGET, N_ATOMS)]
+
+
 def make_pack() -> list[dict[str, Any]]:
     atoms: list[dict[str, Any]] = []
-    for i in range(N_ATOMS):
+    for i, ident in enumerate(atom_ids()):
         atom = inside_memory.make_atom(
             workspace=WS,
             text=f"Long-tail claim {i:03d} about topic {i:03d}.",
             kind="lesson",
             about_peer="rgoswami",
             by_peer="protocol",
-            atom_id=f"a{i:03d}",
+            atom_id=ident,
         )
         atom["ts"] = ENCODE_AT
         atom["valid_from"] = ENCODE_AT
@@ -73,197 +90,269 @@ def clone_pack(atoms: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [dict(atom, review=dict(atom.get("review") or {})) for atom in atoms]
 
 
+def encode_keep_testing(atoms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [inside_memory.schedule_review(atom, now=ENCODE_AT) for atom in atoms]
+
+
 def zipf_weights(n: int, s: float = ZIPF_S) -> list[float]:
     return [1.0 / ((i + 1) ** s) for i in range(n)]
 
 
-def tail_ids() -> list[str]:
-    return [f"a{i:03d}" for i in range(BUDGET, N_ATOMS)]
-
-
-def lru_last(atom: dict[str, Any]) -> str:
-    return str(atom.get("lru_last") or atom.get("ts") or "")
-
-
-def lru_window(atoms: list[dict[str, Any]], budget: int = BUDGET) -> list[dict[str, Any]]:
-    """Recency cache. Oldest last-access leaves first."""
-    ranked = sorted(atoms, key=lambda atom: (lru_last(atom), str(atom.get("id") or "")), reverse=True)
-    return ranked[:budget]
-
-
-def evict_lru(held: list[dict[str, Any]], incoming: dict[str, Any], budget: int = BUDGET) -> list[dict[str, Any]]:
-    by_id = {str(atom.get("id")): atom for atom in held if atom.get("id")}
-    by_id[str(incoming["id"])] = incoming
-    return lru_window(list(by_id.values()), budget)
-
-
-def keep_testing_window(
-    atoms: list[dict[str, Any]],
-    now: str,
-    query_id: str | None = None,
-    budget: int = BUDGET,
-) -> list[dict[str, Any]]:
-    """Due queue first. The queried due atom is the keep-testing trial."""
-    due = [atom for atom in atoms if inside_memory.is_due(atom, now)]
-    rest = [atom for atom in atoms if not inside_memory.is_due(atom, now)]
-    pinned = [atom for atom in due if query_id and atom.get("id") == query_id]
-    other_due = [atom for atom in due if atom.get("id") != query_id]
-    other_due.sort(key=lambda atom: (lru_last(atom), str(atom.get("id") or "")), reverse=True)
-    rest.sort(key=lambda atom: (lru_last(atom), str(atom.get("id") or "")), reverse=True)
-    ordered = pinned + other_due + rest
-    return ordered[:budget]
-
-
-def _by_id(atoms: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {str(atom["id"]): atom for atom in atoms if atom.get("id")}
-
-
-def encode_keep_testing(atoms: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for atom in atoms:
-        scheduled = inside_memory.schedule_review(atom, now=ENCODE_AT)
-        scheduled["lru_last"] = ENCODE_AT
-        out.append(scheduled)
-    return out
-
-
-def encode_lru(atoms: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for atom in atoms:
-        rec = dict(atom)
-        rec["lru_last"] = ENCODE_AT
-        out.append(rec)
-    return out
-
-
-def run_interference_lru(
-    atoms: list[dict[str, Any]], queries: list[str]
-) -> list[dict[str, Any]]:
-    held: list[dict[str, Any]] = lru_window(atoms, BUDGET)
-    index = _by_id(atoms)
-    for hour, qid in enumerate(queries):
-        clock = _shift_hours(ENCODE_AT, hour + 1)
-        atom = dict(index[qid])
-        atom["lru_last"] = clock
-        index[qid] = atom
-        held = evict_lru(held, atom, BUDGET)
-    held_ids = {str(atom.get("id")) for atom in held}
-    return [atom for atom in index.values() if atom.get("id") in held_ids]
-
-
-def run_interference_keep_testing(
-    atoms: list[dict[str, Any]], queries: list[str]
-) -> list[dict[str, Any]]:
-    index = _by_id(atoms)
-    for hour, qid in enumerate(queries):
-        clock = _shift_hours(ENCODE_AT, hour + 1)
-        pack = list(index.values())
-        window = keep_testing_window(pack, clock, query_id=qid, budget=BUDGET)
-        window_ids = {str(atom.get("id")) for atom in window}
-        target = index[qid]
-        if qid in window_ids and inside_memory.is_due(target, clock):
-            stretched = inside_memory.schedule_review(target, now=clock, recalled=True)
-            stretched["lru_last"] = clock
-            index[qid] = stretched
-        else:
-            rec = dict(target)
-            rec["lru_last"] = clock
-            index[qid] = rec
-    return list(index.values())
-
-
 def sample_queries(rng: random.Random) -> list[str]:
     weights = zipf_weights(N_ATOMS)
-    ids = [f"a{i:03d}" for i in range(N_ATOMS)]
+    ids = atom_ids()
     return rng.choices(ids, weights=weights, k=INTERFERENCE_HOURS)
 
 
-def delayed_hits(
-    atoms: list[dict[str, Any]],
+class LruWindow:
+    """Hu p.59 baseline: last-budget accessed ids. Evicts the long tail."""
+
+    def __init__(self, budget: int) -> None:
+        self.budget = budget
+        self.order: OrderedDict[str, None] = OrderedDict()
+
+    def access(self, ids: list[str]) -> None:
+        for ident in ids:
+            if ident in self.order:
+                self.order.move_to_end(ident)
+            else:
+                self.order[ident] = None
+                while len(self.order) > self.budget:
+                    self.order.popitem(last=False)
+
+    def ids(self) -> list[str]:
+        return list(self.order)
+
+
+def _replace(pack: list[dict[str, Any]], updated: dict[str, Any]) -> list[dict[str, Any]]:
+    aid = updated.get("id")
+    return [updated if atom.get("id") == aid else atom for atom in pack]
+
+
+def keep_testing_window(
+    pack: list[dict[str, Any]],
     *,
-    arm: str,
-    clock: str,
-) -> tuple[int, int]:
-    tail = tail_ids()
-    index = _by_id(atoms)
-    hits = 0
-    for qid in tail:
-        if qid not in index:
+    now: str,
+    seeds: list[str] | None,
+    budget: int = BUDGET,
+) -> list[dict[str, Any]]:
+    """Real recall() due-first splice. No extra pin of the query id."""
+    return inside_recall.recall(WS, seeds=seeds, atoms=pack, limit=budget, now=now)
+
+
+def _hours_apart(earlier: str, later: str) -> float:
+    a = datetime.fromisoformat(earlier.replace("Z", "+00:00"))
+    b = datetime.fromisoformat(later.replace("Z", "+00:00"))
+    return (b - a).total_seconds() / HOUR_S
+
+
+def grade_due_in_window(
+    pack: list[dict[str, Any]],
+    window: list[dict[str, Any]],
+    *,
+    now: str,
+    last_grade: dict[str, str],
+) -> tuple[list[dict[str, Any]], int]:
+    """Test spliced due atoms. Stretch on success. At most one grade per day."""
+    stretches = 0
+    out = pack
+    by_id = {str(atom.get("id")): atom for atom in out if atom.get("id")}
+    for row in window:
+        aid = str(row.get("id") or "")
+        current = by_id.get(aid)
+        if current is None or not inside_memory.is_due(current, now):
             continue
-        if arm == "lru":
-            window = lru_window(atoms, BUDGET)
-        else:
-            window = keep_testing_window(atoms, clock, query_id=qid, budget=BUDGET)
-        if any(atom.get("id") == qid for atom in window):
-            hits += 1
-    return hits, len(tail)
+        prev = last_grade.get(aid)
+        if prev is not None and _hours_apart(prev, now) < GRADE_COOLDOWN_H:
+            continue
+        stretched = inside_memory.schedule_review(current, now=now, recalled=True)
+        last_grade[aid] = now
+        out = _replace(out, stretched)
+        by_id[aid] = stretched
+        stretches += 1
+    return out, stretches
 
 
-def queue_retention(atoms: list[dict[str, Any]]) -> tuple[int, int]:
-    tail = tail_ids()
-    index = _by_id(atoms)
-    kept = sum(1 for qid in tail if qid in index and index[qid].get("due_at"))
-    return kept, len(tail)
+def tail_fraction(window_ids: list[str], tail: set[str]) -> float:
+    if not tail:
+        return 0.0
+    return sum(1 for ident in window_ids if ident in tail) / len(tail)
+
+
+def slot_rate(windows: list[list[str]], tail: set[str]) -> float:
+    slots = sum(len(window) for window in windows)
+    if slots == 0:
+        return 0.0
+    hits = sum(1 for window in windows for ident in window if ident in tail)
+    return hits / slots
+
+
+def coverage(windows: list[list[str]], tail: list[str]) -> float:
+    seen = {ident for window in windows for ident in window}
+    if not tail:
+        return 0.0
+    return sum(1 for ident in tail if ident in seen) / len(tail)
 
 
 def run(seed: int = SEED) -> dict[str, Any]:
     rng = random.Random(seed)
-    base = make_pack()
     queries = sample_queries(rng)
-    clock = test_at()
-    lru_pack = run_interference_lru(encode_lru(clone_pack(base)), queries)
-    kt_pack = run_interference_keep_testing(encode_keep_testing(clone_pack(base)), queries)
-    lru_hits, n_tail = delayed_hits(lru_pack, arm="lru", clock=clock)
-    kt_hits, _ = delayed_hits(kt_pack, arm="keep_testing", clock=clock)
-    kt_retained, _ = queue_retention(kt_pack)
-    lru_rate = lru_hits / n_tail if n_tail else 0.0
-    kt_rate = kt_hits / n_tail if n_tail else 0.0
+    tail = tail_ids()
+    tail_set = set(tail)
+    clock_end = test_at()
+
+    lru = LruWindow(BUDGET)
+    lru_windows: list[list[str]] = []
+    for qid in queries:
+        lru.access([qid])
+        lru_windows.append(list(lru.ids()))
+    lru_probe = list(lru.ids())
+
+    pack = encode_keep_testing(clone_pack(make_pack()))
+    last_grade: dict[str, str] = {}
+    kt_windows: list[list[str]] = []
+    stretch_n = 0
+    for hour, qid in enumerate(queries, start=1):
+        now = _shift_hours(ENCODE_AT, hour)
+        window = keep_testing_window(pack, now=now, seeds=[qid], budget=BUDGET)
+        pack, n = grade_due_in_window(pack, window, now=now, last_grade=last_grade)
+        stretch_n += n
+        kt_windows.append([str(atom.get("id")) for atom in window if atom.get("id")])
+    kt_probe_atoms = keep_testing_window(pack, now=clock_end, seeds=[], budget=BUDGET)
+    kt_probe = [str(atom.get("id")) for atom in kt_probe_atoms if atom.get("id")]
+
+    lru_probe_rate = tail_fraction(lru_probe, tail_set)
+    kt_probe_rate = tail_fraction(kt_probe, tail_set)
+    lru_slot = slot_rate(lru_windows, tail_set)
+    kt_slot = slot_rate(kt_windows, tail_set)
+    kt_last = kt_windows[-1] if kt_windows else []
+    lru_last = lru_windows[-1] if lru_windows else []
+    final_day = 24
+    kt_final_slot = slot_rate(kt_windows[-final_day:], tail_set)
+    lru_final_slot = slot_rate(lru_windows[-final_day:], tail_set)
     return {
         "protocol": PROTOCOL,
+        "citation": "Hu 2025 p.59 LRU may eliminate long-tail knowledge",
         "n_atoms": N_ATOMS,
         "budget": BUDGET,
-        "n_tail": n_tail,
+        "n_tail": len(tail),
         "interference_hours": INTERFERENCE_HOURS,
         "encode_at": ENCODE_AT,
-        "test_at": clock,
+        "test_at": clock_end,
         "seed": seed,
-        "lru_tail_hits": lru_hits,
-        "keep_testing_tail_hits": kt_hits,
-        "lru_tail_hit_rate": lru_rate,
-        "keep_testing_tail_hit_rate": kt_rate,
-        "keep_testing_queue_retention": kt_retained / n_tail if n_tail else 0.0,
-        "delta_tail_hit_rate": kt_rate - lru_rate,
+        "zipf_s": ZIPF_S,
+        "queries": queries,
+        "stretch_n": stretch_n,
+        "keep_testing_store_n": len(pack),
+        "lru_store_n": len(lru_probe),
+        "keep_testing_probe_window": sorted(kt_probe),
+        "lru_probe_window": sorted(lru_probe),
+        "keep_testing_last_window": sorted(kt_last),
+        "lru_last_window": sorted(lru_last),
+        "keep_testing_probe_tail_hit": kt_probe_rate,
+        "lru_probe_tail_hit": lru_probe_rate,
+        "delta_probe_tail_hit": kt_probe_rate - lru_probe_rate,
+        "keep_testing_last_tail_hit": tail_fraction(kt_last, tail_set),
+        "lru_last_tail_hit": tail_fraction(lru_last, tail_set),
+        "delta_last_tail_hit": tail_fraction(kt_last, tail_set) - tail_fraction(lru_last, tail_set),
+        "keep_testing_slot_tail": kt_slot,
+        "lru_slot_tail": lru_slot,
+        "delta_slot_tail": kt_slot - lru_slot,
+        "keep_testing_final_day_slot": kt_final_slot,
+        "lru_final_day_slot": lru_final_slot,
+        "delta_final_day_slot": kt_final_slot - lru_final_slot,
+        "keep_testing_tail_coverage": coverage(kt_windows, tail),
+        "lru_tail_coverage": coverage(lru_windows, tail),
         "sha": packset_sha(),
-        "measured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "measured_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 
-def render_org(result: dict[str, Any]) -> str:
+def as_org(result: dict[str, Any]) -> str:
     sha = result.get("sha") or ""
     return "\n".join(
         [
-            f"- protocol: {result['protocol']}",
-            f"- packset SHA: {sha}",
-            f"- n_atoms={result['n_atoms']} budget={result['budget']} n_tail={result['n_tail']}",
-            f"- LRU tail hit: {result['lru_tail_hits']}/{result['n_tail']}"
-            f" ({result['lru_tail_hit_rate']:.4f})",
-            f"- keep-testing tail hit: {result['keep_testing_tail_hits']}/{result['n_tail']}"
-            f" ({result['keep_testing_tail_hit_rate']:.4f})",
-            f"- delta (keep-testing - LRU): {result['delta_tail_hit_rate']:.4f}",
-            f"- keep-testing queue retention: {result['keep_testing_queue_retention']:.4f}",
+            "#+title: keep-testing vs LRU",
+            "#+options: toc:nil num:nil",
+            "",
+            f"Protocol: ={result['protocol']}=",
+            f"Packset SHA: ={sha}=",
+            f"Citation: {result['citation']}",
+            "",
+            "Same pack. Same Zipf stream. Keep-testing arm is =recall= due-first",
+            "plus =schedule_review(recalled=True)= on a spliced due atom.",
+            "LRU arm is last-budget accessed ids. Primary metric is interference",
+            "tail slot rate (fraction of splice slots that are tail ranks 8-63).",
+            "Rest-seat probe is seedless =recall= at hour 168; an empty window",
+            "means the due queue is caught up. No query-id pin.",
+            "",
+            f"n_atoms={result['n_atoms']} budget={result['budget']} "
+            f"n_tail={result['n_tail']} hours={result['interference_hours']} "
+            f"seed={result['seed']} stretch_n={result['stretch_n']}",
+            "",
+            "| Metric | keep-testing | LRU | delta |",
+            f"| interference tail slot | {result['keep_testing_slot_tail']:.4f} "
+            f"| {result['lru_slot_tail']:.4f} "
+            f"| {result['delta_slot_tail']:+.4f} |",
+            f"| final-day tail slot | {result['keep_testing_final_day_slot']:.4f} "
+            f"| {result['lru_final_day_slot']:.4f} "
+            f"| {result['delta_final_day_slot']:+.4f} |",
+            f"| last-stream tail hit | {result['keep_testing_last_tail_hit']:.4f} "
+            f"| {result['lru_last_tail_hit']:.4f} "
+            f"| {result['delta_last_tail_hit']:+.4f} |",
+            f"| rest-seat tail hit | {result['keep_testing_probe_tail_hit']:.4f} "
+            f"| {result['lru_probe_tail_hit']:.4f} "
+            f"| {result['delta_probe_tail_hit']:+.4f} |",
+            f"| tail coverage | {result['keep_testing_tail_coverage']:.4f} "
+            f"| {result['lru_tail_coverage']:.4f} | |",
+            "",
         ]
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
+def measured_line(result: dict[str, Any]) -> str:
+    return (
+        f"slot-tail {result['keep_testing_slot_tail']:.3f}/"
+        f"{result['lru_slot_tail']:.3f} (keep/LRU); "
+        f"last-stream {result['keep_testing_last_tail_hit']:.3f}/"
+        f"{result['lru_last_tail_hit']:.3f}; "
+        f"delta-slot {result['delta_slot_tail']:+.3f}"
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="print JSON instead of org")
+    parser.add_argument(
+        "--write",
+        type=Path,
+        default=ROOT / "docs/orgmode/keep-testing-vs-lru.org",
+        help="write org results to this path",
+    )
+    parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=ROOT / "research/keep-testing-vs-lru.json",
+        help="write JSON results to this path",
+    )
+    args = parser.parse_args()
     result = run()
-    if "--json" in args:
-        print(json.dumps(result, indent=2, sort_keys=True))
+    org = as_org(result)
+    printable = {k: v for k, v in result.items() if k != "queries"}
+    if args.write is not None:
+        args.write.parent.mkdir(parents=True, exist_ok=True)
+        args.write.write_text(org + "\n", encoding="utf-8")
+    if args.json_out is not None:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(
+            json.dumps(printable, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    if args.json:
+        print(json.dumps(printable, indent=2, sort_keys=True))
     else:
-        print(render_org(result))
-    return 0
+        print(org, end="")
+        print(measured_line(result))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

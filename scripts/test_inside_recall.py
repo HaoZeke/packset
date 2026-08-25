@@ -31,6 +31,25 @@ def crowd(n: int = 70) -> list[dict[str, Any]]:
     return [atom(f"x{i:03d}", text=f"Unrelated claim {i}.", trust=0.2) for i in range(n)]
 
 
+def test_recall_now_uses_the_supplied_clock() -> None:
+    future = atom(
+        "later",
+        text="Due only after the simulated clock.",
+        trust=0.01,
+        due_at="2026-08-02T00:00:00.000Z",
+    )
+    hot = atom("hot", text="High trust not due.", trust=9.0)
+    atoms = crowd(70) + [future, hot]
+    before = inside_recall.recall(
+        WS, seeds=["hot"], atoms=atoms, limit=8, now="2026-08-01T00:00:00.000Z"
+    )
+    after = inside_recall.recall(
+        WS, seeds=["hot"], atoms=atoms, limit=8, now="2026-08-03T00:00:00.000Z"
+    )
+    assert "later" not in [row["id"] for row in before]
+    assert [row["id"] for row in after][0] == "later"
+
+
 def test_due_atom_beats_high_trust_not_due_when_over_budget() -> None:
     atoms = crowd(70)
     due = atom(

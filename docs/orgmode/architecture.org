@@ -26,6 +26,13 @@ Default =borda= / =mmr= / =off=. Unknown names fail closed.
 
 Clients do not open the LMDB.
 
-Review clock measurement: [[file:keep-testing-vs-lru.org][keep-testing due_at vs LRU]].
-Run =scripts/keep_testing_vs_lru.py=. SCORECARD Measured stays
-empty until that run.
+* Review clock eval
+
+=scripts/keep_testing_vs_lru.py= is the named keep-testing vs LRU
+protocol (Hu 2025 p.59), =keep-testing-due_at-vs-lru-v2=. Same pack.
+Same Zipf stream. Keep-testing arm is =recall= due-first plus
+=schedule_review(recalled=True)= on a spliced due atom. LRU arm is
+last-budget accessed ids. The metric is later-horizon splice tail
+hit and interference tail slot rate. Last run:
+=docs/orgmode/keep-testing-vs-lru.org=. SCORECARD Measured stays
+empty until that script is executed.
