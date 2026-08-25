@@ -26,6 +26,12 @@ Default =borda= / =mmr= / =off=. Unknown names fail closed.
 
 Clients do not open the LMDB.
 
+* Review clock eval
+
+=scripts/review_clock_eval.py= is the named review-clock-three-cell
+protocol (FSRS due_at re-inject vs always-include vs never-review).
+Last run: =docs/orgmode/review-clock-three-cell.org=.
+
 * Keep-testing vs LRU
 
 =scripts/keep_testing_vs_lru.py= is the named keep-testing-due_at-vs-lru-v2

@@ -9,6 +9,9 @@ lint:
 keep-testing-vs-lru:
     .pixi/envs/default/bin/python scripts/keep_testing_vs_lru.py --write docs/orgmode/keep-testing-vs-lru.org
 
+review-clock:
+    .pixi/envs/default/bin/python scripts/review_clock_eval.py
+
 milli:
     #!/usr/bin/env bash
     set -euo pipefail

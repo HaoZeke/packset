@@ -1,0 +1,203 @@
+{
+  "cells": {
+    "always_include": {
+      "keep_test_hits": 0,
+      "keep_test_opportunities": 56,
+      "keep_test_rate": 0.0,
+      "week_later_R": 0.4841389555837988,
+      "week_later_splice": 0.0
+    },
+    "fsrs": {
+      "keep_test_hits": 24,
+      "keep_test_opportunities": 56,
+      "keep_test_rate": 0.42857142857142855,
+      "week_later_R": 0.9492519855042639,
+      "week_later_splice": 0.0
+    },
+    "never_review": {
+      "keep_test_hits": 0,
+      "keep_test_opportunities": 56,
+      "keep_test_rate": 0.0,
+      "week_later_R": 0.4841389555837988,
+      "week_later_splice": 0.0
+    }
+  },
+  "daily": {
+    "always_include": [
+      {
+        "day": 1,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-18T00:00:00.000Z"
+      },
+      {
+        "day": 2,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-19T00:00:00.000Z"
+      },
+      {
+        "day": 3,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-20T00:00:00.000Z"
+      },
+      {
+        "day": 4,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-21T00:00:00.000Z"
+      },
+      {
+        "day": 5,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-22T00:00:00.000Z"
+      },
+      {
+        "day": 6,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-23T00:00:00.000Z"
+      },
+      {
+        "day": 7,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-24T00:00:00.000Z"
+      }
+    ],
+    "fsrs": [
+      {
+        "day": 1,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-18T00:00:00.000Z"
+      },
+      {
+        "day": 2,
+        "hits": [
+          "lesson-00",
+          "lesson-01",
+          "lesson-02",
+          "lesson-03",
+          "lesson-04",
+          "lesson-05",
+          "lesson-06",
+          "lesson-07"
+        ],
+        "n": 8,
+        "now": "2026-08-19T00:00:00.000Z"
+      },
+      {
+        "day": 3,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-20T00:00:00.000Z"
+      },
+      {
+        "day": 4,
+        "hits": [
+          "lesson-00",
+          "lesson-01",
+          "lesson-02",
+          "lesson-03",
+          "lesson-04",
+          "lesson-05",
+          "lesson-06",
+          "lesson-07"
+        ],
+        "n": 8,
+        "now": "2026-08-21T00:00:00.000Z"
+      },
+      {
+        "day": 5,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-22T00:00:00.000Z"
+      },
+      {
+        "day": 6,
+        "hits": [
+          "lesson-00",
+          "lesson-01",
+          "lesson-02",
+          "lesson-03",
+          "lesson-04",
+          "lesson-05",
+          "lesson-06",
+          "lesson-07"
+        ],
+        "n": 8,
+        "now": "2026-08-23T00:00:00.000Z"
+      },
+      {
+        "day": 7,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-24T00:00:00.000Z"
+      }
+    ],
+    "never_review": [
+      {
+        "day": 1,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-18T00:00:00.000Z"
+      },
+      {
+        "day": 2,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-19T00:00:00.000Z"
+      },
+      {
+        "day": 3,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-20T00:00:00.000Z"
+      },
+      {
+        "day": 4,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-21T00:00:00.000Z"
+      },
+      {
+        "day": 5,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-22T00:00:00.000Z"
+      },
+      {
+        "day": 6,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-23T00:00:00.000Z"
+      },
+      {
+        "day": 7,
+        "hits": [],
+        "n": 0,
+        "now": "2026-08-24T00:00:00.000Z"
+      }
+    ]
+  },
+  "fixture": {
+    "day0": "2026-08-17T00:00:00.000Z",
+    "distractors": 72,
+    "keep_days": 7,
+    "lessons": 8,
+    "limit": 8,
+    "pack_size": 80
+  },
+  "fsrs_beats_always_include": true,
+  "fsrs_beats_never_review": true,
+  "packset_sha": "6f8338cd69830fda768368f6bf5b98e09db36138",
+  "protocol": "review-clock-three-cell",
+  "ranking": [
+    "fsrs",
+    "always_include",
+    "never_review"
+  ]
+}

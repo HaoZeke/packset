@@ -1,0 +1,25 @@
+#+title: review-clock-three-cell
+#+options: toc:nil num:nil
+
+Named protocol for the review-clock scorecard axis. Run =just review-clock=.
+
+* Arms
+
+- =fsrs=: =recall()= due-first; =schedule_review(recalled=True)= on a hit
+- =always-include=: trust-only live dump; =due_at= ignored
+- =never-review=: clear =due_at= after the shared first test
+
+Fixture: 8 lessons (trust 0.01) + 72 distractors (trust 9.0),
+limit=8, day0 =2026-08-17T00:00:00.000Z=, seats on days 1-7.
+
+* Measured
+
+keep-test 0.429/0.000/0.000 (FSRS/always/never); week-later R
+0.949/0.484/0.484
+
+keep-test is lesson appearances in day-1..7 splices over 56
+opportunities. Week-later R is mean FSRS-lite retrievability of
+the lesson set at day 7. Packset SHA =6f8338cd69830fda768368f6bf5b98e09db36138=.
+
+Numbers come from =scripts/review_clock_eval.py=. They are not
+invented. JSON: [[file:../../research/review-clock-three-cell.json][research/review-clock-three-cell.json]].
