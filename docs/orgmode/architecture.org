@@ -25,3 +25,12 @@ Default =borda= / =mmr= / =off=. Unknown names fail closed.
 | =packset_tui= | Textual DataTable over GET /v1/atoms |
 
 Clients do not open the LMDB.
+
+* Keep-testing vs LRU
+
+=scripts/keep_testing_vs_lru.py= is the named keep-testing-stream-vs-lru
+protocol (Hu 2025 p.59). Same pack. Same Zipf stream. Keep-testing
+arm is =recall= due-first plus =schedule_review(recalled=True)= on a
+successful trial. LRU arm is last-budget accessed ids. The metric
+is later-horizon long-tail hit in one budget window. Last run:
+=docs/orgmode/keep-testing-vs-lru.org=.

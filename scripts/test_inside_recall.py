@@ -31,6 +31,24 @@ def crowd(n: int = 70) -> list[dict[str, Any]]:
     return [atom(f"x{i:03d}", text=f"Unrelated claim {i}.", trust=0.2) for i in range(n)]
 
 
+def test_recall_now_fronts_due_tail_on_simulated_clock() -> None:
+    tail = atom(
+        "tail",
+        text="Long-tail lesson due on the review clock.",
+        due_at="2026-08-02T00:00:00.000Z",
+        trust=0.01,
+    )
+    hot = atom("hot", text="Head item not due.", trust=9.0)
+    out = inside_recall.recall(
+        WS,
+        seeds=["hot"],
+        atoms=crowd(70) + [tail, hot],
+        limit=8,
+        now="2026-08-08T00:00:00.000Z",
+    )
+    assert [row["id"] for row in out][0] == "tail"
+
+
 def test_due_atom_beats_high_trust_not_due_when_over_budget() -> None:
     atoms = crowd(70)
     due = atom(

@@ -72,11 +72,12 @@ def _live_set(
     workspace: str,
     home: Path | None,
     atoms: list[dict[str, Any]] | None,
+    now: str | None = None,
 ) -> list[dict[str, Any]]:
-    now = inside_memory.utcnow()
+    clock = now or inside_memory.utcnow()
     if atoms is None:
         current = inside_memory.current_atoms(workspace, home)
-        due = inside_memory.due_atoms(workspace, home, now=now)
+        due = inside_memory.due_atoms(workspace, home, now=clock)
         seen = {a["id"]: a for a in current}
         for atom in due:
             seen.setdefault(atom["id"], atom)
@@ -85,7 +86,7 @@ def _live_set(
     for atom in atoms:
         if not isinstance(atom, dict):
             continue
-        if not inside_memory.is_live(atom, now) and not inside_memory.is_due(atom, now):
+        if not inside_memory.is_live(atom, clock) and not inside_memory.is_due(atom, clock):
             continue
         rec = dict(atom)
         rec["links"] = list(atom.get("links") or [])
@@ -169,8 +170,10 @@ def _one_hop(
     return seeds, neighbors
 
 
-def _finish(atoms: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    return _apply_budget(_sort_atoms(atoms)[:limit])
+def _finish(
+    atoms: list[dict[str, Any]], limit: int, now: str | None = None
+) -> list[dict[str, Any]]:
+    return _apply_budget(_sort_atoms(atoms, now=now)[:limit])
 
 
 def recall(
@@ -181,21 +184,26 @@ def recall(
     limit: int = DEFAULT_LIMIT,
     home: Path | None = None,
     atoms: list[dict[str, Any]] | None = None,
+    now: str | None = None,
 ) -> list[dict[str, Any]]:
     """Live atoms for this action. Include-first while the pack is small."""
     cap = _cap_limit(limit)
-    live = _live_set(workspace, home, atoms)
+    clock = now or inside_memory.utcnow()
+    live = _live_set(workspace, home, atoms, now=clock)
     if cap == 0:
         return []
     if len(live) <= cap:
-        return _finish(live, cap)
-    now = inside_memory.utcnow()
-    due = inside_memory.due_atoms(workspace, home, now=now, atoms=live)
+        return _finish(live, cap, now=clock)
+    due = inside_memory.due_atoms(workspace, home, now=clock, atoms=live)
     seed_ids = _resolve_seeds(live, seeds, hints)
     if not seed_ids and not due:
         return []
     seed_atoms, neighbors = _one_hop(live, seed_ids) if seed_ids else ([], [])
-    ranked = _sort_atoms(due) + _sort_atoms(neighbors) + _sort_atoms(seed_atoms)
+    ranked = (
+        _sort_atoms(due, now=clock)
+        + _sort_atoms(neighbors, now=clock)
+        + _sort_atoms(seed_atoms, now=clock)
+    )
     seen: set[str] = set()
     picked: list[dict[str, Any]] = []
     for atom in ranked:
