@@ -122,8 +122,9 @@ def test_retrieve_empty_pin_uses_pack_search(monkeypatch: pytest.MonkeyPatch) ->
     selected = inside_policy.retrieve("http://127.0.0.1:9", "global", hints)
     assert len(called) == 1
     assert called[0].get("set_name") is None
-    assert "`packset:habit:v1`" in claims(selected)
-    assert "Be brief." not in claims(selected)
+    assert "Be brief." in claims(selected)
+    assert "Cards:" in claims(selected)
+    assert "`packset:habit:v1`" not in claims(selected)
 
 
 def test_retrieve_uses_pinned_set(monkeypatch: pytest.MonkeyPatch) -> None:
