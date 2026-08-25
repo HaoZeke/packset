@@ -836,8 +836,9 @@ def post_grade(
     return body
 
 
-def grade_due(url: str, workspace: str, due: list[dict[str, Any]]) -> None:
-    """Stretch due_at after a retrieve. Fail-open on a dead grade."""
+def grade_due(url: str, workspace: str, due: list[dict[str, Any]]) -> set[str]:
+    """POST /v1/grade once per due id. Fail-open. Returns ids the store stretched."""
+    graded: set[str] = set()
     for atom in due:
         aid = str(atom.get("id") or "")
         if not aid:
@@ -846,10 +847,12 @@ def grade_due(url: str, workspace: str, due: list[dict[str, Any]]) -> None:
             post_grade(url, workspace, aid)
         except (urllib.error.URLError, TimeoutError, ValueError, OSError):
             continue
+        graded.add(aid)
+    return graded
 
 
 def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
-    """Search the pack, front the due queue from /v1/recall, stretch due tails."""
+    """Search the pack, front /v1/recall due, POST /v1/grade once per due id."""
     pin_info = fetch_pin_payload(url, workspace)
     pin = str(pin_info.get("set") or "").strip()
     query = _query(hints)
@@ -865,11 +868,14 @@ def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
     if pin:
         due = [atom for atom in due if str(atom.get("set") or "") == pin]
     selected["tail_atoms"] = _front_due(due, selected.get("tail_atoms") or [])
-    grade_due(url, workspace, due)
+    graded = grade_due(url, workspace, due)
     tail = list(selected.get("tail_atoms") or [])
     stretched: list[dict[str, Any]] = []
     for atom in tail:
-        if inside_memory.is_due(atom):
+        aid = str(atom.get("id") or "")
+        if aid in graded:
+            stretched.append(atom)
+        elif inside_memory.is_due(atom):
             stretched.append(inside_memory.schedule_review(atom, recalled=True))
         else:
             stretched.append(atom)
