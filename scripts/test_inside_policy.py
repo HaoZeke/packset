@@ -422,3 +422,105 @@ def test_input_list_round_trips() -> None:
     again = json.loads(inside_policy.splice(raw, selected))
     assert out["input"] == again["input"]
     assert sum(1 for item in again["input"] if item.get("role") == "system") == 1
+
+
+def test_select_fronts_due_atom_that_search_misses() -> None:
+    body = pack()
+    body["atoms"].append(
+        {
+            "id": "due1",
+            "kind": "lesson",
+            "text": "UNIQUE-DUE-SECRET-BODY-TOKEN pin the review set",
+            "tombstone": False,
+            "due_at": "2000-01-01T00:00:00.000Z",
+        }
+    )
+    hints = inside_policy.inspect(
+        {"messages": [{"role": "user", "content": "What color is the sky?"}]}
+    )
+    selected = inside_policy.select(body, hints)
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due1" in ids
+    texts = [atom.get("text") or "" for atom in selected["tail_atoms"]]
+    assert all("UNIQUE-DUE-SECRET" not in text for text in texts)
+    assert any("`packset:lesson:due1`" in text for text in texts)
+    block = claims(selected)
+    assert "UNIQUE-DUE-SECRET" not in block
+    assert "`packset:lesson:due1`" in block
+
+
+def test_retrieve_fronts_due_from_recall(monkeypatch: pytest.MonkeyPatch) -> None:
+    due = {
+        "id": "due1",
+        "kind": "lesson",
+        "text": "UNIQUE-DUE-SECRET-BODY-TOKEN pin the review set",
+        "due_at": "2000-01-01T00:00:00.000Z",
+    }
+
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [])
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [due])
+    selected = inside_policy.retrieve(
+        "http://example.invalid",
+        "ws",
+        {"user_text": "What color is the sky?"},
+    )
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due1" in ids
+    texts = [atom.get("text") or "" for atom in selected["tail_atoms"]]
+    assert all("UNIQUE-DUE-SECRET" not in text for text in texts)
+    assert any("`packset:lesson:due1`" in text for text in texts)
+
+
+def test_retrieve_keeps_search_when_recall_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    hits = [
+        {
+            "field": "atom",
+            "id": "v1",
+            "kind": "habit",
+            "text": "Be brief.",
+            "score": 4.0,
+        }
+    ]
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: hits)
+
+    def boom(*_a: object, **_k: object) -> list[dict[str, object]]:
+        raise TimeoutError("recall down")
+
+    monkeypatch.setattr(inside_policy, "fetch_recall", boom)
+    selected = inside_policy.retrieve(
+        "http://127.0.0.1:9", "ws", {"user_text": "keep it brief"}
+    )
+    assert "Be brief." in claims(selected)
+
+
+def test_retrieve_pin_scopes_due_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    other = {
+        "id": "due-other",
+        "kind": "lesson",
+        "text": "UNIQUE-OTHER-SET-SECRET",
+        "due_at": "2000-01-01T00:00:00.000Z",
+        "set": "other",
+    }
+    pinned = {
+        "id": "due-review",
+        "kind": "lesson",
+        "text": "UNIQUE-PIN-SET-SECRET",
+        "due_at": "2000-01-01T00:00:00.000Z",
+        "set": "review",
+    }
+    monkeypatch.setattr(
+        inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": "review"}
+    )
+    monkeypatch.setattr(inside_policy, "fetch_search", lambda *_a, **_k: [])
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [other, pinned])
+    selected = inside_policy.retrieve(
+        "http://example.invalid", "ws", {"user_text": "sky"}
+    )
+    ids = [atom["id"] for atom in selected["tail_atoms"]]
+    assert "due-review" in ids
+    assert "due-other" not in ids
+    texts = [atom.get("text") or "" for atom in selected["tail_atoms"]]
+    assert all("UNIQUE-OTHER-SET-SECRET" not in text for text in texts)
+    assert any("`packset:lesson:due-review`" in text for text in texts)

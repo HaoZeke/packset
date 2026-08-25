@@ -312,10 +312,19 @@ def is_due(atom: dict[str, Any], now: str | None = None) -> bool:
 
 
 def due_atoms(
-    workspace: str, home: Path | None = None, *, now: str | None = None
+    workspace: str,
+    home: Path | None = None,
+    *,
+    now: str | None = None,
+    atoms: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    """Review queue. `atoms` is the caller set; else the live current set."""
     clock = now or utcnow()
-    return [a for a in current_atoms(workspace, home) if is_due(a, clock)]
+    if atoms is None:
+        src = current_atoms(workspace, home)
+    else:
+        src = [a for a in atoms if isinstance(a, dict)]
+    return [a for a in src if is_due(a, clock)]
 
 
 def close_live(atom: dict[str, Any], at: str) -> dict[str, Any]:
