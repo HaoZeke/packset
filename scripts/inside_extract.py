@@ -105,14 +105,12 @@ def extract_user_text(
     import inside_policy
 
     pin = inside_policy.fetch_pin(url, workspace)
-    if not pin:
-        return None
     atom = atom_from_user(
         text,
         workspace=workspace,
         about_peer=about_peer,
         by_peer=by_peer,
-        set_name=pin,
+        set_name=pin or None,
     )
     if atom is None:
         return None
