@@ -77,6 +77,15 @@ def voice(**fields: Any) -> dict[str, Any]:
     return body
 
 
+def test_second_store_on_same_home_is_rejected(tmp_path: Path) -> None:
+    first = packsetd.Store(tmp_path)
+    try:
+        with pytest.raises(inside_memory.AtomError, match="already open"):
+            packsetd.Store(tmp_path)
+    finally:
+        first.close()
+
+
 def test_health(packset: Packset) -> None:
     status, body = packset.get("/health")
     assert status == 200

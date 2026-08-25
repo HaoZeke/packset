@@ -8,6 +8,7 @@ homes do not get a private store; they talk to this URL.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import sys
@@ -47,6 +48,13 @@ class Store:
         self.db_path = self.home / "memory.lmdb"
         self.milli_dir = self.home / "memory.milli"
         self.lock = threading.RLock()
+        lock_path = self.home / "packsetd.lock"
+        self._lock_file = lock_path.open("a", encoding="utf-8")
+        try:
+            fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            self._lock_file.close()
+            raise inside_memory.AtomError("store home is already open") from exc
         self.env = lmdb.open(
             str(self.db_path),
             map_size=MAP_SIZE,
@@ -58,6 +66,10 @@ class Store:
 
     def close(self) -> None:
         self.env.close()
+        try:
+            fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._lock_file.close()
 
     def _scan(self, workspace: str | None = None) -> list[dict]:
         if workspace is not None and not workspace:
