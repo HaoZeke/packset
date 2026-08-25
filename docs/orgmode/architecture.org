@@ -34,9 +34,9 @@ Last run: =docs/orgmode/review-clock-three-cell.org=.
 
 * Keep-testing vs LRU
 
-=scripts/keep_testing_vs_lru.py= is the named keep-testing-stream-vs-lru
+=scripts/keep_testing_vs_lru.py= is the named keep-testing-due_at-vs-lru-v2
 protocol (Hu 2025 p.59). Same pack. Same Zipf stream. Keep-testing
 arm is =recall= due-first plus =schedule_review(recalled=True)= on a
-successful trial. LRU arm is last-budget accessed ids. The metric
-is later-horizon long-tail hit in one budget window. Last run:
+spliced due atom. LRU arm is last-budget accessed ids. The metric
+is interference tail slot rate, not due/budget occupancy. Last run:
 =docs/orgmode/keep-testing-vs-lru.org=.
