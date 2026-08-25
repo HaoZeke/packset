@@ -677,6 +677,7 @@ def test_extract_propose_then_accept(packset: Packset) -> None:
     _, raw = packset.get(f"/v1/atoms?workspace={WS}")
     live = json.loads(raw.decode())["atoms"]
     assert [a["id"] for a in live] == [accepted["id"]]
+    assert not inside_memory.atoms_path(WS, packset.home).exists()
 
 
 def test_extract_propose_without_transcript_is_nei(packset: Packset) -> None:
