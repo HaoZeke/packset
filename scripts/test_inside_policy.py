@@ -223,7 +223,8 @@ def test_select_due_without_query_omits_future() -> None:
     assert "due1" in ids
     assert "future1" not in ids
     block = claims(selected)
-    assert "UNIQUE-DUE-NO-QUERY-TOKEN" in block
+    assert "`packset:lesson:due1`" in block
+    assert "UNIQUE-DUE-NO-QUERY-TOKEN" not in block
     assert "dated snapshot of the labels" not in block
 
 
@@ -255,7 +256,8 @@ def test_retrieve_due_without_query_omits_future(monkeypatch: pytest.MonkeyPatch
     assert "due1" in ids
     assert "future1" not in ids
     block = claims(selected)
-    assert "UNIQUE-DUE-NO-QUERY-TOKEN" in block
+    assert "`packset:lesson:due1`" in block
+    assert "UNIQUE-DUE-NO-QUERY-TOKEN" not in block
     assert "dated snapshot of the labels" not in block
 
 
