@@ -150,6 +150,7 @@ def test_compact_day_reads_archive_not_memory(tmp_path: Path) -> None:
     )
     assert len(proposed) == 1
     assert "zircon" in proposed[0]["text"]
+    assert proposed[0]["verdict"] == "NEI"
     pack = {
         "user": "",
         "memory": "",
@@ -158,6 +159,24 @@ def test_compact_day_reads_archive_not_memory(tmp_path: Path) -> None:
     }
     hits = inside_search.search_pack_linear(pack, "zircon", limit=8)
     assert hits == []
+
+
+def test_compact_day_supported_only_with_transcript(tmp_path: Path) -> None:
+    inside_memory.append_archive(
+        "global",
+        "The review latch is the zircon pin.",
+        day="2026-08-24",
+        home=tmp_path,
+    )
+    nei = inside_extract.compact_day("global", day="2026-08-24", home=tmp_path)
+    assert nei and nei[0]["verdict"] == "NEI"
+    supported = inside_extract.compact_day(
+        "global",
+        day="2026-08-24",
+        home=tmp_path,
+        transcript="The review latch is the zircon pin.",
+    )
+    assert supported and supported[0]["verdict"] == "SUPPORTED"
 
 
 def test_compact_day_fences_lmdb_atoms(tmp_path: Path) -> None:

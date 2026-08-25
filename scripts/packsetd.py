@@ -243,12 +243,18 @@ class Store:
     def proposals(self, workspace: str) -> list[dict]:
         return inside_extract.list_proposals(workspace, home=self.home)
 
-    def compact(self, workspace: str, day: str | None = None) -> dict:
+    def compact(
+        self,
+        workspace: str,
+        day: str | None = None,
+        transcript: str | None = None,
+    ) -> dict:
         proposed = inside_extract.compact_day(
             workspace,
             day=day,
             home=self.home,
             extra_atoms=self.current(workspace),
+            transcript=transcript,
         )
         return {"proposals": proposed, "n": len(proposed)}
 
@@ -720,7 +726,12 @@ def make_handler(store: Store):
                     if not workspace:
                         return self._err(400, "workspace required")
                     day = body.get("day") or None
-                    return self._send(200, store.compact(workspace, day))
+                    transcript = (
+                        body.get("transcript")
+                        if isinstance(body.get("transcript"), str)
+                        else None
+                    )
+                    return self._send(200, store.compact(workspace, day, transcript))
                 if parsed.path == "/v1/proposals":
                     return self._send(200, store.propose(body))
                 if parsed.path == "/v1/proposals/accept":

@@ -208,8 +208,13 @@ def compact_day(
     day: str | None = None,
     home: Path | None = None,
     extra_atoms: list[dict[str, Any]] | None = None,
+    transcript: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Mine one archive day into Proposals. Disk keeps the day file."""
+    """Mine one archive day into Proposals. Disk keeps the day file.
+
+    The day blob is the source text, not the fidelity transcript.
+    A missing transcript is NEI.
+    """
     path = inside_memory.archive_path(workspace, day=day, home=home)
     blob = inside_memory.read_text(path)
     wall = fence_texts(workspace, home, extra_atoms=extra_atoms)
@@ -221,7 +226,7 @@ def compact_day(
             when="compaction",
             home=home,
             fence=wall,
-            transcript=blob,
+            transcript=transcript,
         )
         if rec is not None:
             out.append(rec)
