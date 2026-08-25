@@ -615,6 +615,7 @@ def test_overflow_put_memory_calls_compact(packset: Packset) -> None:
     proposals = json.loads(inbox.decode())["proposals"]
     assert proposals, "413 path must call compact_day so the day is mined"
     assert any("zircon index" in (p.get("text") or "") for p in proposals)
+    assert all(p.get("verdict") == "NEI" for p in proposals)
     _, raw = packset.get(f"/v1/pack?workspace={WS}")
     pack = json.loads(raw.decode())
     pack_blob = json.dumps(pack)
