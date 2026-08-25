@@ -267,7 +267,9 @@ def test_due_fact_keeps_budget_over_earlier_id() -> None:
     }
     block = inside_policy._selected_text(selected)
     facts = block[block.find("Facts:") :]
-    assert "Due lesson" in facts
+    assert "`packset:lesson:z9`" in facts
+    assert facts.find("`packset:lesson:z9`") < facts.find("`packset:lesson:a1`")
+    assert "Due lesson" not in facts
     assert "Live lesson" not in facts
 
 
