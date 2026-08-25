@@ -690,6 +690,16 @@ def make_handler(store: Store):
                     store._milli_files(workspace)
                     return self._send(200, {"ok": True})
             except inside_memory.MemoryOverflow as exc:
+                overflow_ws = None
+                if parsed.path == "/v1/user":
+                    overflow_ws = "global"
+                elif parsed.path == "/v1/memory":
+                    overflow_ws = body.get("workspace") or ""
+                if overflow_ws:
+                    try:
+                        store.compact(overflow_ws)
+                    except Exception:
+                        pass
                 return self._err(413, str(exc))
             except (inside_memory.AtomError, inside_prose.ProseError) as exc:
                 return self._err(400, str(exc))
