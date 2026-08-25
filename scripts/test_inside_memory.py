@@ -577,6 +577,20 @@ def test_tombstones_still_disappear_from_current(tmp_path: Path) -> None:
     assert log[-1]["tombstone"]
 
 
+def test_add_atom_refuses_when_packset_url_set(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PACKSET_URL", "http://127.0.0.1:8761")
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="This must not write JSONL beside packsetd.",
+        kind="voice",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    with pytest.raises(inside_memory.AtomError, match="not a product writer"):
+        inside_memory.add_atom(atom, home=tmp_path)
+    assert not inside_memory.atoms_path(WS, tmp_path).exists()
+
+
 def test_hermes_home_view_is_read_only(tmp_path: Path) -> None:
     inside_memory.set_user("No thanks.\n", home=tmp_path)
     inside_memory.set_memory(WS, "Read paper.pdf first.\n", home=tmp_path)
