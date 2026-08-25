@@ -300,7 +300,14 @@ def accept_proposal(
         by_peer="extract",
         level="derived",
     )
-    stored = inside_memory.add_atom(atom, home=home)
+    if inside_memory.packset_home_occupied(home):
+        if not atom.get("id"):
+            atom["id"] = inside_memory.new_id()
+        if not atom.get("ts"):
+            atom["ts"] = inside_memory.utcnow()
+        stored = atom
+    else:
+        stored = inside_memory.add_atom(atom, home=home)
     rec["status"] = "accepted"
     rec["atom_id"] = stored["id"]
     rec["ts"] = inside_memory.utcnow()

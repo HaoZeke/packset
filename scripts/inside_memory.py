@@ -533,14 +533,27 @@ def _append(workspace: str, atom: dict[str, Any], home: Path | None = None) -> N
         handle.write(json.dumps(atom, ensure_ascii=True) + "\n")
 
 
-def _refuse_product_jsonl() -> None:
+def packset_home_occupied(home: Path | None = None) -> bool:
+    """True when packsetd already owns this store home."""
+    root = memory_root(home)
+    return (
+        (root / "memory.lmdb").exists()
+        or (root / "atoms.lmdb").exists()
+        or (root / ".packset-lock").exists()
+        or (root / "packsetd.lock").exists()
+    )
+
+
+def _refuse_product_jsonl(home: Path | None = None) -> None:
     url = os.environ.get("PACKSET_URL", "").strip()
     if url and url.lower() != "off":
+        raise AtomError("add_atom is not a product writer; POST /v1/atoms")
+    if packset_home_occupied(home):
         raise AtomError("add_atom is not a product writer; POST /v1/atoms")
 
 
 def add_atom(atom: dict[str, Any], home: Path | None = None) -> dict[str, Any]:
-    _refuse_product_jsonl()
+    _refuse_product_jsonl(home)
     atom = validate_atom(dict(atom))
     workspace = atom["workspace"]
     live = current_atoms(workspace, home)
@@ -570,7 +583,7 @@ def update_atom(
     fields: dict[str, Any],
     home: Path | None = None,
 ) -> dict[str, Any]:
-    _refuse_product_jsonl()
+    _refuse_product_jsonl(home)
     current = {a["id"]: a for a in current_atoms(workspace, home)}
     if atom_id not in current:
         raise AtomError(f"no current atom {atom_id}")
@@ -659,7 +672,7 @@ def install_home_view(
 
 
 def delete_atom(workspace: str, atom_id: str, home: Path | None = None) -> dict[str, Any]:
-    _refuse_product_jsonl()
+    _refuse_product_jsonl(home)
     current = {a["id"]: a for a in current_atoms(workspace, home)}
     if atom_id not in current:
         raise AtomError(f"no current atom {atom_id}")

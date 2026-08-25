@@ -611,6 +611,20 @@ def test_add_atom_refuses_when_packset_url_set(tmp_path: Path, monkeypatch) -> N
     assert not inside_memory.atoms_path(WS, tmp_path).exists()
 
 
+def test_add_atom_refuses_when_packset_home_occupied(tmp_path: Path) -> None:
+    (tmp_path / "memory.lmdb").mkdir()
+    atom = inside_memory.make_atom(
+        workspace=WS,
+        text="This must not write JSONL beside packsetd.",
+        kind="voice",
+        about_peer="rgoswami",
+        by_peer="hermes",
+    )
+    with pytest.raises(inside_memory.AtomError, match="not a product writer"):
+        inside_memory.add_atom(atom, home=tmp_path)
+    assert not inside_memory.atoms_path(WS, tmp_path).exists()
+
+
 def test_hermes_home_view_is_read_only(tmp_path: Path) -> None:
     inside_memory.set_user("No thanks.\n", home=tmp_path)
     inside_memory.set_memory(WS, "Read paper.pdf first.\n", home=tmp_path)
