@@ -600,6 +600,32 @@ def test_extract_skips_already_live_atom(packset: Packset) -> None:
     assert ctx.value.code == 400
 
 
+def test_overflow_put_memory_calls_compact(packset: Packset) -> None:
+    line = "Always pin the zircon index on review close.\n"
+    blob = line * ((inside_memory.MEMORY_CAP // len(line)) + 2)
+    with pytest.raises(HTTPError) as ctx:
+        packset.json("PUT", "/v1/memory", {"workspace": WS, "text": blob})
+    assert ctx.value.code == 413
+    day = inside_memory.utcnow()[:10]
+    day_path = inside_memory.archive_path(WS, day=day, home=packset.home)
+    archived = inside_memory.read_text(day_path)
+    assert day_path.is_file()
+    assert "zircon index" in archived
+    _, inbox = packset.get(f"/v1/proposals?workspace={WS}")
+    proposals = json.loads(inbox.decode())["proposals"]
+    assert proposals, "413 path must call compact_day so the day is mined"
+    assert any("zircon index" in (p.get("text") or "") for p in proposals)
+    _, raw = packset.get(f"/v1/pack?workspace={WS}")
+    pack = json.loads(raw.decode())
+    pack_blob = json.dumps(pack)
+    assert blob.strip() not in pack_blob
+    assert "archive/" not in pack_blob
+    status, raw = packset.get(f"/v1/search?workspace={WS}&q=zircon")
+    assert status == 200
+    hits = json.loads(raw.decode())["hits"]
+    assert all(blob.strip() not in json.dumps(h) for h in hits)
+
+
 def test_compact_fences_lmdb_atom(packset: Packset) -> None:
     packset.json("POST", "/v1/atoms", voice(text="always pin the zircon index"))
     inside_memory.append_archive(
