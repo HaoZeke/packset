@@ -6,6 +6,9 @@ test-py:
 lint:
     .pixi/envs/default/bin/ruff check scripts
 
+keep-testing-vs-lru:
+    .pixi/envs/default/bin/python scripts/keep_testing_vs_lru.py --write docs/orgmode/keep-testing-vs-lru.org
+
 milli:
     #!/usr/bin/env bash
     set -euo pipefail
