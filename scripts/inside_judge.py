@@ -3,7 +3,10 @@
 
 Lexical search proposes a neighbourhood. This pass keeps only the claims
 that would change the answer. The caller supplies complete(); this module
-does not open a socket. Unreadable replies leave the neighbourhood as-is.
+does not open a socket. The prompt carries packset ids, not atom bodies
+(A-MemGuard: raw snippets are an injection surface). Judge-off and
+unreadable replies keep nothing, so a failed audit cannot append the
+atom as executable context.
 """
 from __future__ import annotations
 
@@ -30,8 +33,8 @@ def build_prompt(turn: str, items: list[dict[str, Any]]) -> str:
     else:
         for index, item in enumerate(items, start=1):
             kind = item.get("kind") or item.get("field") or "claim"
-            text = " ".join(str(item.get("text") or "").split())
-            lines.append(f"{index}. [{kind}] {text}")
+            aid = item.get("id") or item.get("field") or "claim"
+            lines.append(f"{index}. `packset:{kind}:{aid}`")
     lines.append("")
     lines.append(
         "Reply with NONE or a comma-separated list of claim numbers. No other text."
@@ -112,19 +115,20 @@ def _tokens(text: str) -> set[str]:
     }
 
 
-def anchored_indices(turn: str, items: list[dict[str, Any]]) -> list[int]:
-    """Indices whose claim shares a distinctive token with the turn.
+def _item_pointer(item: dict[str, Any]) -> str:
+    kind = item.get("kind") or item.get("field") or "claim"
+    aid = item.get("id") or item.get("field") or "claim"
+    return f"packset {kind} {aid}"
 
-    Recover from an over-strict NONE when the user is clearly asking about
-    a stored claim (e.g. a unique verification token that appears in both).
-    """
+
+def anchored_indices(turn: str, items: list[dict[str, Any]]) -> list[int]:
+    """Indices whose packset id the turn names. Never reads atom bodies."""
     turn_toks = _tokens(turn)
     if not turn_toks:
         return []
     out: list[int] = []
     for index, item in enumerate(items):
-        claim_toks = _tokens(str(item.get("text") or ""))
-        if turn_toks & claim_toks:
+        if turn_toks & _tokens(_item_pointer(item)):
             out.append(index)
     return out
 
@@ -133,21 +137,23 @@ def judge(
     turn: str,
     items: list[dict[str, Any]],
     complete: Callable[[str], str],
+    *,
+    enabled: bool = True,
 ) -> list[dict[str, Any]]:
-    """Subset of items the model kept. complete() failure returns items."""
-    if not items:
+    """Subset of items the model kept. Off or complete() failure keeps nothing."""
+    if not enabled or not items:
         return []
     prompt = build_prompt(turn, items)
     try:
         raw = complete(prompt)
     except Exception:
-        return list(items)
+        return []
     picked = parse_reply(raw if isinstance(raw, str) else str(raw or ""), len(items))
     if picked is None:
-        return list(items)
+        return []
     if picked:
         return [items[index] for index in picked]
-    # Model said NONE. Keep claims the turn already names by token.
+    # Model said NONE. Keep claims the turn already names by id.
     anchored = anchored_indices(turn, items)
     if anchored:
         return [items[index] for index in anchored]
