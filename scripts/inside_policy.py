@@ -249,7 +249,7 @@ def _atom_from_search_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
     if not aid:
         return None
     rec: dict[str, Any] = {"id": aid, "kind": hit.get("kind")}
-    for key in ("due_at", "review", "set", "valid_to"):
+    for key in ("due_at", "review", "set", "valid_to", "tombstone"):
         if hit.get(key) is not None:
             rec[key] = hit.get(key)
     return _due_pointer(rec)
@@ -261,11 +261,13 @@ def _live_from_retrieve(
     """Store atoms from recall; pointer stubs for search ids not recalled."""
     live: dict[Any, dict[str, Any]] = {}
     for atom in recalled:
+        if not isinstance(atom, dict):
+            continue
         aid = atom.get("id")
         if aid:
             live[aid] = atom
     for hit in hits:
-        if hit.get("field") != "atom":
+        if not isinstance(hit, dict) or hit.get("field") != "atom":
             continue
         aid = hit.get("id")
         if not aid or aid in live:

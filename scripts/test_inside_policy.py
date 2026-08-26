@@ -991,3 +991,31 @@ def test_retrieve_passes_atoms_to_select_from_hits(
     assert isinstance(live, dict)
     assert "h1" in live
     assert "Be brief." not in str((live["h1"] or {}).get("text") or "")
+
+
+def test_retrieve_search_hit_body_stays_off_judge_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = "SECRET-RETRIEVE-HIT-BODY"
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(
+        inside_policy,
+        "fetch_search",
+        lambda *_a, **_k: [
+            {
+                "field": "atom",
+                "id": "l1",
+                "kind": "lesson",
+                "score": 4.0,
+                "text": body,
+            }
+        ],
+    )
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [])
+    selected = inside_policy.retrieve(
+        "http://example.invalid", "ws", {"user_text": "review this PR"}
+    )
+    items = inside_policy.items_from_selected(selected)
+    blob = json.dumps(items)
+    assert body not in blob
+    assert any(item.get("text") == "`packset:lesson:l1`" for item in items)
