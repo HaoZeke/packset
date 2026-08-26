@@ -453,6 +453,46 @@ def test_judge_items_round_trip_drops_unkept() -> None:
     assert inside_policy.items_from_selected(kept)[0]["text"] in items[0]["text"]
 
 
+def test_items_from_selected_atom_text_is_pointer() -> None:
+    selected = {
+        "user_bits": "",
+        "memory_bits": "",
+        "tail_atoms": [
+            {
+                "id": "h1",
+                "kind": "habit",
+                "text": "Reviews open with a reproducibility check.",
+            }
+        ],
+    }
+    items = inside_policy.items_from_selected(selected)
+    assert len(items) == 1
+    assert items[0]["text"] == "`packset:habit:h1`"
+    assert items[0]["atom"]["text"] == "`packset:habit:h1`"
+    assert "Reviews open with a reproducibility check." not in items[0]["text"]
+    assert "Reviews open with a reproducibility check." not in json.dumps(items)
+    assert inside_policy.atom_body_allowed("h1") is False
+
+
+def test_items_from_selected_keeps_body_when_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(inside_policy, "atom_body_allowed", lambda _aid: True)
+    selected = {
+        "user_bits": "",
+        "memory_bits": "",
+        "tail_atoms": [
+            {
+                "id": "h1",
+                "kind": "habit",
+                "text": "Reviews open with a reproducibility check.",
+            }
+        ],
+    }
+    items = inside_policy.items_from_selected(selected)
+    assert items[0]["text"] == "Reviews open with a reproducibility check."
+
+
 def test_overflow_on_select_does_not_trim() -> None:
     body = pack()
     body["user"] = "x" * (inside_memory.USER_CAP + 1)
