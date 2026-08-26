@@ -129,6 +129,25 @@ def read_text(path: Path) -> str:
         return ""
 
 
+def _is_pack_home_card(path: Path) -> bool:
+    """Pack-home USER.md or workspace MEMORY.md, not set-scoped cards."""
+    if path.name == "USER.md":
+        return "workspaces" not in path.parts
+    if path.name == "MEMORY.md":
+        return path.parent.parent.name == "workspaces"
+    return False
+
+
+def _unlock_pack_card(path: Path) -> None:
+    if path.exists():
+        path.chmod(0o644)
+
+
+def _lock_pack_card(path: Path) -> None:
+    if path.exists():
+        path.chmod(0o444)
+
+
 def write_capped(path: Path, text: str, cap: int) -> None:
     reject_unsafe(text)
     if len(text) > cap:
@@ -140,7 +159,14 @@ def write_capped(path: Path, text: str, cap: int) -> None:
     if text.strip():
         inside_prose.refuse(text, role="file")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    pack_card = _is_pack_home_card(path)
+    if pack_card:
+        _unlock_pack_card(path)
+    try:
+        path.write_text(text, encoding="utf-8")
+    finally:
+        if pack_card:
+            _lock_pack_card(path)
 
 
 def _mine_overflow(workspace: str, home: Path | None) -> None:
@@ -616,6 +642,8 @@ def ensure_pack_files(workspace: str, home: Path | None = None) -> tuple[Path, P
         user.write_text("", encoding="utf-8")
     if not memory.exists():
         memory.write_text("", encoding="utf-8")
+    user.chmod(0o444)
+    memory.chmod(0o444)
     return user, memory
 
 

@@ -121,6 +121,21 @@ def test_user_under_cap_round_trips(tmp_path: Path) -> None:
     assert "Conventional Commits" in inside_memory.read_text(inside_memory.user_path(tmp_path))
 
 
+def test_set_memory_locks_pack_home_card(tmp_path: Path) -> None:
+    inside_memory.set_user("Be brief.\n", home=tmp_path)
+    inside_memory.set_memory(WS, "Read paper.pdf first.\n", home=tmp_path)
+    user = inside_memory.user_path(tmp_path)
+    memory = inside_memory.memory_path(WS, tmp_path)
+    assert user.stat().st_mode & 0o777 == 0o444
+    assert memory.stat().st_mode & 0o777 == 0o444
+    with pytest.raises(PermissionError):
+        with memory.open("a", encoding="utf-8") as handle:
+            handle.write("C1-TOKEN-A\n")
+    inside_memory.set_memory(WS, "Read paper.pdf second.\n", home=tmp_path)
+    assert memory.read_text(encoding="utf-8") == "Read paper.pdf second.\n"
+    assert memory.stat().st_mode & 0o777 == 0o444
+
+
 def test_duplicate_add_is_noop(tmp_path: Path) -> None:
     path = inside_memory.user_path(tmp_path)
     inside_memory.add_entry(path, "No thanks.", inside_memory.USER_CAP)
