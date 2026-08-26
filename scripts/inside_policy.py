@@ -510,7 +510,11 @@ def select(pack: dict, hints: dict) -> dict[str, Any]:
 
 
 def items_from_selected(selected: dict[str, Any]) -> list[dict[str, Any]]:
-    """Flatten scored file lines and tail atoms for the relevance pass."""
+    """Flatten scored file lines and tail atoms for the relevance pass.
+
+    Atom text is `packset:kind:id` unless atom_body_allowed. The judge
+    path never sees a raw body by default.
+    """
     selected = selected if isinstance(selected, dict) else {}
     items: list[dict[str, Any]] = []
     for line in (selected.get("user_bits") or "").splitlines():
@@ -524,16 +528,17 @@ def items_from_selected(selected: dict[str, Any]) -> list[dict[str, Any]]:
     for atom in selected.get("tail_atoms") or []:
         if not isinstance(atom, dict):
             continue
-        text = (atom.get("text") or "").strip()
+        rec = _atom_prompt_text(atom)
+        text = (rec.get("text") or "").strip()
         if not text:
             continue
         items.append(
             {
                 "field": "atom",
-                "kind": atom.get("kind") or "atom",
-                "id": atom.get("id"),
+                "kind": rec.get("kind") or atom.get("kind") or "atom",
+                "id": rec.get("id") or atom.get("id"),
                 "text": text,
-                "atom": atom,
+                "atom": rec,
             }
         )
     return items
