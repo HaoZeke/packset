@@ -462,17 +462,9 @@ def select_from_hits(
             continue
         atom = live.get(hit.get("id"))
         if atom is None:
-            kind = hit.get("kind")
-            text = str(hit.get("text") or "").strip()
-            if not text or not hit.get("id"):
+            atom = _atom_from_search_hit(hit)
+            if atom is None:
                 continue
-            atom = {
-                "id": hit.get("id"),
-                "kind": kind,
-                "text": text,
-                "due_at": hit.get("due_at"),
-                "review": hit.get("review"),
-            }
         kind = atom.get("kind")
         if kind == _CACHE_KIND:
             if not wants_remote:

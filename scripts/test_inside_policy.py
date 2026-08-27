@@ -968,3 +968,54 @@ def test_retrieve_passes_atoms_to_select_from_hits(
     assert isinstance(live, dict)
     assert "h1" in live
     assert "Be brief." not in str((live["h1"] or {}).get("text") or "")
+
+
+def test_select_from_hits_miss_keeps_pointer_not_hit_body() -> None:
+    body = "UCXK-HIT-BODY-MUST-STAY-OFF-TAIL"
+    hits = [
+        {
+            "field": "atom",
+            "id": "l1",
+            "kind": "lesson",
+            "score": 4.0,
+            "text": body,
+        }
+    ]
+    selected = inside_policy.select_from_hits(
+        hits, {"user_text": "review this PR"}, atoms={}
+    )
+    texts = [str(atom.get("text") or "") for atom in selected["tail_atoms"]]
+    assert texts
+    assert all(body not in text for text in texts)
+    assert any("`packset:lesson:l1`" in text for text in texts)
+    block = claims(selected)
+    assert body not in block
+    assert "`packset:lesson:l1`" in block
+
+
+def test_retrieve_hit_body_stays_off_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = "UCXK-RETRIEVE-HIT-BODY"
+    monkeypatch.setattr(inside_policy, "fetch_pin_payload", lambda *_a, **_k: {"set": ""})
+    monkeypatch.setattr(
+        inside_policy,
+        "fetch_search",
+        lambda *_a, **_k: [
+            {
+                "field": "atom",
+                "id": "l1",
+                "kind": "lesson",
+                "score": 4.0,
+                "text": body,
+            }
+        ],
+    )
+    monkeypatch.setattr(inside_policy, "fetch_recall", lambda *_a, **_k: [])
+    selected = inside_policy.retrieve(
+        "http://example.invalid", "ws", {"user_text": "review this PR"}
+    )
+    items = inside_policy.items_from_selected(selected)
+    blob = json.dumps(items)
+    assert body not in blob
+    assert any(item.get("text") == "`packset:lesson:l1`" for item in items)
