@@ -243,6 +243,41 @@ def _due_pointer(atom: dict[str, Any]) -> dict[str, Any]:
     return rec
 
 
+def _atom_from_search_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
+    """Rank stub. Search hits are not a body source."""
+    aid = hit.get("id")
+    if not aid:
+        return None
+    rec: dict[str, Any] = {"id": aid, "kind": hit.get("kind")}
+    for key in ("due_at", "review", "set", "valid_to", "tombstone"):
+        if hit.get(key) is not None:
+            rec[key] = hit.get(key)
+    return _due_pointer(rec)
+
+
+def _live_from_retrieve(
+    hits: list[dict[str, Any]], recalled: list[dict[str, Any]]
+) -> dict[Any, dict[str, Any]]:
+    """Store atoms from recall; pointer stubs for search ids not recalled."""
+    live: dict[Any, dict[str, Any]] = {}
+    for atom in recalled:
+        if not isinstance(atom, dict):
+            continue
+        aid = atom.get("id")
+        if aid:
+            live[aid] = atom
+    for hit in hits:
+        if not isinstance(hit, dict) or hit.get("field") != "atom":
+            continue
+        aid = hit.get("id")
+        if not aid or aid in live:
+            continue
+        stub = _atom_from_search_hit(hit)
+        if stub is not None:
+            live[aid] = stub
+    return live
+
+
 def atom_body_allowed(atom_id: str) -> bool:
     """Default deny. Janet packset-atom-allowed? may return true for this id."""
     del atom_id
@@ -875,14 +910,16 @@ def retrieve(url: str, workspace: str, hints: dict) -> dict[str, Any]:
     pin_info = fetch_pin_payload(url, workspace)
     pin = str(pin_info.get("set") or "").strip()
     query = _query(hints)
-    selected = select_from_hits(
-        fetch_search(url, workspace, query, set_name=pin or None),
-        hints,
-    )
+    hits = fetch_search(url, workspace, query, set_name=pin or None)
     try:
         recalled = fetch_recall(url, workspace, query=query or None)
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         recalled = []
+    selected = select_from_hits(
+        hits,
+        hints,
+        atoms=_live_from_retrieve(hits, recalled),
+    )
     search_tail = list(selected.get("tail_atoms") or [])
     due_recall = inside_memory.due_atoms(workspace, atoms=recalled)
     due_search = inside_memory.due_atoms(workspace, atoms=search_tail)
