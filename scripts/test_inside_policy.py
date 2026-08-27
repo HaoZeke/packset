@@ -968,3 +968,26 @@ def test_retrieve_passes_atoms_to_select_from_hits(
     assert isinstance(live, dict)
     assert "h1" in live
     assert "Be brief." not in str((live["h1"] or {}).get("text") or "")
+
+
+def test_select_from_hits_miss_does_not_dump_body() -> None:
+    body = "SECRET-HIT-BODY-SHOULD-NOT-DUMP"
+    hits = [
+        {
+            "field": "atom",
+            "id": "l1",
+            "kind": "lesson",
+            "score": 4.0,
+            "text": body,
+        }
+    ]
+    selected = inside_policy.select_from_hits(
+        hits, {"user_text": "review this PR"}, atoms={}
+    )
+    texts = [str(atom.get("text") or "") for atom in selected["tail_atoms"]]
+    assert texts
+    assert all(body not in text for text in texts)
+    assert any("`packset:lesson:l1`" in text for text in texts)
+    block = claims(selected)
+    assert body not in block
+    assert "`packset:lesson:l1`" in block
