@@ -23,7 +23,7 @@ pub fn check(name: &str) -> Result<String, String> {
     if legal {
         Ok(raw)
     } else {
-        Err(format!("bad set name: {name:?}"))
+        Err(format!("bad set name: {}", crate::record::py_repr(name)))
     }
 }
 

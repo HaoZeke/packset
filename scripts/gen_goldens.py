@@ -53,6 +53,52 @@ WORKSPACES = [
     "a.b_c-d",
 ]
 
+ATOMS = [
+    # kind / level / text / workspace, then the fields validate normalizes.
+    {"kind": "voice", "text": "Reviews open with a reproducibility check.", "workspace": "w"},
+    {"kind": "vibes", "text": "nope", "workspace": "w"},
+    {"kind": "voice", "text": "nope", "workspace": "w", "level": "guessed"},
+    {"kind": "voice", "text": "   ", "workspace": "w"},
+    {"kind": "voice", "text": "no workspace", "workspace": ""},
+    {"kind": "voice", "text": "x" * 501, "workspace": "w"},
+    {"kind": "voice", "text": "api_key=sk-not-a-real-key-here", "workspace": "w"},
+    {"kind": "voice", "text": "One. Two. Three.", "workspace": "w"},
+    {"kind": "voice", "text": "Set scoped.", "workspace": "w", "set": "Review"},
+    {"kind": "voice", "text": "Bad set.", "workspace": "w", "set": "../etc"},
+    {"kind": "voice", "text": "Cited.", "workspace": "w", "entities": ["deed-patch-overlay", "JOSS"]},
+    {"kind": "voice", "text": "Bare.", "workspace": "w", "entities": ["deed-"]},
+    {"kind": "voice", "text": "Split.", "workspace": "w", "entities": ["deed-a,b"]},
+]
+
+ENTITY_TEXTS = [
+    "The Parser reads the Header block.",
+    "Use `ripgrep` not `grep` here.",
+    "no capitals at all here",
+    "A single A and an AB pair",
+    "Mixed `back tick` and Capitalized runs",
+    "",
+]
+
+LINK_CLOCK = "2026-01-01T00:00:00.000Z"
+LINK_LIVE = [
+    {"id": "one", "text": "one", "entities": ["Parser", "Header"], "links": []},
+    {"id": "two", "text": "two", "entities": ["Parser", "Header", "Record"], "links": []},
+    {"id": "three", "text": "three", "entities": ["Unrelated"], "links": ["subject"]},
+    {"id": "four", "text": "four", "entities": ["Parser"], "valid_to": "2020-01-01T00:00:00.000Z"},
+]
+LINK_SUBJECT = {"id": "subject", "text": "subject", "entities": ["Parser", "Header"]}
+
+REVIEW_CLOCK = "2026-01-01T00:00:00.000Z"
+REVIEW_CASES = [
+    ({}, "initial", None),
+    ({}, "initial", 3600),
+    ({}, "recalled", None),
+    ({}, "lapsed", None),
+    ({"reps": 3, "stability": 4.0, "difficulty": 6.0, "last": "2025-12-20T00:00:00.000Z"}, "recalled", None),
+    ({"reps": 3, "stability": 4.0, "difficulty": 6.0, "last": "2025-12-20T00:00:00.000Z"}, "lapsed", None),
+    ({"reps": 1, "stability": 0.2, "difficulty": 9.9, "last": "2026-01-01T00:00:00.000Z"}, "recalled", None),
+]
+
 SET_NAMES = [
     "Review",
     "  joss-reviews  ",
@@ -90,8 +136,74 @@ def main() -> int:
         except inside_memory.AtomError:
             sets.append({"name": name, "error": True})
 
+    atoms = []
+    for raw in ATOMS:
+        try:
+            atoms.append({"input": raw, "ok": inside_memory.validate_atom(dict(raw))})
+        except (inside_memory.AtomError, inside_prose.ProseError) as exc:
+            atoms.append({"input": raw, "error": str(exc)})
+
+    entities = [
+        {"text": t, "entities": sorted(inside_memory.extract_entities({"text": t}))}
+        for t in ENTITY_TEXTS
+    ]
+
+    subject = dict(LINK_SUBJECT)
+    live = [dict(a) for a in LINK_LIVE]
+    rewritten = inside_memory.apply_links(subject, live, now=LINK_CLOCK)
+    links = {
+        "clock": LINK_CLOCK,
+        "live": LINK_LIVE,
+        "subject_in": LINK_SUBJECT,
+        "subject_links": subject["links"],
+        "rewritten": sorted(
+            ({"id": p["id"], "links": p["links"]} for p in rewritten),
+            key=lambda p: p["id"],
+        ),
+    }
+
+    filtered = [
+        {"id": "a", "links": ["b", "gone"]},
+        {"id": "b", "links": ["a"]},
+    ]
+    inside_memory.filter_live_links(filtered)
+    links["filtered"] = filtered
+
+    review = []
+    for block, grade, interval in REVIEW_CASES:
+        atom = {"id": "a", "review": dict(block)} if block else {"id": "a"}
+        out = inside_memory.schedule_review(
+            atom,
+            now=REVIEW_CLOCK,
+            interval_s=interval,
+            recalled=(grade == "recalled"),
+            lapse=(grade == "lapsed"),
+        )
+        review.append(
+            {
+                "review_in": block,
+                "grade": grade,
+                "interval_s": interval,
+                "due_at": out["due_at"],
+                "review": out["review"],
+            }
+        )
+
     OUT.write_text(
-        json.dumps({"prose": prose, "remote": remote, "slug": slug, "set": sets}, indent=1)
+        json.dumps(
+            {
+                "prose": prose,
+                "remote": remote,
+                "slug": slug,
+                "set": sets,
+                "atom": atoms,
+                "entities": entities,
+                "links": links,
+                "review_clock": REVIEW_CLOCK,
+                "review": review,
+            },
+            indent=1,
+        )
         + "\n",
         encoding="utf-8",
     )

@@ -282,5 +282,416 @@
    "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
    "error": true
   }
+ ],
+ "atom": [
+  {
+   "input": {
+    "kind": "voice",
+    "text": "Reviews open with a reproducibility check.",
+    "workspace": "w"
+   },
+   "ok": {
+    "kind": "voice",
+    "text": "Reviews open with a reproducibility check.",
+    "workspace": "w",
+    "prose": {
+     "words": 6,
+     "sentences": 1,
+     "grade": null,
+     "ease": null,
+     "adverbs": 0,
+     "adverb_ratio": 0.0,
+     "passives": 0,
+     "hard_sentences": 0,
+     "very_hard_sentences": 0
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "vibes",
+    "text": "nope",
+    "workspace": "w"
+   },
+   "error": "unknown atom kind: vibes"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "nope",
+    "workspace": "w",
+    "level": "guessed"
+   },
+   "error": "unknown atom level: guessed"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "   ",
+    "workspace": "w"
+   },
+   "error": "atom text is required"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "no workspace",
+    "workspace": ""
+   },
+   "error": "atom workspace is required"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "workspace": "w"
+   },
+   "error": "atom text exceeds soft cap 500"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "api_key=sk-not-a-real-key-here",
+    "workspace": "w"
+   },
+   "error": "credential-shaped text is rejected"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "One. Two. Three.",
+    "workspace": "w"
+   },
+   "error": "atom has 3 sentences; one claim is at most 2"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "Set scoped.",
+    "workspace": "w",
+    "set": "Review"
+   },
+   "ok": {
+    "kind": "voice",
+    "text": "Set scoped.",
+    "workspace": "w",
+    "set": "review",
+    "prose": {
+     "words": 2,
+     "sentences": 1,
+     "grade": null,
+     "ease": null,
+     "adverbs": 0,
+     "adverb_ratio": 0.0,
+     "passives": 0,
+     "hard_sentences": 0,
+     "very_hard_sentences": 0
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "Bad set.",
+    "workspace": "w",
+    "set": "../etc"
+   },
+   "error": "bad set name: '../etc'"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "Cited.",
+    "workspace": "w",
+    "entities": [
+     "deed-patch-overlay",
+     "JOSS"
+    ]
+   },
+   "ok": {
+    "kind": "voice",
+    "text": "Cited.",
+    "workspace": "w",
+    "entities": [
+     "deed-patch-overlay",
+     "JOSS"
+    ],
+    "prose": {
+     "words": 1,
+     "sentences": 1,
+     "grade": null,
+     "ease": null,
+     "adverbs": 0,
+     "adverb_ratio": 0.0,
+     "passives": 0,
+     "hard_sentences": 0,
+     "very_hard_sentences": 0
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "Bare.",
+    "workspace": "w",
+    "entities": [
+     "deed-"
+    ]
+   },
+   "error": "'deed-' is a bare 'deed-' and names no deed"
+  },
+  {
+   "input": {
+    "kind": "voice",
+    "text": "Split.",
+    "workspace": "w",
+    "entities": [
+     "deed-a,b"
+    ]
+   },
+   "error": "'deed-a,b' carries ',', which would split the entity into two"
+  }
+ ],
+ "entities": [
+  {
+   "text": "The Parser reads the Header block.",
+   "entities": [
+    "Header",
+    "Parser",
+    "The"
+   ]
+  },
+  {
+   "text": "Use `ripgrep` not `grep` here.",
+   "entities": [
+    "Use",
+    "grep",
+    "ripgrep"
+   ]
+  },
+  {
+   "text": "no capitals at all here",
+   "entities": []
+  },
+  {
+   "text": "A single A and an AB pair",
+   "entities": [
+    "AB"
+   ]
+  },
+  {
+   "text": "Mixed `back tick` and Capitalized runs",
+   "entities": [
+    "Capitalized",
+    "Mixed",
+    "back tick"
+   ]
+  },
+  {
+   "text": "",
+   "entities": []
+  }
+ ],
+ "links": {
+  "clock": "2026-01-01T00:00:00.000Z",
+  "live": [
+   {
+    "id": "one",
+    "text": "one",
+    "entities": [
+     "Parser",
+     "Header"
+    ],
+    "links": []
+   },
+   {
+    "id": "two",
+    "text": "two",
+    "entities": [
+     "Parser",
+     "Header",
+     "Record"
+    ],
+    "links": []
+   },
+   {
+    "id": "three",
+    "text": "three",
+    "entities": [
+     "Unrelated"
+    ],
+    "links": [
+     "subject"
+    ]
+   },
+   {
+    "id": "four",
+    "text": "four",
+    "entities": [
+     "Parser"
+    ],
+    "valid_to": "2020-01-01T00:00:00.000Z"
+   }
+  ],
+  "subject_in": {
+   "id": "subject",
+   "text": "subject",
+   "entities": [
+    "Parser",
+    "Header"
+   ]
+  },
+  "subject_links": [
+   "one",
+   "two"
+  ],
+  "rewritten": [
+   {
+    "id": "one",
+    "links": [
+     "subject"
+    ]
+   },
+   {
+    "id": "three",
+    "links": []
+   },
+   {
+    "id": "two",
+    "links": [
+     "subject"
+    ]
+   }
+  ],
+  "filtered": [
+   {
+    "id": "a",
+    "links": [
+     "b"
+    ]
+   },
+   {
+    "id": "b",
+    "links": [
+     "a"
+    ]
+   }
+  ]
+ },
+ "review_clock": "2026-01-01T00:00:00.000Z",
+ "review": [
+  {
+   "review_in": {},
+   "grade": "initial",
+   "interval_s": null,
+   "due_at": "2026-01-02T00:00:00.000Z",
+   "review": {
+    "reps": 0,
+    "interval_s": 86400,
+    "ease": 2.5,
+    "stability": 1.0,
+    "difficulty": 5.0,
+    "last": "2026-01-01T00:00:00.000Z"
+   }
+  },
+  {
+   "review_in": {},
+   "grade": "initial",
+   "interval_s": 3600,
+   "due_at": "2026-01-01T01:00:00.000Z",
+   "review": {
+    "reps": 0,
+    "interval_s": 3600,
+    "ease": 2.5,
+    "stability": 1.0,
+    "difficulty": 5.0,
+    "last": "2026-01-01T00:00:00.000Z"
+   }
+  },
+  {
+   "review_in": {},
+   "grade": "recalled",
+   "interval_s": null,
+   "due_at": "2026-01-02T00:24:06.000Z",
+   "review": {
+    "reps": 1,
+    "interval_s": 87846,
+    "ease": 2.5,
+    "stability": 1.0167363850179754,
+    "difficulty": 4.85,
+    "last": "2026-01-01T00:00:00.000Z"
+   }
+  },
+  {
+   "review_in": {},
+   "grade": "lapsed",
+   "interval_s": null,
+   "due_at": "2026-01-02T00:00:00.000Z",
+   "review": {
+    "reps": 0,
+    "interval_s": 86400,
+    "ease": 2.5,
+    "stability": 0.5,
+    "difficulty": 5.2,
+    "last": "2026-01-01T00:00:00.000Z"
+   }
+  },
+  {
+   "review_in": {
+    "reps": 3,
+    "stability": 4.0,
+    "difficulty": 6.0,
+    "last": "2025-12-20T00:00:00.000Z"
+   },
+   "grade": "recalled",
+   "interval_s": null,
+   "due_at": "2026-01-06T15:23:52.000Z",
+   "review": {
+    "reps": 4,
+    "interval_s": 487432,
+    "ease": 2.5,
+    "stability": 5.64157788291018,
+    "difficulty": 5.85,
+    "last": "2026-01-01T00:00:00.000Z"
+   }
+  },
+  {
+   "review_in": {
+    "reps": 3,
+    "stability": 4.0,
+    "difficulty": 6.0,
+    "last": "2025-12-20T00:00:00.000Z"
+   },
+   "grade": "lapsed",
+   "interval_s": null,
+   "due_at": "2026-01-03T00:00:00.000Z",
+   "review": {
+    "reps": 0,
+    "interval_s": 172800,
+    "ease": 2.5,
+    "stability": 2.0,
+    "difficulty": 6.2,
+    "last": "2026-01-01T00:00:00.000Z"
+   }
+  },
+  {
+   "review_in": {
+    "reps": 1,
+    "stability": 0.2,
+    "difficulty": 9.9,
+    "last": "2026-01-01T00:00:00.000Z"
+   },
+   "grade": "recalled",
+   "interval_s": null,
+   "due_at": "2026-01-02T00:00:00.000Z",
+   "review": {
+    "reps": 2,
+    "interval_s": 86400,
+    "ease": 2.5,
+    "stability": 0.20205063024104888,
+    "difficulty": 9.75,
+    "last": "2026-01-01T00:00:00.000Z"
+   }
+  }
  ]
 }
