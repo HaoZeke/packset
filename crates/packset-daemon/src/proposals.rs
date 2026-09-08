@@ -6,7 +6,7 @@
 //! something: text that was merely read never becomes text that is remembered.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use packset_core::cheap::{self, CheapJob, CheapWhen};
 use packset_core::{clock, extract};
@@ -199,6 +199,21 @@ pub fn first_sentence(text: &str) -> String {
         .to_string()
 }
 
+/// What a proposal is being mined out of.
+#[derive(Debug, Clone, Copy)]
+pub struct Mining<'a> {
+    /// The workspace the claim belongs to.
+    pub workspace: &'a str,
+    /// The cheap-model job asking.
+    pub job: &'a str,
+    /// Where in the cycle it is asking.
+    pub when: &'a str,
+    /// Everything already in the splice.
+    pub wall: &'a BTreeSet<String>,
+    /// What was actually said, if the caller has it.
+    pub transcript: Option<&'a str>,
+}
+
 /// Propose one claim from one piece of text, or nothing.
 ///
 /// # Errors
@@ -206,14 +221,17 @@ pub fn first_sentence(text: &str) -> String {
 /// [`CheapError`] when the job is not allowed at this point in the cycle.
 pub fn propose(
     home: &Home,
-    workspace: &str,
+    mining: Mining<'_>,
     text: &str,
-    job: &str,
-    when: &str,
-    wall: &BTreeSet<String>,
-    transcript: Option<&str>,
     new_id: impl FnOnce() -> String,
 ) -> Result<Option<Value>, CheapError> {
+    let Mining {
+        workspace,
+        job,
+        when,
+        wall,
+        transcript,
+    } = mining;
     let allowed = match (parse_job(job), parse_when(when)) {
         (Some(j), Some(w)) => cheap::allowed(j, w),
         _ => false,
@@ -265,18 +283,16 @@ pub fn compact_day(
     let stamp = day.map_or_else(|| clock::utcnow()[..10].to_string(), str::to_string);
     let blob = cards::read_text(&home.archive_path(workspace, &stamp));
     let wall = fence(home, workspace, live);
+    let mining = Mining {
+        workspace,
+        job: "extract",
+        when: "compaction",
+        wall: &wall,
+        transcript,
+    };
     let mut out = Vec::new();
     for part in entries(&blob) {
-        if let Some(rec) = propose(
-            home,
-            workspace,
-            &part,
-            "extract",
-            "compaction",
-            &wall,
-            transcript,
-            &mut new_id,
-        )? {
+        if let Some(rec) = propose(home, mining, &part, &mut new_id)? {
             out.push(rec);
         }
     }
@@ -373,30 +389,22 @@ mod tests {
     fn extraction_is_forbidden_off_compaction() {
         let (_dir, home) = home();
         let wall = BTreeSet::new();
-        let err = propose(
-            &home,
-            "w",
-            "A claim worth keeping.",
-            "extract",
-            "onDemand",
-            &wall,
-            None,
-            || "p".into(),
-        )
-        .unwrap_err();
+        let mining = Mining {
+            workspace: "w",
+            job: "extract",
+            when: "onDemand",
+            wall: &wall,
+            transcript: None,
+        };
+        let err = propose(&home, mining, "A claim worth keeping.", || "p".into()).unwrap_err();
         assert_eq!(err.0, "extract is not allowed on onDemand");
         // And an unknown job is refused rather than waved through.
-        assert!(propose(
-            &home,
-            "w",
-            "A claim.",
-            "whatever",
-            "compaction",
-            &wall,
-            None,
-            || "p".into()
-        )
-        .is_err());
+        let unknown = Mining {
+            job: "whatever",
+            when: "compaction",
+            ..mining
+        };
+        assert!(propose(&home, unknown, "A claim.", || "p".into()).is_err());
     }
 
     #[test]
@@ -416,15 +424,17 @@ mod tests {
         let mut next = ids();
         for text in ["short.", "  ", ""] {
             let got = propose(
-                &home,
-                "w",
-                text,
-                "extract",
-                "compaction",
-                &wall,
-                None,
-                &mut next,
-            )
+            &home,
+            Mining {
+                workspace: "w",
+                job: "extract",
+                when: "compaction",
+                wall: &wall,
+                transcript: None,
+            },
+            text,
+            &mut next,
+        )
             .unwrap();
             assert!(got.is_none(), "{text:?} proposed something");
         }
@@ -435,13 +445,15 @@ mod tests {
                 .join("\n");
         assert!(propose(
             &home,
-            "w",
+            Mining {
+                workspace: "w",
+                job: "extract",
+                when: "compaction",
+                wall: &wall,
+                transcript: None,
+            },
             &listing,
-            "extract",
-            "compaction",
-            &wall,
-            None,
-            &mut next
+            &mut next,
         )
         .unwrap()
         .is_none());
@@ -455,26 +467,30 @@ mod tests {
         let mut next = ids();
         assert!(propose(
             &home,
-            "w",
+            Mining {
+                workspace: "w",
+                job: "extract",
+                when: "compaction",
+                wall: &wall,
+                transcript: None,
+            },
             "Open review links after pushing.",
-            "extract",
-            "compaction",
-            &wall,
-            None,
-            &mut next
+            &mut next,
         )
         .unwrap()
         .is_none());
         // A different claim is not fenced.
         assert!(propose(
             &home,
-            "w",
+            Mining {
+                workspace: "w",
+                job: "extract",
+                when: "compaction",
+                wall: &wall,
+                transcript: None,
+            },
             "Prefer ripgrep for search.",
-            "extract",
-            "compaction",
-            &wall,
-            None,
-            &mut next
+            &mut next,
         )
         .unwrap()
         .is_some());
@@ -499,34 +515,28 @@ mod tests {
         let (_dir, home) = home();
         let mut next = ids();
         let wall = BTreeSet::new();
-        let nei = propose(
-            &home,
-            "w",
-            "A claim with no transcript.",
-            "extract",
-            "compaction",
-            &wall,
-            None,
-            &mut next,
-        )
-        .unwrap()
-        .unwrap();
+        let bare = Mining {
+            workspace: "w",
+            job: "extract",
+            when: "compaction",
+            wall: &wall,
+            transcript: None,
+        };
+        let nei = propose(&home, bare, "A claim with no transcript.", &mut next)
+            .unwrap()
+            .unwrap();
         assert_eq!(nei["verdict"], json!("NEI"));
         let err = accept(&home, "w", nei["id"].as_str().unwrap()).unwrap_err();
         assert_eq!(err.0, "extractAccept rejected: NEI");
 
-        let supported = propose(
-            &home,
-            "w",
-            "A claim with a transcript.",
-            "extract",
-            "compaction",
-            &wall,
-            Some("A claim with a transcript."),
-            &mut next,
-        )
-        .unwrap()
-        .unwrap();
+        // The same claim with somebody able to point at it is acceptable.
+        let witnessed = Mining {
+            transcript: Some("A claim with a transcript."),
+            ..bare
+        };
+        let supported = propose(&home, witnessed, "A claim with a transcript.", &mut next)
+            .unwrap()
+            .unwrap();
         assert_eq!(supported["verdict"], json!("SUPPORTED"));
         let (atom, _rec) = accept(&home, "w", supported["id"].as_str().unwrap()).unwrap();
         assert_eq!(atom["text"], json!("A claim with a transcript"));
@@ -545,12 +555,14 @@ mod tests {
         let wall = BTreeSet::new();
         let rec = propose(
             &home,
-            "w",
+            Mining {
+                workspace: "w",
+                job: "extract",
+                when: "compaction",
+                wall: &wall,
+                transcript: Some("A claim to accept."),
+            },
             "A claim to accept.",
-            "extract",
-            "compaction",
-            &wall,
-            Some("A claim to accept."),
             &mut next,
         )
         .unwrap()

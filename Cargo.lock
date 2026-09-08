@@ -1426,6 +1426,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "heed 0.20.5",
+ "indexmap",
  "packset-core",
  "serde",
  "serde_json",

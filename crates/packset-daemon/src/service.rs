@@ -451,7 +451,16 @@ impl Service {
         let live = self.store.current(workspace, None)?;
         let wall = crate::proposals::fence(&self.home, workspace, &live);
         let rec = crate::proposals::propose(
-            &self.home, workspace, text, job, when, &wall, transcript, new_id,
+            &self.home,
+            crate::proposals::Mining {
+                workspace,
+                job,
+                when,
+                wall: &wall,
+                transcript,
+            },
+            text,
+            new_id,
         )?;
         rec.ok_or_else(|| anyhow::Error::new(AtomError("nothing to propose".into())))
     }

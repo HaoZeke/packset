@@ -262,7 +262,10 @@ def _sort_atoms(body):
     if isinstance(body, dict):
         out = {}
         for key, value in body.items():
-            if key == "atoms" and isinstance(value, list):
+            if key in ("atoms", "hits") and isinstance(value, list):
+                # Two hits whose scores differ only by the recency epsilon tie
+                # once the score is rounded, and neither writer promises an
+                # order between them.
                 out[key] = sorted(value, key=lambda a: json.dumps(a, sort_keys=True))
             else:
                 out[key] = _sort_atoms(value)
