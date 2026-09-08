@@ -3,6 +3,11 @@ root := justfile_directory()
 test-py:
     .pixi/envs/default/bin/pytest -q scripts
 
+# Regenerate the Python goldens the Rust port is checked against. Read the
+# diff: a change here is a change in what the daemon accepts.
+goldens:
+    cd scripts && ../.pixi/envs/default/bin/python gen_goldens.py
+
 lint:
     .pixi/envs/default/bin/ruff check scripts
 

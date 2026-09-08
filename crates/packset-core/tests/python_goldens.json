@@ -1,0 +1,286 @@
+{
+ "prose": [
+  {
+   "text": "",
+   "words": 0,
+   "sentences": 0,
+   "grade": null,
+   "ease": null,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "Reviews open with a reproducibility check.",
+   "words": 6,
+   "sentences": 1,
+   "grade": null,
+   "ease": null,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "One thing. Another thing. A third thing.",
+   "words": 7,
+   "sentences": 3,
+   "grade": null,
+   "ease": null,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "The header was parsed by the reader.",
+   "words": 7,
+   "sentences": 1,
+   "grade": null,
+   "ease": null,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 1,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "only family apply early daily",
+   "words": 5,
+   "sentences": 1,
+   "grade": null,
+   "ease": null,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "quickly and very carefully the reviewer really basically just moved on",
+   "words": 11,
+   "sentences": 1,
+   "grade": 9.76,
+   "ease": 18.78,
+   "adverbs": 6,
+   "adverb_ratio": 0.545,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "word word word word word word word word word word word word word word word word word word word word .",
+   "words": 20,
+   "sentences": 1,
+   "grade": 7.41,
+   "ease": 101.94,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 1,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word .",
+   "words": 30,
+   "sentences": 1,
+   "grade": 12.41,
+   "ease": 91.79,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 1
+  },
+  {
+   "text": "Prefer ripgrep over grep for repository search because it respects gitignore.",
+   "words": 11,
+   "sentences": 1,
+   "grade": 12.33,
+   "ease": 26.47,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "Always open review links after pushing, so the CI result is visible before the next change lands.",
+   "words": 17,
+   "sentences": 1,
+   "grade": 8.96,
+   "ease": 65.17,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 1,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "The seat pack keeps one claim per atom and the cards stay files on disk.",
+   "words": 15,
+   "sentences": 1,
+   "grade": 3.97,
+   "ease": 95.73,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "Tool dumps and fetched bodies are not atoms.",
+   "words": 8,
+   "sentences": 1,
+   "grade": 3.77,
+   "ease": 82.39,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 1,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "packsetd listens on 127.0.0.1 only and never on localhost.",
+   "words": 8,
+   "sentences": 2,
+   "grade": 4.12,
+   "ease": 54.73,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "AAA",
+   "words": 1,
+   "sentences": 1,
+   "grade": null,
+   "ease": null,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  },
+  {
+   "text": "Make the change, then run the tests.",
+   "words": 7,
+   "sentences": 1,
+   "grade": null,
+   "ease": null,
+   "adverbs": 0,
+   "adverb_ratio": 0.0,
+   "passives": 0,
+   "hard_sentences": 0,
+   "very_hard_sentences": 0
+  }
+ ],
+ "remote": [
+  {
+   "remote": "https://github.com/HaoZeke/grok-inside.git",
+   "workspace": "git:github.com/HaoZeke/grok-inside"
+  },
+  {
+   "remote": "git@github.com:HaoZeke/grok-inside.git",
+   "workspace": "git:github.com/HaoZeke/grok-inside"
+  },
+  {
+   "remote": "ssh://git@github.com/HaoZeke/vissue.git",
+   "workspace": "git:github.com/HaoZeke/vissue"
+  },
+  {
+   "remote": "https://example.com:8443/team/repo.git",
+   "workspace": "git:example.com/team/repo"
+  },
+  {
+   "remote": "http://gitlab.com/group/sub/project.git",
+   "workspace": "git:gitlab.com/group/sub/project"
+  },
+  {
+   "remote": "git@bitbucket.org:team/repo",
+   "workspace": "git:bitbucket.org/team/repo"
+  }
+ ],
+ "slug": [
+  {
+   "workspace": "git:github.com/HaoZeke/vissue",
+   "slug": "git_github.com_HaoZeke_vissue"
+  },
+  {
+   "workspace": "global",
+   "slug": "global"
+  },
+  {
+   "workspace": "dir:/home/x/y",
+   "slug": "dir_home_x_y"
+  },
+  {
+   "workspace": "///",
+   "slug": "workspace"
+  },
+  {
+   "workspace": "",
+   "slug": "workspace"
+  },
+  {
+   "workspace": "a.b_c-d",
+   "slug": "a.b_c-d"
+  }
+ ],
+ "set": [
+  {
+   "name": "Review",
+   "set": "review"
+  },
+  {
+   "name": "  joss-reviews  ",
+   "set": "joss-reviews"
+  },
+  {
+   "name": "a",
+   "set": "a"
+  },
+  {
+   "name": "1review",
+   "error": true
+  },
+  {
+   "name": "-review",
+   "error": true
+  },
+  {
+   "name": "",
+   "error": true
+  },
+  {
+   "name": "../etc",
+   "error": true
+  },
+  {
+   "name": "a/b",
+   "error": true
+  },
+  {
+   "name": "a b",
+   "error": true
+  },
+  {
+   "name": "a_b",
+   "error": true
+  },
+  {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "set": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "error": true
+  }
+ ]
+}
