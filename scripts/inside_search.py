@@ -324,6 +324,9 @@ def replace_index(pack: dict[str, Any], index_dir: Path) -> bool:
     Callers must not pass set-scoped cards as ``user``/``memory`` — that
     would poison the shared workspace prose documents.
     """
+    _BACKFILLED.difference_update(
+        {key for key in _BACKFILLED if key[0] == str(index_dir)}
+    )
     docs = pack_documents(pack)
     payload = _run_milli(
         ["index", "--index", str(index_dir), "--replace"],
@@ -411,6 +414,14 @@ def _prose_hits(
     )
 
 
+# Sets already backfilled into an index by this process. The backfill exists
+# for a projection written before atoms carried a `set`, and one pass fixes
+# that for good: every write since keeps the field current. Doing it per query
+# instead re-uploads the whole set on every scoped search, which is the
+# difference between a search and an indexing job.
+_BACKFILLED: set[tuple[str, str]] = set()
+
+
 def _ensure_milli_atoms(
     pack: dict[str, Any],
     directory: Path,
@@ -428,12 +439,18 @@ def _ensure_milli_atoms(
             return reindex_atoms(pack, directory)
         return replace_index(pack, directory)
     if set_name:
+        key = (str(directory), set_name)
+        if key in _BACKFILLED:
+            return True
         docs = [
             atom_document(atom)
             for atom in _live_atoms(pack, set_name=set_name)
             if atom.get("id")
         ]
-        return upsert_documents(docs, directory)
+        done = upsert_documents(docs, directory)
+        if done:
+            _BACKFILLED.add(key)
+        return done
     return True
 
 

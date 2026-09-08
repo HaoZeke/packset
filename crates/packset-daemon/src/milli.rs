@@ -19,6 +19,27 @@ use crate::store::Record;
 /// Environment variables naming the search binary.
 pub const BIN_VARS: &[&str] = &["PACKSET_MILLI", "INSIDE_MILLI", "GROK_INSIDE_MILLI"];
 
+/// Sets already backfilled into an index by this process.
+///
+/// The backfill exists for a projection written before atoms carried a `set`,
+/// and one pass over the set fixes that for good: every write since keeps the
+/// field current. Doing it per query instead re-uploads the whole set on every
+/// scoped search, which is the difference between a search and an indexing
+/// job.
+fn backfilled() -> &'static std::sync::Mutex<std::collections::HashSet<(PathBuf, String)>> {
+    static SEEN: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashSet<(PathBuf, String)>>,
+    > = std::sync::OnceLock::new();
+    SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Forget what was backfilled into `dir`, because the index is being rebuilt.
+fn forget_backfill(dir: &Path) {
+    if let Ok(mut seen) = backfilled().lock() {
+        seen.retain(|(indexed, _)| indexed != dir);
+    }
+}
+
 /// The search binary, if this seat has one.
 ///
 /// Absent is the normal case, not an error: the linear scorer answers the same
@@ -378,6 +399,7 @@ pub struct Corpus<'a> {
 /// documents and every unscoped search would then answer with them.
 #[must_use]
 pub fn replace(corpus: Corpus<'_>, dir: &Path) -> bool {
+    forget_backfill(dir);
     let docs = pack_documents(corpus.workspace, corpus.user, corpus.memory, corpus.atoms);
     let argv = vec![
         "index".into(),
@@ -453,9 +475,15 @@ fn ensure_atoms(corpus: Corpus<'_>, dir: &Path, set: Option<&str>) -> bool {
         return replace(corpus, dir);
     }
     match set {
-        // Backfill the named set's atoms, so `--set` sees the field even on a
-        // projection written before it existed.
+        // Backfill the named set's atoms once, so `--set` sees the field even
+        // on a projection written before it existed. Once is enough: every
+        // write since keeps the field current, and repeating it per query
+        // turns a scoped search into an indexing job.
         Some(name) => {
+            let key = (dir.to_path_buf(), name.to_string());
+            if backfilled().lock().is_ok_and(|seen| seen.contains(&key)) {
+                return true;
+            }
             let now = packset_core::clock::utcnow();
             let docs: Vec<Value> = atoms
                 .iter()
@@ -465,7 +493,13 @@ fn ensure_atoms(corpus: Corpus<'_>, dir: &Path, set: Option<&str>) -> bool {
                 })
                 .map(atom_document)
                 .collect();
-            upsert(&docs, dir)
+            let done = upsert(&docs, dir);
+            if done {
+                if let Ok(mut seen) = backfilled().lock() {
+                    seen.insert(key);
+                }
+            }
+            done
         }
         None => true,
     }
