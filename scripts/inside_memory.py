@@ -48,6 +48,11 @@ _SECRET = re.compile(
 )
 _CAPITALIZED_RUN = re.compile(r"\b[A-Z][A-Za-z0-9]{1,}\b")
 _BACKTICK_NAME = re.compile(r"`([^`]+)`")
+# deedar mints `deed-<kind>-<slug>` and answers `get` for a `sha256:` of the
+# canonical deed or of one product path. Those two forms are the whole
+# vocabulary, and the tracker refuses anything else at the point of writing, so
+# a pack that accepts a typo leaves a citation nothing resolves.
+ACCESSION_PREFIXES = ("deed-", "sha256:")
 LINK_THRESHOLD = 0.3
 DEFAULT_REVIEW_INTERVAL_S = 86400
 REVIEW_EASE = 2.5
@@ -72,6 +77,34 @@ def reject_unsafe(text: str) -> str:
         raise AtomError("invisible unicode is rejected")
     if _SECRET.search(text):
         raise AtomError("credential-shaped text is rejected")
+    return text
+
+
+def check_entity(value: str) -> str:
+    """Reject an entity that opens like a deed accession and is not one.
+
+    An entity is otherwise a free-form name, so only the accession shape is
+    checked: the pack cannot ask whether a deed exists, and does not try to.
+    What it can catch is the citation nothing will ever resolve, at the moment
+    somebody writes it rather than later from `deedar evidence -`.
+    """
+    text = value.strip()
+    if not text:
+        raise AtomError("an entity cannot be empty")
+    prefix = next((p for p in ACCESSION_PREFIXES if text.startswith(p)), None)
+    if prefix is None:
+        return text
+    rest = text[len(prefix) :]
+    if not rest:
+        raise AtomError(f"{value!r} is a bare {prefix!r} and names no deed")
+    # The search projection joins entities with a space and the documented
+    # sweep splits them on a comma, so a separator inside one silently becomes
+    # two entities, neither of which resolves.
+    bad = next((c for c in rest if c.isspace() or c == ","), None)
+    if bad is not None:
+        raise AtomError(
+            f"{value!r} carries {bad!r}, which would split the entity into two"
+        )
     return text
 
 
@@ -256,6 +289,9 @@ def validate_atom(atom: dict[str, Any]) -> dict[str, Any]:
         atom["set"] = inside_set.check_set_name(str(raw_set))
     elif "set" in atom:
         atom.pop("set", None)
+    raw_entities = atom.get("entities")
+    if raw_entities is not None:
+        atom["entities"] = [check_entity(str(item)) for item in raw_entities]
     try:
         atom["prose"] = inside_prose.refuse(text, role="atom")
     except inside_prose.ProseError as exc:

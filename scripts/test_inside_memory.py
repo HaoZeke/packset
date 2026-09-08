@@ -686,3 +686,47 @@ def test_pi_home_view_writes_agents_snapshot(tmp_path: Path) -> None:
     assert "Open with a check." not in agents
     assert "USER.md" in agents
     assert not (isolated / "memory.sqlite").exists()
+
+
+def _atom_with(entities: list[str]) -> dict:
+    return inside_memory.make_atom(
+        workspace=WS,
+        text="The overlay landed without the modifier table.",
+        kind="conclusion",
+        about_peer="rgoswami",
+        by_peer="hermes",
+        entities=entities,
+    )
+
+
+def test_a_free_form_entity_is_untouched() -> None:
+    atom = _atom_with(["JOSS", "xkbcommon", "a whole phrase"])
+    assert atom["entities"] == ["JOSS", "xkbcommon", "a whole phrase"]
+
+
+def test_a_well_formed_accession_is_kept() -> None:
+    atom = _atom_with(["deed-patch-overlay", "sha256:" + "a" * 64])
+    assert atom["entities"] == ["deed-patch-overlay", "sha256:" + "a" * 64]
+
+
+def test_a_bare_prefix_names_no_deed() -> None:
+    for bare in ("deed-", "sha256:"):
+        with pytest.raises(inside_memory.AtomError, match="names no deed"):
+            _atom_with([bare])
+
+
+def test_a_separator_inside_an_accession_is_refused() -> None:
+    # The search projection joins entities with a space and the documented sweep
+    # splits them on a comma, so either one inside an accession silently becomes
+    # two entities and neither resolves.
+    for split in ("deed-patch overlay", "deed-patch,overlay", "sha256:ab cd"):
+        with pytest.raises(inside_memory.AtomError, match="would split"):
+            _atom_with([split])
+
+
+def test_the_shape_is_checked_and_the_store_is_not() -> None:
+    # The pack cannot ask whether a deed exists, and does not try to: a
+    # plausible accession for a deed nobody minted is accepted here and caught
+    # later by `deedar evidence -`.
+    atom = _atom_with(["deed-patch-nobody-minted-this"])
+    assert atom["entities"] == ["deed-patch-nobody-minted-this"]
