@@ -6,7 +6,9 @@
 
 pub mod cards;
 pub mod home;
+pub mod service;
 pub mod store;
 
 pub use home::Home;
+pub use service::Service;
 pub use store::Store;

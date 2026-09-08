@@ -492,6 +492,77 @@
    "entities": []
   }
  ],
+ "tool_dump": [
+  {
+   "text": "",
+   "is_dump": true
+  },
+  {
+   "text": "   ",
+   "is_dump": true
+  },
+  {
+   "text": "Reviews open with a check.",
+   "is_dump": false
+  },
+  {
+   "text": "Here is the run:\n```\nstdout: everything fine\n```",
+   "is_dump": true
+  },
+  {
+   "text": "```\nnothing named\n```",
+   "is_dump": false
+  },
+  {
+   "text": "<!DOCTYPE html><html><body>hi</body></html>",
+   "is_dump": true
+  },
+  {
+   "text": "<html>no doctype</html>",
+   "is_dump": true
+  },
+  {
+   "text": "total 48\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file0\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file1\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file2\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file3\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file4\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file5\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file6",
+   "is_dump": true
+  },
+  {
+   "text": "total 48\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file0\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file1\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file2\n-rw-r--r-- 1 x x 0 Jan 1 00:00 file3",
+   "is_dump": false
+  },
+  {
+   "text": "drwxr-xr-x 2 x x 4096 Jan 1 00:00 dir0\ndrwxr-xr-x 2 x x 4096 Jan 1 00:00 dir1\ndrwxr-xr-x 2 x x 4096 Jan 1 00:00 dir2\ndrwxr-xr-x 2 x x 4096 Jan 1 00:00 dir3\ndrwxr-xr-x 2 x x 4096 Jan 1 00:00 dir4\ndrwxr-xr-x 2 x x 4096 Jan 1 00:00 dir5\ndrwxr-xr-x 2 x x 4096 Jan 1 00:00 dir6\ndrwxr-xr-x 2 x x 4096 Jan 1 00:00 dir7",
+   "is_dump": true
+  }
+ ],
+ "claim": [
+  {
+   "line": "Remember: always pin the review set",
+   "kind": "lesson",
+   "claim": "always pin the review set"
+  },
+  {
+   "line": "Prefer: ripgrep over grep",
+   "kind": "preference",
+   "claim": "ripgrep over grep"
+  },
+  {
+   "line": "Remember that: pin the review set"
+  },
+  {
+   "line": "Note that the test failed on line 12"
+  },
+  {
+   "line": "Prefer conventional commits"
+  },
+  {
+   "line": "remember: lowercase still counts",
+   "kind": "lesson",
+   "claim": "lowercase still counts"
+  },
+  {
+   "line": ""
+  }
+ ],
  "links": {
   "clock": "2026-01-01T00:00:00.000Z",
   "live": [

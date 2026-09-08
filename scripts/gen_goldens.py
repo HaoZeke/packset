@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import inside_extract
 import inside_identity
 import inside_memory
 import inside_prose
@@ -68,6 +69,29 @@ ATOMS = [
     {"kind": "voice", "text": "Cited.", "workspace": "w", "entities": ["deed-patch-overlay", "JOSS"]},
     {"kind": "voice", "text": "Bare.", "workspace": "w", "entities": ["deed-"]},
     {"kind": "voice", "text": "Split.", "workspace": "w", "entities": ["deed-a,b"]},
+]
+
+TOOL_DUMPS = [
+    "",
+    "   ",
+    "Reviews open with a check.",
+    "Here is the run:\n```\nstdout: everything fine\n```",
+    "```\nnothing named\n```",
+    "<!DOCTYPE html><html><body>hi</body></html>",
+    "<html>no doctype</html>",
+    "total 48\n" + "\n".join(f"-rw-r--r-- 1 x x 0 Jan 1 00:00 file{i}" for i in range(7)),
+    "total 48\n" + "\n".join(f"-rw-r--r-- 1 x x 0 Jan 1 00:00 file{i}" for i in range(4)),
+    "\n".join(f"drwxr-xr-x 2 x x 4096 Jan 1 00:00 dir{i}" for i in range(8)),
+]
+
+CLAIMS = [
+    "Remember: always pin the review set",
+    "Prefer: ripgrep over grep",
+    "Remember that: pin the review set",
+    "Note that the test failed on line 12",
+    "Prefer conventional commits",
+    "remember: lowercase still counts",
+    "",
 ]
 
 ENTITY_TEXTS = [
@@ -143,6 +167,17 @@ def main() -> int:
         except (inside_memory.AtomError, inside_prose.ProseError) as exc:
             atoms.append({"input": raw, "error": str(exc)})
 
+    dumps = [
+        {"text": t, "is_dump": inside_extract.is_tool_dump(t)} for t in TOOL_DUMPS
+    ]
+
+    claims = []
+    for line in CLAIMS:
+        got = inside_extract.claim_from_user(line)
+        claims.append(
+            {"line": line, "kind": got[0], "claim": got[1]} if got else {"line": line}
+        )
+
     entities = [
         {"text": t, "entities": sorted(inside_memory.extract_entities({"text": t}))}
         for t in ENTITY_TEXTS
@@ -198,6 +233,8 @@ def main() -> int:
                 "set": sets,
                 "atom": atoms,
                 "entities": entities,
+                "tool_dump": dumps,
+                "claim": claims,
                 "links": links,
                 "review_clock": REVIEW_CLOCK,
                 "review": review,

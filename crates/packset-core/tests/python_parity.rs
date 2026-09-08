@@ -246,3 +246,36 @@ fn dropping_links_outside_the_live_set_matches_python() {
         assert_eq!(got["links"], wanted["links"], "for {}", got["id"]);
     }
 }
+
+#[test]
+fn tool_dump_detection_matches_python() {
+    for case in goldens()["tool_dump"].as_array().unwrap() {
+        let text = case["text"].as_str().unwrap();
+        assert_eq!(
+            packset_core::extract::is_tool_dump(text),
+            case["is_dump"].as_bool().unwrap(),
+            "for {text:?}"
+        );
+    }
+}
+
+#[test]
+fn claim_extraction_matches_python() {
+    for case in goldens()["claim"].as_array().unwrap() {
+        let line = case["line"].as_str().unwrap();
+        let got = packset_core::extract::claim_from_user(line);
+        match case.get("kind").and_then(Value::as_str) {
+            Some(kind) => {
+                let (got_kind, got_claim) =
+                    got.unwrap_or_else(|| panic!("expected a claim for {line:?}"));
+                assert_eq!(got_kind, kind, "kind for {line:?}");
+                assert_eq!(
+                    got_claim,
+                    case["claim"].as_str().unwrap(),
+                    "claim for {line:?}"
+                );
+            }
+            None => assert!(got.is_none(), "{line:?} should not be a claim"),
+        }
+    }
+}
