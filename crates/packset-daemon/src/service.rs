@@ -519,8 +519,13 @@ impl Service {
         }
 
         let dir = self.home.milli_dir();
-        let projected =
-            crate::milli::search(workspace, &user, &memory, &atoms, query, limit, &dir, scope);
+        let corpus = crate::milli::Corpus {
+            workspace,
+            user: &user,
+            memory: &memory,
+            atoms: &atoms,
+        };
+        let projected = crate::milli::search(corpus, query, limit, &dir, scope);
         let (mut ranked, engine) = match projected {
             Some(atom_hits) => {
                 // Prose always comes from the pack, so the index copy of a card

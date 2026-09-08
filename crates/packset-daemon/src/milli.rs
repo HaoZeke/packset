@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use packset_core::record;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use crate::store::Record;
 
@@ -63,9 +63,9 @@ fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        return std::fs::metadata(path)
+        std::fs::metadata(path)
             .map(|m| m.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false);
+            .unwrap_or(false)
     }
     #[cfg(not(unix))]
     true
@@ -212,10 +212,12 @@ fn sha256(message: &[u8]) -> [u8; 32] {
     }
     data.extend_from_slice(&bits.to_be_bytes());
 
-    for block in data.chunks_exact(64) {
+    let (blocks, _) = data.as_chunks::<64>();
+    for block in blocks {
         let mut w = [0u32; 64];
-        for (i, chunk) in block.chunks_exact(4).enumerate() {
-            w[i] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        let (words, _) = block.as_chunks::<4>();
+        for (i, chunk) in words.iter().enumerate() {
+            w[i] = u32::from_be_bytes(*chunk);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
@@ -354,13 +356,29 @@ pub fn delete(ids: &[String], index_dir: &Path) -> bool {
     run(&argv, Some(&payload)).is_some()
 }
 
+/// The pack a projection is built from or searched against.
+///
+/// The four travel together everywhere, and separating them is how a set's
+/// cards end up written as a workspace's.
+#[derive(Debug, Clone, Copy)]
+pub struct Corpus<'a> {
+    /// The workspace being projected.
+    pub workspace: &'a str,
+    /// The seat card, or a set's stand-in for it.
+    pub user: &'a str,
+    /// The workspace card, or a set's stand-in for it.
+    pub memory: &'a str,
+    /// The live atoms.
+    pub atoms: &'a [Record],
+}
+
 /// Rebuild the projection from a whole workspace.
 ///
 /// Never called with a set's cards: they would become the workspace's prose
 /// documents and every unscoped search would then answer with them.
 #[must_use]
-pub fn replace(workspace: &str, user: &str, memory: &str, atoms: &[Record], dir: &Path) -> bool {
-    let docs = pack_documents(workspace, user, memory, atoms);
+pub fn replace(corpus: Corpus<'_>, dir: &Path) -> bool {
+    let docs = pack_documents(corpus.workspace, corpus.user, corpus.memory, corpus.atoms);
     let argv = vec![
         "index".into(),
         "--index".into(),
@@ -424,21 +442,15 @@ pub fn filter_atom_hits(hits: &[Value], live: &[Record], set: Option<&str>) -> V
 }
 
 /// What the index needs before this query can be trusted.
-fn ensure_atoms(
-    workspace: &str,
-    user: &str,
-    memory: &str,
-    atoms: &[Record],
-    dir: &Path,
-    set: Option<&str>,
-) -> bool {
+fn ensure_atoms(corpus: Corpus<'_>, dir: &Path, set: Option<&str>) -> bool {
+    let atoms = corpus.atoms;
     if !index_ready(dir) {
         // A set-scoped call must never full-replace: its cards are not the
         // workspace's, and writing them as such poisons every other search.
         if set.is_some() {
             return reindex_atoms(atoms, dir);
         }
-        return replace(workspace, user, memory, atoms, dir);
+        return replace(corpus, dir);
     }
     match set {
         // Backfill the named set's atoms, so `--set` sees the field even on a
@@ -462,17 +474,15 @@ fn ensure_atoms(
 /// One search against the projection, or nothing when it cannot answer.
 #[must_use]
 pub fn search(
-    workspace: &str,
-    user: &str,
-    memory: &str,
-    atoms: &[Record],
+    corpus: Corpus<'_>,
     query: &str,
     limit: usize,
     dir: &Path,
     set: Option<&str>,
 ) -> Option<Vec<Value>> {
+    let (workspace, atoms) = (corpus.workspace, corpus.atoms);
     binary()?;
-    if !ensure_atoms(workspace, user, memory, atoms, dir, set) {
+    if !ensure_atoms(corpus, dir, set) {
         return None;
     }
     let once = |q: &str| -> Option<Vec<Value>> {
