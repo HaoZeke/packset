@@ -32,6 +32,22 @@ row's `ts`. `w` picks another workspace (type a name or choose from
 `/v1/workspaces`). `[` / `]` cycle. Urgency is a column only when an
 atom carries that field.
 
+## Citations
+
+An entity that opens `deed-` or `sha256:` names a product in a
+[deedar](https://github.com/indynull/deedar) store, and the writer checks that
+shape rather than leaving a typo for a reader to find. Every other entity is a
+free-form name and is untouched.
+
+```
+packset accessions WORKSPACE           # every accession cited by a live atom
+packset accessions WORKSPACE | deedar evidence -   # the bytes are intact
+packset accessions WORKSPACE | deedar current -    # still the tip
+```
+
+Whether the deed exists is a question the pack cannot ask. It checks the shape;
+`deedar` answers the rest.
+
 ## Law
 
 - One writer. Working tree is not the pack.

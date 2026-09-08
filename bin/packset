@@ -2,6 +2,7 @@
 # Start, stop and inspect packsetd.
 #
 #   packset ensure | start | stop | status | port | pin [NAME] | clear
+#   packset accessions [WORKSPACE]   # deed accessions cited by live atoms
 #
 # Clients export PACKSET_URL (INSIDE_MEMORY_URL is an alias).
 
@@ -146,6 +147,39 @@ case "${1:-ensure}" in
             echo
         fi
         ;;
+    accessions)
+        # Every deed accession cited by a live atom in a workspace, one per
+        # line, so `deedar evidence -` and `deedar current -` cover the pack the
+        # same way they cover a tracker. A product may be cited by an atom in
+        # one workspace and by nothing else, which is exactly the citation that
+        # goes stale unnoticed.
+        shift
+        workspace="${1:-${PACKSET_WORKSPACE:-}}"
+        if [ -z "$workspace" ]; then
+            echo "packset: usage: packset accessions WORKSPACE (or set PACKSET_WORKSPACE)" >&2
+            exit 2
+        fi
+        if ! py="$(resolve_python)"; then
+            echo "packset: python3 not found" >&2
+            exit 1
+        fi
+        ws_enc="$(PACKSET_WS="$workspace" $py -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["PACKSET_WS"], safe=""))')"
+        if ! atoms="$(timeout 10 curl -fsS "http://127.0.0.1:$PORT/v1/atoms?workspace=${ws_enc}")"; then
+            echo "packset: could not fetch atoms for $workspace" >&2
+            exit 1
+        fi
+        printf '%s' "$atoms" | $py -c '
+import json, sys
+seen = set()
+for atom in (json.load(sys.stdin).get("atoms") or []):
+    for entity in (atom.get("entities") or []):
+        text = str(entity).strip()
+        if text.startswith(("deed-", "sha256:")):
+            seen.add(text)
+for accession in sorted(seen):
+    print(accession)
+'
+        ;;
     tui)
         shift
         if ! py="$(resolve_python)"; then
@@ -156,7 +190,7 @@ case "${1:-ensure}" in
         exec $py -m packset_tui "$@"
         ;;
     *)
-        echo "usage: packset ensure|start|stop|status|port|url|pin [NAME]|tui" >&2
+        echo "usage: packset ensure|start|stop|status|port|url|pin [NAME]|accessions [WORKSPACE]|tui" >&2
         exit 2
         ;;
 esac
