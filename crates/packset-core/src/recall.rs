@@ -148,11 +148,8 @@ pub fn matches_hints(atom: &Record, hints: &Hints) -> bool {
 
 fn resolve_seeds(live: &[Record], seeds: &[String], hints: &Hints) -> Vec<String> {
     if !seeds.is_empty() {
-        let live_ids: std::collections::HashSet<&str> = live
-            .iter()
-            .map(|a| id_of(a))
-            .filter(|i| !i.is_empty())
-            .collect();
+        let live_ids: std::collections::HashSet<&str> =
+            live.iter().map(id_of).filter(|i| !i.is_empty()).collect();
         let mut out = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for seed in seeds {

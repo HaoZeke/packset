@@ -192,6 +192,15 @@ def sequence(port: int):
 
     call("identity", "GET", "/v1/identity?cwd=/tmp&harness=hermes")
 
+    here = str(Path(__file__).resolve().parent.parent)
+    call("rules", "GET", f"/v1/rules?cwd={here}")
+    call("rules with bodies", "GET", f"/v1/rules?cwd={here}&body=1")
+    call("rules outside a tree", "GET", "/v1/rules?cwd=/tmp")
+    call("skills", "GET", f"/v1/skills?cwd={here}")
+    call("skills by name", "GET", f"/v1/skills?cwd={here}&name=nothing-here")
+    call("map", "GET", f"/v1/map?cwd={here}")
+    call("map outside a tree", "GET", "/v1/map?cwd=/")
+
     call("attach", "POST", "/v1/attach", {"workspace": WS, "text": "a log body", "label": "build"})
     call("peek", "GET", f"/v1/attach?workspace={WS}&peek=1")
     call("take", "GET", f"/v1/attach?workspace={WS}")
@@ -219,12 +228,31 @@ def _sort_atoms(body):
     return body
 
 
-def with_ids(steps):
+def mask_root(value, root: str):
+    """Replace this writer's own pack home wherever it appears.
+
+    Each daemon runs on its own temp home, so a path into it is a fact about
+    the run rather than about the writer. It shows up inside strings, not only
+    as a whole field, which is why this is a substring replace.
+    """
+    if isinstance(value, str):
+        return value.replace(root, "<home>")
+    if isinstance(value, dict):
+        return {key: mask_root(item, root) for key, item in value.items()}
+    if isinstance(value, list):
+        return [mask_root(item, root) for item in value]
+    return value
+
+
+def with_ids(steps, root: str):
     ids: dict[str, str] = {}
     for _, (_, body) in steps:
         collect_ids(body, ids)
     # Named first, then sorted, so the sort key does not carry a random id.
-    return [(label, code, _sort_atoms(normalise(body, ids))) for label, (code, body) in steps]
+    return [
+        (label, code, _sort_atoms(normalise(mask_root(body, root), ids)))
+        for label, (code, body) in steps
+    ]
 
 
 def main() -> int:
@@ -247,7 +275,7 @@ def main() -> int:
         )
         try:
             wait_for(port)
-            results[label] = with_ids(sequence(port))
+            results[label] = with_ids(sequence(port), str(root))
         finally:
             proc.terminate()
             try:

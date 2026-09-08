@@ -5,6 +5,8 @@
 //! because a person edits them; atoms are a database because a program does.
 
 pub mod cards;
+pub mod context;
+pub mod glob;
 pub mod home;
 pub mod http;
 pub mod service;

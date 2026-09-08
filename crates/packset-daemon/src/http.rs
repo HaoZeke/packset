@@ -8,7 +8,6 @@
 //! [`crate::service`].
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::Arc;
 
 use packset_core::record::AtomError;
@@ -180,6 +179,32 @@ fn route(
                 Err(message) => Answer::err(400, message),
             }
         }
+        (Method::Get, "/v1/rules") => {
+            let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
+            let with_body = truthy(query.get("body").map(String::as_str));
+            Answer::ok(crate::context::rules_payload(
+                std::path::Path::new(&cwd),
+                &service.home().user_path(),
+                with_body,
+            ))
+        }
+        (Method::Get, "/v1/skills") => {
+            let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
+            let name = query.get("name").filter(|n| !n.is_empty());
+            // Global skills live under the seat's own home, not the pack home:
+            // a pack can be moved between seats and a skill catalog cannot.
+            let home = std::env::var_os("HOME")
+                .map_or_else(|| std::path::PathBuf::from("."), std::path::PathBuf::from);
+            Answer::ok(crate::context::skills_payload(
+                std::path::Path::new(&cwd),
+                &home,
+                name.map(String::as_str),
+            ))
+        }
+        (Method::Get, "/v1/map") => {
+            let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
+            Answer::ok(crate::context::repo_map(std::path::Path::new(&cwd)))
+        }
         (Method::Get, "/v1/recall") => match required(query, "workspace") {
             Err(a) => a,
             Ok(workspace) => {
@@ -302,7 +327,12 @@ fn route(
             Ok(workspace) => {
                 let text = match body.get("text") {
                     Some(Value::String(s)) => s.clone(),
-                    Some(Value::Null) | None => String::new(),
+                    // No text at all means the body names a file to read, so a
+                    // client can hand over a log without carrying it.
+                    Some(Value::Null) | None => crate::context::read_attach_source(
+                        body.get("path").and_then(Value::as_str).unwrap_or(""),
+                        crate::context::ATTACH_CAP,
+                    ),
                     Some(other) => other.to_string(),
                 };
                 let label = body.get("label").and_then(Value::as_str).unwrap_or("");
