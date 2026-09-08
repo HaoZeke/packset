@@ -511,7 +511,7 @@ impl Service {
                 cards::read_text(&self.home.memory_path(workspace)),
             ),
         };
-        let atoms = self.store.current(workspace, None)?;
+        let atoms = self.store.live(workspace)?;
         let now = clock::utcnow();
 
         if packset_core::search::tokens(query).is_empty() {

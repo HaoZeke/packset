@@ -23,6 +23,13 @@ pub const MEMORY_CAP: usize = 2200;
 pub const TEXT_SOFT_CAP: usize = 500;
 /// Jaccard at or above which two atoms link.
 pub const LINK_THRESHOLD: f64 = 0.3;
+/// The most peers one atom names.
+///
+/// Without a cap the graph is quadratic: every atom sharing an entity links to
+/// every other, so each entity becomes a clique. That is not only a cost, it is
+/// a neighbourhood that has stopped meaning anything, because a one-hop walk
+/// from a seed then returns more than any caller asked for.
+pub const LINK_MAX: usize = 8;
 /// Review interval when nothing has been graded yet.
 pub const DEFAULT_REVIEW_INTERVAL_S: i64 = 86_400;
 /// SM-2 style ease, kept for readers of the review block.
@@ -402,7 +409,10 @@ fn backtick_names(text: &str) -> BTreeSet<String> {
     out
 }
 
-/// Ids of live peers whose entity sets meet the threshold.
+/// The live peers this atom is most about, at most [`LINK_MAX`] of them.
+///
+/// Similarity decides which, and the id breaks a tie, so the same corpus gives
+/// the same neighbourhood on every machine.
 #[must_use]
 pub fn link_targets(
     atom: &Map<String, Value>,
@@ -413,7 +423,7 @@ pub fn link_targets(
     let mine = entities_of(atom);
     let mine_refs: Vec<&str> = mine.iter().map(String::as_str).collect();
     let atom_id = atom.get("id").and_then(Value::as_str);
-    let mut linked = Vec::new();
+    let mut scored: Vec<(f64, String)> = Vec::new();
     for other in peers {
         let other_id = other.get("id").and_then(Value::as_str);
         if other_id.is_none() || other_id == atom_id {
@@ -424,13 +434,19 @@ pub fn link_targets(
         }
         let theirs = entities_of(other);
         let theirs_refs: Vec<&str> = theirs.iter().map(String::as_str).collect();
-        if crate::atom::entity_jaccard(mine_refs.iter().copied(), theirs_refs.iter().copied())
-            >= threshold
-        {
-            linked.push(other_id.unwrap_or_default().to_string());
+        let overlap =
+            crate::atom::entity_jaccard(mine_refs.iter().copied(), theirs_refs.iter().copied());
+        if overlap >= threshold {
+            scored.push((overlap, other_id.unwrap_or_default().to_string()));
         }
     }
-    linked
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    scored.truncate(LINK_MAX);
+    scored.into_iter().map(|(_, id)| id).collect()
 }
 
 /// Set overlap links on `atom` and rewrite the peers that changed.

@@ -54,6 +54,12 @@ _BACKTICK_NAME = re.compile(r"`([^`]+)`")
 # a pack that accepts a typo leaves a citation nothing resolves.
 ACCESSION_PREFIXES = ("deed-", "sha256:")
 LINK_THRESHOLD = 0.3
+# The most peers one atom names. Without a cap the graph is quadratic: every
+# atom sharing an entity links to every other, so each entity becomes a clique.
+# That is not only a cost, it is a neighbourhood that has stopped meaning
+# anything, because a one-hop walk from a seed then returns more than any
+# caller asked for.
+LINK_MAX = 8
 DEFAULT_REVIEW_INTERVAL_S = 86400
 REVIEW_EASE = 2.5
 DEFAULT_STABILITY = 1.0
@@ -526,19 +532,25 @@ def link_entities(
     threshold: float = LINK_THRESHOLD,
     now: str | None = None,
 ) -> list[str]:
-    """Ids of live others whose entity sets meet the Jaccard threshold both ways."""
+    """The live peers this atom is most about, at most LINK_MAX of them.
+
+    Similarity decides which, and the id breaks a tie, so the same corpus gives
+    the same neighbourhood on every machine.
+    """
     mine = extract_entities(atom)
     atom_id = atom.get("id")
     clock = now or utcnow()
-    linked: list[str] = []
+    scored: list[tuple[float, str]] = []
     for other in others:
         if other.get("id") == atom_id:
             continue
         if not is_live(other, clock):
             continue
-        if entity_jaccard(mine, extract_entities(other)) >= threshold:
-            linked.append(other["id"])
-    return linked
+        overlap = entity_jaccard(mine, extract_entities(other))
+        if overlap >= threshold:
+            scored.append((overlap, other["id"]))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    return [atom_id for _overlap, atom_id in scored[:LINK_MAX]]
 
 
 def apply_links(

@@ -21,6 +21,33 @@ use crate::service::Service;
 pub const LOOPBACK: &str = "127.0.0.1";
 /// The port the clients look for.
 pub const DEFAULT_PORT: u16 = 8761;
+/// Workers when the machine will not say how many cores it has.
+pub const DEFAULT_WORKERS: usize = 4;
+/// The ceiling on workers, however many cores there are.
+///
+/// The work is a database read and some scoring, so past this the threads
+/// contend for the same snapshot rather than finishing sooner.
+pub const MAX_WORKERS: usize = 32;
+
+/// How many requests this writer will answer at once.
+///
+/// A thread per connection is fine until something loops on the socket, and
+/// then it is an unbounded number of threads on a seat that has other work to
+/// do. A fixed pool pulling from one queue answers the same requests and makes
+/// a burst wait instead of a machine swap.
+#[must_use]
+pub fn worker_count() -> usize {
+    if let Some(raw) = std::env::var_os("PACKSET_WORKERS") {
+        if let Some(n) = raw.to_str().and_then(|s| s.trim().parse::<usize>().ok()) {
+            if n > 0 {
+                return n;
+            }
+        }
+    }
+    std::thread::available_parallelism()
+        .map_or(DEFAULT_WORKERS, std::num::NonZeroUsize::get)
+        .clamp(DEFAULT_WORKERS, MAX_WORKERS)
+}
 
 /// What a route decided to answer.
 struct Answer {
@@ -55,16 +82,31 @@ pub fn serve(
     if host != LOOPBACK {
         anyhow::bail!("packsetd listens on {LOOPBACK} only");
     }
-    let server = Server::http((host, port))
-        .map_err(|e| anyhow::anyhow!("cannot bind {host}:{port}: {e}"))?;
-    eprintln!("packsetd: listening on http://{host}:{port}");
+    let server = Arc::new(
+        Server::http((host, port))
+            .map_err(|e| anyhow::anyhow!("cannot bind {host}:{port}: {e}"))?,
+    );
+    let workers = worker_count();
+    eprintln!("packsetd: listening on http://{host}:{port} with {workers} workers");
     let panel = Arc::new(panel);
-    for request in server.incoming_requests() {
+
+    // Every worker pulls from the server's own queue, so the pool is the
+    // balance: a burst waits in the queue rather than becoming threads.
+    let mut handles = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let server = Arc::clone(&server);
         let service = Arc::clone(&service);
         let panel = Arc::clone(&panel);
-        // A thread per request, the way the writer being replaced does it: the
-        // store's own lock is what serialises the writes.
-        std::thread::spawn(move || handle(&service, &panel, request));
+        // The loop ends when the listener is gone, which is how this process
+        // stops.
+        handles.push(std::thread::spawn(move || {
+            while let Ok(request) = server.recv() {
+                handle(&service, &panel, request);
+            }
+        }));
+    }
+    for handle in handles {
+        let _ = handle.join();
     }
     Ok(())
 }
@@ -141,8 +183,8 @@ fn route(
         },
         (Method::Get, "/v1/atoms") => match required(query, "workspace") {
             Err(a) => a,
-            Ok(workspace) => match service.store().current(&workspace, None) {
-                Ok(atoms) => Answer::ok(json!({ "atoms": atoms })),
+            Ok(workspace) => match service.store().live(&workspace) {
+                Ok(atoms) => Answer::ok(json!({ "atoms": atoms.as_ref() })),
                 Err(e) => Answer::err(400, e),
             },
         },
@@ -251,7 +293,7 @@ fn route(
                     text: query.get("q").cloned().unwrap_or_default(),
                     entities: Vec::new(),
                 };
-                match service.store().current(&workspace, None) {
+                match service.store().live(&workspace) {
                     Err(e) => Answer::err(400, e),
                     Ok(atoms) => Answer::ok(json!({
                         "atoms": packset_core::recall::recall(

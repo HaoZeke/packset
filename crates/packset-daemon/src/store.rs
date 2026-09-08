@@ -6,8 +6,11 @@
 //! NUL separator is what makes a workspace scan a prefix scan, since no
 //! workspace name can carry one.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 use heed::types::Bytes;
 use heed::{Database, Env, EnvFlags, EnvOpenOptions};
@@ -20,6 +23,9 @@ pub const MAP_SIZE: usize = 256 * 1024 * 1024;
 
 /// One atom record.
 pub type Record = Map<String, Value>;
+
+/// One workspace's parsed live set, with the write count it was built at.
+type Snapshot = (u64, Arc<Vec<Record>>);
 
 /// The key for one atom.
 #[must_use]
@@ -46,6 +52,15 @@ pub struct Store {
     db: Database<Bytes, Bytes>,
     /// Held open for as long as the store is: dropping it drops the lock.
     _lock: File,
+    /// Bumped by every write, so a reader can tell a stale snapshot.
+    generation: AtomicU64,
+    /// One parsed live set per workspace, shared by concurrent readers.
+    ///
+    /// Reads dominate and each one would otherwise parse the whole workspace
+    /// out of the database again, so several callers asking at once pay for
+    /// the same work several times. One writer means one obvious way to know
+    /// a snapshot is current.
+    live: RwLock<HashMap<String, Snapshot>>,
 }
 
 impl Store {
@@ -76,6 +91,8 @@ impl Store {
             env,
             db,
             _lock: lock,
+            generation: AtomicU64::new(0),
+            live: RwLock::new(HashMap::new()),
         })
     }
 
@@ -163,26 +180,66 @@ impl Store {
             self.db.put(&mut wtxn, &key, &blob)?;
         }
         wtxn.commit()?;
+        // After the commit, never before: a reader that scans between a bump
+        // and its write would otherwise cache the older corpus as the newer.
+        self.generation.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
 
-    /// The live and due records in one workspace, links narrowed to that set.
+    /// The live and due records in one workspace, parsed once per write.
+    ///
+    /// Callers that only read should take this rather than [`Store::current`]:
+    /// it hands back the shared snapshot instead of a copy of it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the scan does.
+    pub fn live(&self, workspace: &str) -> anyhow::Result<Arc<Vec<Record>>> {
+        let generation = self.generation.load(Ordering::Acquire);
+        if let Ok(cache) = self.live.read() {
+            if let Some((seen, atoms)) = cache.get(workspace) {
+                if *seen == generation {
+                    return Ok(Arc::clone(atoms));
+                }
+            }
+        }
+        // Built outside the write lock, so a slow parse does not hold up a
+        // reader whose own workspace is current.
+        let now = packset_core::clock::utcnow();
+        let mut atoms: Vec<Record> = self
+            .scan(Some(workspace))?
+            .into_iter()
+            .filter(|atom| record::is_live(atom, &now) || record::is_due(atom, &now))
+            .collect();
+        record::filter_live_links(&mut atoms);
+        let shared = Arc::new(atoms);
+        // Cached only if nothing committed while the scan ran. A write that
+        // landed halfway through is not in this snapshot, and storing it under
+        // the newer generation would serve it as though it were: the next
+        // reader would be told a committed write does not exist.
+        if self.generation.load(Ordering::Acquire) == generation {
+            if let Ok(mut cache) = self.live.write() {
+                cache.insert(workspace.to_string(), (generation, Arc::clone(&shared)));
+            }
+        }
+        Ok(shared)
+    }
+
+    /// The live and due records in one workspace, as a copy the caller owns.
     ///
     /// # Errors
     ///
     /// Fails when the scan does.
     pub fn current(&self, workspace: &str, set: Option<&str>) -> anyhow::Result<Vec<Record>> {
-        let now = packset_core::clock::utcnow();
-        let mut live: Vec<Record> = self
-            .scan(Some(workspace))?
-            .into_iter()
-            .filter(|atom| record::is_live(atom, &now) || record::is_due(atom, &now))
-            .collect();
-        record::filter_live_links(&mut live);
-        if let Some(name) = set {
-            live.retain(|atom| atom.get("set").and_then(Value::as_str) == Some(name));
-        }
-        Ok(live)
+        let live = self.live(workspace)?;
+        Ok(match set {
+            None => live.as_ref().clone(),
+            Some(name) => live
+                .iter()
+                .filter(|atom| atom.get("set").and_then(Value::as_str) == Some(name))
+                .cloned()
+                .collect(),
+        })
     }
 
     /// Distinct workspace names with their live counts. `global` is always in.
@@ -416,5 +473,131 @@ mod tests {
         let _first = Store::open(dir.path()).unwrap();
         let second = Store::open(dir.path());
         assert!(second.is_err(), "one writer is the whole design");
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn record(value: Value) -> Record {
+        value.as_object().unwrap().clone()
+    }
+
+    fn store() -> (tempfile::TempDir, Store) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn a_write_is_visible_to_the_next_read() {
+        let (_dir, store) = store();
+        assert!(store.live("w").unwrap().is_empty());
+        store
+            .upsert(&record(json!({"id": "a", "workspace": "w", "text": "a"})))
+            .unwrap();
+        assert_eq!(store.live("w").unwrap().len(), 1, "the snapshot went stale");
+        store
+            .upsert(&record(json!({"id": "b", "workspace": "w", "text": "b"})))
+            .unwrap();
+        assert_eq!(store.live("w").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_repeated_read_hands_back_the_same_snapshot() {
+        let (_dir, store) = store();
+        store
+            .upsert(&record(json!({"id": "a", "workspace": "w", "text": "a"})))
+            .unwrap();
+        let first = store.live("w").unwrap();
+        let second = store.live("w").unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "two readers should share one parse"
+        );
+        store
+            .upsert(&record(json!({"id": "b", "workspace": "w", "text": "b"})))
+            .unwrap();
+        let third = store.live("w").unwrap();
+        assert!(!Arc::ptr_eq(&first, &third), "a write invalidates it");
+    }
+
+    #[test]
+    fn a_tombstone_leaves_the_snapshot() {
+        let (_dir, store) = store();
+        store
+            .upsert(&record(json!({"id": "a", "workspace": "w", "text": "a"})))
+            .unwrap();
+        assert_eq!(store.live("w").unwrap().len(), 1);
+        store.delete("w", "a").unwrap();
+        assert!(
+            store.live("w").unwrap().is_empty(),
+            "a delete must invalidate too"
+        );
+    }
+
+    #[test]
+    fn one_workspace_write_does_not_serve_another_stale() {
+        let (_dir, store) = store();
+        store
+            .upsert(&record(json!({"id": "a", "workspace": "one", "text": "a"})))
+            .unwrap();
+        assert_eq!(store.live("one").unwrap().len(), 1);
+        assert!(store.live("two").unwrap().is_empty());
+        store
+            .upsert(&record(json!({"id": "b", "workspace": "two", "text": "b"})))
+            .unwrap();
+        assert_eq!(store.live("two").unwrap().len(), 1);
+        assert_eq!(store.live("one").unwrap().len(), 1, "still correct");
+    }
+
+    #[test]
+    fn readers_racing_a_writer_never_see_a_snapshot_that_skips_a_write() {
+        // The generation is read before the scan and bumped before the write,
+        // so a snapshot built across a write is stale rather than labelled as
+        // including it. What must never happen is a later read seeing fewer
+        // atoms than an earlier one.
+        let (dir, store) = store();
+        let store = Arc::new(store);
+        let _ = dir;
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let writer = {
+            let store = Arc::clone(&store);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                for i in 0..200 {
+                    store
+                        .upsert(&record(json!({
+                            "id": format!("a{i}"), "workspace": "w", "text": "x"
+                        })))
+                        .unwrap();
+                }
+                stop.store(true, std::sync::atomic::Ordering::Release);
+            })
+        };
+
+        let readers: Vec<_> = (0..4)
+            .map(|_| {
+                let store = Arc::clone(&store);
+                let stop = Arc::clone(&stop);
+                std::thread::spawn(move || {
+                    let mut high = 0usize;
+                    while !stop.load(std::sync::atomic::Ordering::Acquire) {
+                        let seen = store.live("w").unwrap().len();
+                        assert!(seen >= high, "went backwards: {seen} after {high}");
+                        high = seen;
+                    }
+                })
+            })
+            .collect();
+
+        writer.join().unwrap();
+        for reader in readers {
+            reader.join().unwrap();
+        }
+        assert_eq!(store.live("w").unwrap().len(), 200, "every write landed");
     }
 }
