@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/packset-core",
     "crates/packset-client",
+    "crates/packset-daemon",
     "crates/packset-milli",
 ]
 
