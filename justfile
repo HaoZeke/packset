@@ -16,6 +16,11 @@ surface-milli: milli
     cd scripts && PACKSET_MILLI="$PWD/../target/release/packset-milli" \
         ../.pixi/envs/default/bin/python surface_check.py ../target/debug/packsetd
 
+# What a pack costs as it grows, and the shape of the graph inside it.
+bench:
+    cargo build --release -p packset-daemon
+    .pixi/envs/default/bin/python scripts/bench_pack.py target/release/packsetd
+
 # One request sequence against both writers, every status code and body
 # compared. A port is finished when a client cannot tell which one answered.
 surface:
