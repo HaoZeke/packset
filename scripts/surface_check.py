@@ -182,6 +182,14 @@ def sequence(port: int):
     call("pin a set", "PUT", "/v1/pin", {"workspace": WS, "set": "Review"})
     call("read the pin", "GET", f"/v1/pin?workspace={WS}")
     call("bad pin", "PUT", "/v1/pin", {"workspace": WS, "set": "../etc"})
+    call("write a set card", "PUT", "/v1/set",
+         {"workspace": WS, "name": "review", "user": "Scoped preference.\n"})
+    call("write set instructions", "PUT", "/v1/set",
+         {"workspace": WS, "name": "review", "instructions": "Open with scope.\n"})
+    call("write a bad set", "PUT", "/v1/set", {"workspace": WS, "name": "../etc", "user": "x"})
+    call("write a set overflow", "PUT", "/v1/set",
+         {"workspace": WS, "name": "review", "user": "One small claim. " * 200})
+    call("set needs a workspace", "PUT", "/v1/set", {"name": "review"})
     call("set pack", "GET", f"/v1/set?workspace={WS}&name=review")
     call("set pack needs a name", "GET", f"/v1/set?workspace={WS}")
     call("clear the pin", "PUT", "/v1/pin", {"workspace": WS, "set": ""})
@@ -218,6 +226,24 @@ def sequence(port: int):
     call("skills by name", "GET", f"/v1/skills?cwd={here}&name=nothing-here")
     call("map", "GET", f"/v1/map?cwd={here}")
     call("map outside a tree", "GET", "/v1/map?cwd=/")
+
+    call("proposals empty", "GET", f"/v1/proposals?workspace={WS}")
+    call("proposals need a workspace", "GET", "/v1/proposals")
+    call("propose off compaction", "POST", "/v1/proposals",
+         {"workspace": WS, "text": "A claim worth keeping.", "when": "onDemand"})
+    call("propose on compaction", "POST", "/v1/proposals",
+         {"workspace": WS, "text": "A claim worth keeping.", "when": "compaction"})
+    call("propose with a transcript", "POST", "/v1/proposals",
+         {"workspace": WS, "text": "Another claim worth keeping.", "when": "compaction",
+          "transcript": "Another claim worth keeping."})
+    call("propose nothing", "POST", "/v1/proposals",
+         {"workspace": WS, "text": "short.", "when": "compaction"})
+    call("propose needs a workspace", "POST", "/v1/proposals", {"text": "x"})
+    call("proposals after", "GET", f"/v1/proposals?workspace={WS}")
+    call("compact a day", "POST", "/v1/compact", {"workspace": WS, "day": "2026-01-01"})
+    call("compact needs a workspace", "POST", "/v1/compact", {})
+    call("accept nothing", "POST", "/v1/proposals/accept", {"workspace": WS, "id": "nope"})
+    call("accept needs both", "POST", "/v1/proposals/accept", {"workspace": WS})
 
     call("attach", "POST", "/v1/attach", {"workspace": WS, "text": "a log body", "label": "build"})
     call("peek", "GET", f"/v1/attach?workspace={WS}&peek=1")

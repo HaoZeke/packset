@@ -298,6 +298,41 @@ impl Service {
         }))
     }
 
+    /// Write whichever of a set's three cards the body carried.
+    ///
+    /// Absent and empty are different: a key that is not there leaves that card
+    /// alone, and a key set to an empty string clears it.
+    ///
+    /// # Errors
+    ///
+    /// [`AtomError`] for a bad set name, else the write's.
+    pub fn write_set(
+        &self,
+        workspace: &str,
+        name: &str,
+        body: &Map<String, Value>,
+    ) -> Result<String, cards::WriteError> {
+        let stored = packset_core::set_name::check(name).map_err(AtomError)?;
+        for (key, path) in [
+            ("user", self.home.set_user_path(workspace, &stored)),
+            ("memory", self.home.set_memory_path(workspace, &stored)),
+            (
+                "instructions",
+                self.home.set_instructions_path(workspace, &stored),
+            ),
+        ] {
+            let Some(value) = body.get(key) else { continue };
+            let text = value.as_str().unwrap_or("");
+            let cap = if key == "memory" {
+                MEMORY_CAP
+            } else {
+                USER_CAP
+            };
+            cards::write_capped(&path, text, cap)?;
+        }
+        Ok(stored)
+    }
+
     /// Write the seat card, archiving and refusing on overflow.
     ///
     /// # Errors
@@ -371,6 +406,73 @@ impl Service {
     pub fn peek_attach(&self, workspace: &str) -> Option<Attachment> {
         let held = self.attach.lock().expect("attach lock");
         held.get(workspace).cloned()
+    }
+
+    /// Mine one archived day into proposals.
+    ///
+    /// # Errors
+    ///
+    /// The miner's, or the store's.
+    pub fn compact(
+        &self,
+        workspace: &str,
+        day: Option<&str>,
+        transcript: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let live = self.store.current(workspace, None)?;
+        let proposed =
+            crate::proposals::compact_day(&self.home, workspace, day, &live, transcript, new_id)?;
+        Ok(json!({"n": proposed.len(), "proposals": proposed}))
+    }
+
+    /// Propose one claim from one piece of text.
+    ///
+    /// # Errors
+    ///
+    /// The miner's, or [`AtomError`] when there is nothing to propose.
+    pub fn propose(&self, body: &Map<String, Value>) -> anyhow::Result<Value> {
+        let workspace = body
+            .get("workspace")
+            .and_then(Value::as_str)
+            .filter(|w| !w.is_empty())
+            .ok_or_else(|| anyhow::Error::new(AtomError("workspace required".into())))?;
+        let text = body.get("text").and_then(Value::as_str).unwrap_or("");
+        let when = body
+            .get("when")
+            .and_then(Value::as_str)
+            .filter(|w| !w.is_empty())
+            .unwrap_or("onDemand");
+        let job = body
+            .get("job")
+            .and_then(Value::as_str)
+            .filter(|j| !j.is_empty())
+            .unwrap_or("extract");
+        let transcript = body.get("transcript").and_then(Value::as_str);
+        let live = self.store.current(workspace, None)?;
+        let wall = crate::proposals::fence(&self.home, workspace, &live);
+        let rec = crate::proposals::propose(
+            &self.home, workspace, text, job, when, &wall, transcript, new_id,
+        )?;
+        rec.ok_or_else(|| anyhow::Error::new(AtomError("nothing to propose".into())))
+    }
+
+    /// Turn an accepted proposal into a stored atom.
+    ///
+    /// # Errors
+    ///
+    /// The miner's, or the store's.
+    pub fn accept(&self, workspace: &str, proposal_id: &str) -> anyhow::Result<Record> {
+        let (atom, rec) = crate::proposals::accept(&self.home, workspace, proposal_id)?;
+        let stored = self.add(atom)?;
+        let atom_id = stored.get("id").and_then(Value::as_str).unwrap_or("");
+        crate::proposals::mark_accepted(&self.home, workspace, &rec, atom_id)?;
+        Ok(stored)
+    }
+
+    /// The open proposals for a workspace.
+    #[must_use]
+    pub fn proposals(&self, workspace: &str) -> Vec<Value> {
+        crate::proposals::list_open(&self.home, workspace)
     }
 
     /// Seat home, atom counts by kind, pin, index and embedder.

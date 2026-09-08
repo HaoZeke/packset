@@ -321,6 +321,21 @@ fn route(
                 }
             }
         },
+        (Method::Put, "/v1/set") => match required(body, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => {
+                let name = body
+                    .get("name")
+                    .or_else(|| body.get("set"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                match service.write_set(&workspace, name, body) {
+                    Err(WriteError::Overflow(o)) => Answer::err(413, o),
+                    Err(other) => Answer::err(400, other),
+                    Ok(stored) => answer(service.pack(&workspace, Some(&stored))),
+                }
+            }
+        },
         (Method::Put, "/v1/user") => {
             let text = body.get("text").and_then(Value::as_str).unwrap_or("");
             card_answer(service.set_user(text))
@@ -334,6 +349,30 @@ fn route(
             let text = body.get("text").and_then(Value::as_str).unwrap_or("");
             card_answer(service.set_memory(workspace, text))
         }
+        (Method::Get, "/v1/proposals") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => Answer::ok(json!({"proposals": service.proposals(&workspace)})),
+        },
+        (Method::Post, "/v1/proposals") => cheap_answer(service.propose(body)),
+        (Method::Post, "/v1/proposals/accept") => {
+            let workspace = body.get("workspace").and_then(Value::as_str).unwrap_or("");
+            let id = body.get("id").and_then(Value::as_str).unwrap_or("");
+            if workspace.is_empty() || id.is_empty() {
+                return Answer::err(400, "workspace and id required");
+            }
+            cheap_answer(service.accept(workspace, id).map(Value::Object))
+        }
+        (Method::Post, "/v1/compact") => match required(body, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => {
+                let day = body
+                    .get("day")
+                    .and_then(Value::as_str)
+                    .filter(|d| !d.is_empty());
+                let transcript = body.get("transcript").and_then(Value::as_str);
+                cheap_answer(service.compact(&workspace, day, transcript))
+            }
+        },
         (Method::Post, "/v1/atoms") => answer(service.add(body.clone())),
         (Method::Post, "/v1/atoms/update") => {
             let (Some(workspace), Some(id)) = (
@@ -409,6 +448,21 @@ fn root_message(err: &anyhow::Error) -> String {
         return atom.0.clone();
     }
     err.to_string()
+}
+
+/// A refused cheap-model job answers 403: the caller is not wrong about the
+/// request, it is asking at a point in the cycle where the job does not run.
+fn cheap_answer<T: Into<Value>>(result: anyhow::Result<T>) -> Answer {
+    match result {
+        Ok(value) => Answer::ok(value.into()),
+        Err(e) => {
+            if let Some(cheap) = e.downcast_ref::<crate::proposals::CheapError>() {
+                Answer::err(403, &cheap.0)
+            } else {
+                Answer::err(400, root_message(&e))
+            }
+        }
+    }
 }
 
 /// Overflow answers 413, because the client can shorten and retry; anything
