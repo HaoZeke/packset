@@ -110,16 +110,32 @@ impl Service {
         // A set-scoped atom is compared against its own set; an unscoped one
         // against the unscoped atoms, so pinning a set does not make a claim
         // look like a duplicate of one in another scope.
-        let live: Vec<Record> = match named.as_deref() {
-            Some(name) => self.store.current(&workspace, Some(name))?,
-            None => self
-                .store
-                .current(&workspace, None)?
-                .into_iter()
-                .filter(|peer| peer.get("set").is_none())
-                .collect(),
+        // The shared snapshot, narrowed only when a scope actually excludes
+        // something. Copying the whole workspace to compare against it is the
+        // most expensive thing a write could do, and usually nothing is
+        // excluded at all.
+        let snapshot = self.store.live(&workspace)?;
+        let narrowed: Vec<Record>;
+        let live: &[Record] = match named.as_deref() {
+            Some(name) => {
+                narrowed = snapshot
+                    .iter()
+                    .filter(|peer| peer.get("set").and_then(Value::as_str) == Some(name))
+                    .cloned()
+                    .collect();
+                &narrowed
+            }
+            None if snapshot.iter().any(|peer| peer.contains_key("set")) => {
+                narrowed = snapshot
+                    .iter()
+                    .filter(|peer| !peer.contains_key("set"))
+                    .cloned()
+                    .collect();
+                &narrowed
+            }
+            None => &snapshot,
         };
-        for existing in &live {
+        for existing in live {
             if existing.get("text") == atom.get("text")
                 && existing.get("kind") == atom.get("kind")
                 && existing.get("set") == atom.get("set")
@@ -131,7 +147,7 @@ impl Service {
         let now = clock::utcnow();
         let mut batch = Vec::new();
         if record::is_live(&atom, &now) {
-            let rewritten = record::apply_links(&mut atom, &live, record::LINK_THRESHOLD, &now);
+            let rewritten = record::apply_links(&mut atom, live, record::LINK_THRESHOLD, &now);
             for mut peer in rewritten {
                 peer.insert("ts".into(), Value::String(clock::utcnow()));
                 batch.push(peer);
@@ -158,7 +174,7 @@ impl Service {
         id: &str,
         fields: &Map<String, Value>,
     ) -> anyhow::Result<Record> {
-        let current = self.store.current(workspace, None)?;
+        let current = self.store.live(workspace)?;
         let mut updated = current
             .iter()
             .find(|a| a.get("id").and_then(Value::as_str) == Some(id))
@@ -200,9 +216,10 @@ impl Service {
     pub fn grade(&self, workspace: &str, id: &str, recalled: bool) -> anyhow::Result<Record> {
         let mut atom = self
             .store
-            .current(workspace, None)?
-            .into_iter()
+            .live(workspace)?
+            .iter()
             .find(|a| a.get("id").and_then(Value::as_str) == Some(id))
+            .cloned()
             .ok_or_else(|| anyhow::Error::new(AtomError(format!("no current atom {id}"))))?;
         let grade = if recalled {
             record::Grade::Recalled
@@ -569,7 +586,7 @@ impl Service {
         day: Option<&str>,
         transcript: Option<&str>,
     ) -> anyhow::Result<Value> {
-        let live = self.store.current(workspace, None)?;
+        let live = self.store.live(workspace)?;
         let proposed =
             crate::proposals::compact_day(&self.home, workspace, day, &live, transcript, new_id)?;
         Ok(json!({"n": proposed.len(), "proposals": proposed}))
@@ -598,7 +615,7 @@ impl Service {
             .filter(|j| !j.is_empty())
             .unwrap_or("extract");
         let transcript = body.get("transcript").and_then(Value::as_str);
-        let live = self.store.current(workspace, None)?;
+        let live = self.store.live(workspace)?;
         let wall = crate::proposals::fence(&self.home, workspace, &live);
         let rec = crate::proposals::propose(
             &self.home,
