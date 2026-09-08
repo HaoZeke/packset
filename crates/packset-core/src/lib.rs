@@ -28,6 +28,7 @@ pub mod recall;
 pub mod record;
 pub mod rrf;
 pub mod schulze;
+pub mod search;
 pub mod set_name;
 pub mod tideman;
 

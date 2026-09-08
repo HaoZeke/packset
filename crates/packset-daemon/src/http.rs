@@ -205,6 +205,58 @@ fn route(
             let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
             Answer::ok(crate::context::repo_map(std::path::Path::new(&cwd)))
         }
+        (Method::Get, "/v1/search") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => {
+                let limit = match query.get("limit").filter(|l| !l.is_empty()) {
+                    None => 16usize,
+                    Some(raw) => match raw.parse::<i64>() {
+                        Ok(v) => v.max(0) as usize,
+                        Err(_) => return Answer::err(400, "limit must be an integer"),
+                    },
+                };
+                let q = query.get("q").cloned().unwrap_or_default();
+                let requested = query.get("set").filter(|s| !s.is_empty());
+                // A named set scopes the atoms and swaps the prose for that
+                // set's cards, but the atom list stays the whole live set: the
+                // scope is a filter in the scorer, not a smaller corpus.
+                let (set, user, memory) = match requested {
+                    Some(raw) => match packset_core::set_name::check(raw) {
+                        Err(e) => return Answer::err(400, e),
+                        Ok(named) => {
+                            let home = service.home();
+                            (
+                                Some(named.clone()),
+                                crate::cards::read_text(&home.set_user_path(&workspace, &named)),
+                                crate::cards::read_text(&home.set_memory_path(&workspace, &named)),
+                            )
+                        }
+                    },
+                    None => (
+                        None,
+                        crate::cards::read_text(&service.home().user_path()),
+                        crate::cards::read_text(&service.home().memory_path(&workspace)),
+                    ),
+                };
+                match service.store().current(&workspace, None) {
+                    Err(e) => Answer::err(400, e),
+                    Ok(atoms) => {
+                        let now = packset_core::clock::utcnow();
+                        let set = set.as_deref();
+                        let ranked = packset_core::search::search_linear(
+                            &user, &memory, &atoms, &q, limit, set, &now,
+                        );
+                        let due = packset_core::search::due_hits(&atoms, set, &now);
+                        let hits = if due.is_empty() {
+                            ranked
+                        } else {
+                            packset_core::search::front_due(due, ranked, limit)
+                        };
+                        Answer::ok(json!({"hits": hits, "engine": "linear"}))
+                    }
+                }
+            }
+        },
         (Method::Get, "/v1/recall") => match required(query, "workspace") {
             Err(a) => a,
             Ok(workspace) => {

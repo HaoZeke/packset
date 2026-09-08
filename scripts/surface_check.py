@@ -88,6 +88,11 @@ def normalise(value, ids: dict[str, str]):
                 out[key] = sorted(
                     ids.get(x, "<id:unknown>") if isinstance(x, str) else x for x in item
                 )
+            elif key == "score" and isinstance(item, float):
+                # A score carries a recency term read off the wall clock, so
+                # two runs seconds apart differ around the ninth decimal.
+                # That is timing, not ranking.
+                out[key] = round(item, 4)
             elif key in VOLATILE:
                 out[key] = f"<{key}>" if item is not None else None
             else:
@@ -180,6 +185,19 @@ def sequence(port: int):
     call("set pack", "GET", f"/v1/set?workspace={WS}&name=review")
     call("set pack needs a name", "GET", f"/v1/set?workspace={WS}")
     call("clear the pin", "PUT", "/v1/pin", {"workspace": WS, "set": ""})
+
+    call("search", "GET", f"/v1/search?workspace={WS}&q=ripgrep")
+    call("search the cards", "GET", f"/v1/search?workspace={WS}&q=review")
+    call("search an entity", "GET", f"/v1/search?workspace={WS}&q=Header")
+    call("search a miss", "GET", f"/v1/search?workspace={WS}&q=zzzznothing")
+    call("search stopwords only", "GET", f"/v1/search?workspace={WS}&q=the+and+of")
+    call("search empty", "GET", f"/v1/search?workspace={WS}&q=")
+    call("search limited", "GET", f"/v1/search?workspace={WS}&q=the&limit=1")
+    call("search zero", "GET", f"/v1/search?workspace={WS}&q=ripgrep&limit=0")
+    call("search bad limit", "GET", f"/v1/search?workspace={WS}&q=x&limit=abc")
+    call("search a set", "GET", f"/v1/search?workspace={WS}&q=ripgrep&set=review")
+    call("search a bad set", "GET", f"/v1/search?workspace={WS}&q=x&set=../etc")
+    call("search needs a workspace", "GET", "/v1/search?q=x")
 
     call("recall", "GET", f"/v1/recall?workspace={WS}")
     call("recall limited", "GET", f"/v1/recall?workspace={WS}&limit=2")
