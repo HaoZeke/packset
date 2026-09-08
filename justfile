@@ -3,6 +3,12 @@ root := justfile_directory()
 test-py:
     .pixi/envs/default/bin/pytest -q scripts
 
+# Both writers against one store, in both directions. The port is a swap and
+# not a migration, which is a claim about the file on disk.
+interop:
+    cargo build -p packset-daemon --examples
+    cd scripts && ../.pixi/envs/default/bin/python interop_check.py ../target/debug/examples
+
 # Regenerate the Python goldens the Rust port is checked against. Read the
 # diff: a change here is a change in what the daemon accepts.
 goldens:
