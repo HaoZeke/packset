@@ -73,6 +73,10 @@ jobs:
       # file on disk: python writes and rust reads it back, then the reverse.
       - name: Python writes, Rust reads, and back
         run: pixi run just interop
+      # And the same question asked of both over HTTP: a port is finished when
+      # a client cannot tell which writer answered.
+      - name: The same requests, both writers
+        run: pixi run just surface
 
   goldens:
     name: the parity corpus is current

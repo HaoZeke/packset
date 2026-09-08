@@ -9,6 +9,12 @@ interop:
     cargo build -p packset-daemon --examples
     cd scripts && ../.pixi/envs/default/bin/python interop_check.py ../target/debug/examples
 
+# One request sequence against both writers, every status code and body
+# compared. A port is finished when a client cannot tell which one answered.
+surface:
+    cargo build -p packset-daemon
+    cd scripts && ../.pixi/envs/default/bin/python surface_check.py ../target/debug/packsetd
+
 # Regenerate the Python goldens the Rust port is checked against. Read the
 # diff: a change here is a change in what the daemon accepts.
 goldens:

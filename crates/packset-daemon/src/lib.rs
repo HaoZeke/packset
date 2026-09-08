@@ -6,6 +6,7 @@
 
 pub mod cards;
 pub mod home;
+pub mod http;
 pub mod service;
 pub mod store;
 
