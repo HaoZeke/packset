@@ -142,6 +142,7 @@ impl Service {
         let mut all = vec![atom.clone()];
         all.append(&mut batch);
         self.store.upsert_many(&all)?;
+        self.project_atoms(&all);
         Ok(atom)
     }
 
@@ -187,6 +188,7 @@ impl Service {
         let mut all = vec![updated.clone()];
         all.append(&mut batch);
         self.store.upsert_many(&all)?;
+        self.project_atoms(&all);
         Ok(updated)
     }
 
@@ -212,6 +214,17 @@ impl Service {
         fields.insert("due_at".into(), atom["due_at"].clone());
         fields.insert("review".into(), atom["review"].clone());
         self.update(workspace, id, &fields)
+    }
+
+    /// Tombstone one atom and drop it from the projection.
+    ///
+    /// # Errors
+    ///
+    /// The store's.
+    pub fn delete_atom(&self, workspace: &str, id: &str) -> anyhow::Result<Record> {
+        let tomb = self.store.delete(workspace, id)?;
+        let _ = crate::milli::delete(&[id.to_string()], &self.home.milli_dir());
+        Ok(tomb)
     }
 
     /// The workspace pack, or the same shape scoped to one set.
@@ -348,6 +361,10 @@ impl Service {
                 self.archive("global", text)?;
                 Err(cards::WriteError::Overflow(o))
             }
+            Ok(()) => {
+                self.project_cards(None);
+                Ok(())
+            }
             other => other,
         }
     }
@@ -362,6 +379,10 @@ impl Service {
             Err(cards::WriteError::Overflow(o)) => {
                 self.archive(workspace, text)?;
                 Err(cards::WriteError::Overflow(o))
+            }
+            Ok(()) => {
+                self.project_cards(Some(workspace));
+                Ok(())
             }
             other => other,
         }
@@ -406,6 +427,130 @@ impl Service {
     pub fn peek_attach(&self, workspace: &str) -> Option<Attachment> {
         let held = self.attach.lock().expect("attach lock");
         held.get(workspace).cloned()
+    }
+
+    /// Keep the projection level with a write.
+    ///
+    /// A live atom is upserted and one that has left the live set is deleted,
+    /// so a search never ranks something a reader can no longer be shown. With
+    /// no search binary on the seat this is a no-op.
+    fn project_atoms(&self, atoms: &[Record]) {
+        let dir = self.home.milli_dir();
+        let now = clock::utcnow();
+        let mut live = Vec::new();
+        let mut dead = Vec::new();
+        for atom in atoms {
+            let Some(id) = atom.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if record::is_live(atom, &now) || record::is_due(atom, &now) {
+                live.push(crate::milli::atom_document(atom));
+            } else {
+                dead.push(id.to_string());
+            }
+        }
+        if !live.is_empty() {
+            let _ = crate::milli::upsert(&live, &dir);
+        }
+        if !dead.is_empty() {
+            let _ = crate::milli::delete(&dead, &dir);
+        }
+    }
+
+    /// Keep the projection's copy of the cards level with a write.
+    fn project_cards(&self, workspace: Option<&str>) {
+        let dir = self.home.milli_dir();
+        let workspace = workspace.unwrap_or("");
+        let user = cards::read_text(&self.home.user_path());
+        let memory = if workspace.is_empty() {
+            String::new()
+        } else {
+            cards::read_text(&self.home.memory_path(workspace))
+        };
+        let docs = crate::milli::pack_documents(workspace, &user, &memory, &[]);
+        if !docs.is_empty() {
+            let _ = crate::milli::upsert(&docs, &dir);
+        }
+    }
+
+    /// Ranked hits, and which engine produced them.
+    ///
+    /// The projection answers when it is there and the linear scan otherwise,
+    /// and every failure in the projection falls back rather than returning a
+    /// partial answer: a wrong answer that looks complete is worse than a
+    /// slower one that is right.
+    ///
+    /// # Errors
+    ///
+    /// [`AtomError`] for a bad set name, else the store's.
+    pub fn search(
+        &self,
+        workspace: &str,
+        query: &str,
+        limit: usize,
+        set: Option<&str>,
+        panel: &packset_core::Panel,
+    ) -> anyhow::Result<Value> {
+        let named = match set {
+            Some(raw) => Some(
+                packset_core::set_name::check(raw).map_err(|e| anyhow::Error::new(AtomError(e)))?,
+            ),
+            None => None,
+        };
+        let scope = named.as_deref();
+        // A named set swaps the prose for that set's cards. The atom list stays
+        // the whole live set, because the scope is a filter in the scorer and
+        // not a smaller corpus.
+        let (user, memory) = match scope {
+            Some(name) => (
+                cards::read_text(&self.home.set_user_path(workspace, name)),
+                cards::read_text(&self.home.set_memory_path(workspace, name)),
+            ),
+            None => (
+                cards::read_text(&self.home.user_path()),
+                cards::read_text(&self.home.memory_path(workspace)),
+            ),
+        };
+        let atoms = self.store.current(workspace, None)?;
+        let now = clock::utcnow();
+
+        if packset_core::search::tokens(query).is_empty() {
+            return Ok(json!({"hits": [], "engine": "linear"}));
+        }
+
+        let dir = self.home.milli_dir();
+        let projected =
+            crate::milli::search(workspace, &user, &memory, &atoms, query, limit, &dir, scope);
+        let (mut ranked, engine) = match projected {
+            Some(atom_hits) => {
+                // Prose always comes from the pack, so the index copy of a card
+                // can be stale without anyone reading it.
+                let prose = packset_core::search::search_linear(
+                    &user,
+                    &memory,
+                    &[],
+                    query,
+                    limit,
+                    scope,
+                    &now,
+                );
+                (
+                    packset_core::search::merge_ballots(&[prose, atom_hits], limit, panel, &now),
+                    "milli",
+                )
+            }
+            None => (
+                packset_core::search::search_linear(
+                    &user, &memory, &atoms, query, limit, scope, &now,
+                ),
+                "linear",
+            ),
+        };
+        let due = packset_core::search::due_hits(&atoms, scope, &now);
+        if !due.is_empty() {
+            ranked = packset_core::search::front_due(due, ranked, limit);
+        }
+        Ok(json!({"hits": ranked, "engine": engine}))
     }
 
     /// Mine one archived day into proposals.
@@ -519,7 +664,7 @@ impl Service {
             }
         }
         let milli_dir = self.home.milli_dir();
-        let index_ready = milli_dir.join("data.mdb").is_file();
+        let index_ready = crate::milli::index_ready(&milli_dir);
         let pin = workspace.map(|w| self.pin(w)).unwrap_or_default();
         Ok(json!({
             "home": self.home.root().display().to_string(),
@@ -557,15 +702,12 @@ fn embed_enabled() -> bool {
     )
 }
 
+/// The search binary as `/v1/status` reports it.
+///
+/// One lookup, shared with the search path, so status cannot say the
+/// projection is available while search fails to find it.
 fn milli_binary() -> Value {
-    for var in ["PACKSET_MILLI_BIN", "INSIDE_MILLI_BIN"] {
-        if let Ok(path) = std::env::var(var) {
-            if !path.is_empty() && std::path::Path::new(&path).is_file() {
-                return Value::String(path);
-            }
-        }
-    }
-    Value::Null
+    crate::milli::binary().map_or(Value::Null, |p| Value::String(p.display().to_string()))
 }
 
 /// A fresh atom id: thirty-two hex characters, the shape already in the store.

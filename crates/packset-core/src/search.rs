@@ -503,3 +503,253 @@ mod tests {
         assert!(front_due(vec![json!({})], vec![], 0).is_empty());
     }
 }
+
+/// The identity of a hit across two ranked lists.
+///
+/// Field and id together, because a prose hit has no id and two of them from
+/// different cards must not collapse into one.
+#[must_use]
+pub fn hit_key_of(hit: &Value) -> String {
+    format!(
+        "{}\u{0}{}",
+        hit["field"].as_str().unwrap_or(""),
+        hit["id"].as_str().unwrap_or("")
+    )
+}
+
+/// Distinct keys of a ranked list, in order.
+fn ballot_keys(hits: &[Value]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    hits.iter()
+        .map(hit_key_of)
+        .filter(|key| seen.insert(key.clone()))
+        .collect()
+}
+
+/// Fused scores, keeping first-seen order through a tie.
+///
+/// A tie broken by hash order would reorder results between two runs over the
+/// same data, so the order a key was first seen in decides.
+fn fuse_scores(
+    fuse: crate::panel::Fuse,
+    ballots: &[Vec<String>],
+    k: usize,
+) -> (Vec<String>, std::collections::HashMap<String, f64>) {
+    use std::collections::HashMap;
+    let mut scores: HashMap<String, f64> = HashMap::new();
+    let mut first_seen: Vec<String> = Vec::new();
+    if ballots.is_empty() || k == 0 {
+        return (Vec::new(), scores);
+    }
+
+    if matches!(fuse, crate::panel::Fuse::Kemeny) {
+        // Kemeny has no per-key score of its own, so position stands in, which
+        // is what the writer being replaced does with it.
+        let refs: Vec<Vec<String>> = ballots.to_vec();
+        let ranked = crate::kemeny::kemeny_merge(&refs, k);
+        let n = ranked.len() as f64;
+        for (i, key) in ranked.iter().enumerate() {
+            scores.insert(key.clone(), n - i as f64);
+        }
+        return (ranked, scores);
+    }
+
+    for ballot in ballots {
+        let taken: Vec<&String> = match fuse {
+            crate::panel::Fuse::Rrf => ballot.iter().collect(),
+            _ => ballot.iter().take(k).collect(),
+        };
+        for (pos, key) in taken.into_iter().enumerate() {
+            if !scores.contains_key(key) {
+                first_seen.push(key.clone());
+            }
+            let add = match fuse {
+                crate::panel::Fuse::Rrf => 1.0 / (60.0 + pos as f64 + 1.0),
+                crate::panel::Fuse::Dowdall => 1.0 / (pos as f64 + 1.0),
+                // Borda, and anything else, is k minus the position.
+                _ => (k - pos) as f64,
+            };
+            *scores.entry(key.clone()).or_insert(0.0) += add;
+        }
+    }
+    let order: std::collections::HashMap<&String, usize> = first_seen
+        .iter()
+        .enumerate()
+        .map(|(i, key)| (key, i))
+        .collect();
+    let mut ranked = first_seen.clone();
+    ranked.sort_by(|a, b| {
+        let sa = scores.get(a).copied().unwrap_or(0.0);
+        let sb = scores.get(b).copied().unwrap_or(0.0);
+        sb.partial_cmp(&sa)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| order[a].cmp(&order[b]))
+    });
+    (ranked, scores)
+}
+
+/// Named fuse, then diversify, then decay, over two ranked lists.
+///
+/// Not a de-duplicate: two lists that agree about a hit are two votes for it,
+/// which is the whole reason to run a panel rather than concatenate.
+#[must_use]
+pub fn merge_ballots(
+    ballots: &[Vec<Value>],
+    limit: usize,
+    panel: &crate::panel::Panel,
+    now: &str,
+) -> Vec<Value> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let mut by_key: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    // Reversed, so an earlier list's copy of a hit is the one kept.
+    for hits in ballots.iter().rev() {
+        for hit in hits {
+            by_key.insert(hit_key_of(hit), hit.clone());
+        }
+    }
+    let keys: Vec<Vec<String>> = ballots.iter().map(|hits| ballot_keys(hits)).collect();
+    let (mut ranked, scores) = fuse_scores(panel.fuse, &keys, limit);
+    let mut weights: std::collections::HashMap<String, f64> = ranked
+        .iter()
+        .map(|key| (key.clone(), scores.get(key).copied().unwrap_or(0.0)))
+        .collect();
+
+    if panel.decay == crate::panel::Decay::On {
+        let order: std::collections::HashMap<&String, usize> =
+            ranked.iter().enumerate().map(|(i, k)| (k, i)).collect();
+        for key in &ranked {
+            let hit = &by_key[key];
+            let source = hit["field"].as_str().unwrap_or("");
+            let age = hit["ts"]
+                .as_str()
+                .map_or(0.0, |ts| clock::elapsed_days(ts, now));
+            if let Some(weight) = weights.get_mut(key) {
+                *weight *= panel.decay_weight(source, age);
+            }
+        }
+        let mut sorted = ranked.clone();
+        sorted.sort_by(|a, b| {
+            let wa = weights[a];
+            let wb = weights[b];
+            wb.partial_cmp(&wa)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| order[a].cmp(&order[b]))
+        });
+        ranked = sorted;
+    }
+
+    let items: Vec<crate::mmr::Ranked> = ranked
+        .iter()
+        .map(|key| crate::mmr::Ranked {
+            id: key.clone(),
+            rel: weights[key],
+            tokens: raw_tokens(by_key[key]["text"].as_str().unwrap_or("")),
+        })
+        .collect();
+    let order = panel.rerank(&items, 0.7);
+    order
+        .into_iter()
+        .filter_map(|key| by_key.get(&key).cloned())
+        .take(limit)
+        .collect()
+}
+
+/// Tokens with the stopwords kept, which is what a similarity wants.
+///
+/// Dropping them here would make two hits that share nothing but "the" look
+/// alike to the diversifier.
+fn raw_tokens(text: &str) -> std::collections::HashSet<String> {
+    let lower = text.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let mut out = std::collections::HashSet::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_alphanumeric() {
+            let start = i;
+            i += 1;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'-')
+            {
+                i += 1;
+            }
+            out.insert(lower[start..i].to_string());
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+    use crate::panel::Panel;
+    use serde_json::json;
+
+    const NOW: &str = "2026-01-01T00:00:00.000Z";
+
+    fn hit(field: &str, id: &str, text: &str) -> Value {
+        json!({"field": field, "id": id, "text": text, "score": 1.0})
+    }
+
+    fn default_panel() -> Panel {
+        Panel::named("borda", "none", "off").unwrap()
+    }
+
+    #[test]
+    fn a_hit_two_lists_agree_on_outranks_one_only_a_leader_named() {
+        // Two votes beat one first place, which is the reason to run a panel
+        // rather than concatenate the lists.
+        let a = vec![hit("atom", "solo", "alpha"), hit("atom", "both", "beta")];
+        let b = vec![hit("atom", "both", "beta"), hit("atom", "other", "gamma")];
+        let merged = merge_ballots(&[a, b], 10, &default_panel(), NOW);
+        assert_eq!(merged[0]["id"], json!("both"), "{merged:?}");
+    }
+
+    #[test]
+    fn a_prose_hit_with_no_id_does_not_collapse_into_another() {
+        let a = vec![hit("user", "", "one"), hit("memory", "", "two")];
+        let merged = merge_ballots(&[a], 10, &default_panel(), NOW);
+        assert_eq!(merged.len(), 2, "{merged:?}");
+    }
+
+    #[test]
+    fn a_tie_keeps_the_order_it_was_first_seen_in() {
+        // Otherwise two runs over the same data disagree.
+        let a = vec![hit("atom", "x", "one"), hit("atom", "y", "two")];
+        let b = vec![hit("atom", "y", "two"), hit("atom", "x", "one")];
+        let first = merge_ballots(&[a.clone(), b.clone()], 10, &default_panel(), NOW);
+        let second = merge_ballots(&[a, b], 10, &default_panel(), NOW);
+        assert_eq!(first, second);
+        assert_eq!(first[0]["id"], json!("x"), "{first:?}");
+    }
+
+    #[test]
+    fn the_limit_is_applied_after_the_merge() {
+        let a = vec![hit("atom", "a", "one"), hit("atom", "b", "two")];
+        let b = vec![hit("atom", "c", "three")];
+        assert_eq!(
+            merge_ballots(&[a.clone(), b.clone()], 1, &default_panel(), NOW).len(),
+            1
+        );
+        assert!(merge_ballots(&[a, b], 0, &default_panel(), NOW).is_empty());
+    }
+
+    #[test]
+    fn an_empty_ballot_does_not_erase_the_other() {
+        let a = vec![hit("atom", "a", "one")];
+        let merged = merge_ballots(&[a, Vec::new()], 10, &default_panel(), NOW);
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn the_diversifier_reads_stopwords_too() {
+        // "the" and "of" carry no query signal but they do say two texts look
+        // alike, which is a different question.
+        let with = raw_tokens("the parser of the header");
+        assert!(with.contains("the"), "{with:?}");
+        assert!(!tokens("the parser of the header").contains(&"the".to_string()));
+    }
+}

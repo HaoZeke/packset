@@ -424,17 +424,17 @@ mod tests {
         let mut next = ids();
         for text in ["short.", "  ", ""] {
             let got = propose(
-            &home,
-            Mining {
-                workspace: "w",
-                job: "extract",
-                when: "compaction",
-                wall: &wall,
-                transcript: None,
-            },
-            text,
-            &mut next,
-        )
+                &home,
+                Mining {
+                    workspace: "w",
+                    job: "extract",
+                    when: "compaction",
+                    wall: &wall,
+                    transcript: None,
+                },
+                text,
+                &mut next,
+            )
             .unwrap();
             assert!(got.is_none(), "{text:?} proposed something");
         }

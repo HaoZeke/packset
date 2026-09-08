@@ -9,6 +9,7 @@ pub mod context;
 pub mod glob;
 pub mod home;
 pub mod http;
+pub mod milli;
 pub mod proposals;
 pub mod service;
 pub mod store;

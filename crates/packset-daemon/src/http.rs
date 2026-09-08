@@ -46,23 +46,30 @@ impl Answer {
 /// # Errors
 ///
 /// Fails when the address cannot be bound.
-pub fn serve(service: Arc<Service>, host: &str, port: u16) -> anyhow::Result<()> {
+pub fn serve(
+    service: Arc<Service>,
+    panel: packset_core::Panel,
+    host: &str,
+    port: u16,
+) -> anyhow::Result<()> {
     if host != LOOPBACK {
         anyhow::bail!("packsetd listens on {LOOPBACK} only");
     }
     let server = Server::http((host, port))
         .map_err(|e| anyhow::anyhow!("cannot bind {host}:{port}: {e}"))?;
     eprintln!("packsetd: listening on http://{host}:{port}");
+    let panel = Arc::new(panel);
     for request in server.incoming_requests() {
         let service = Arc::clone(&service);
+        let panel = Arc::clone(&panel);
         // A thread per request, the way the writer being replaced does it: the
         // store's own lock is what serialises the writes.
-        std::thread::spawn(move || handle(&service, request));
+        std::thread::spawn(move || handle(&service, &panel, request));
     }
     Ok(())
 }
 
-fn handle(service: &Service, mut request: Request) {
+fn handle(service: &Service, panel: &packset_core::Panel, mut request: Request) {
     let url = request.url().to_string();
     let (path, query) = split_query(&url);
     let method = request.method().clone();
@@ -85,12 +92,13 @@ fn handle(service: &Service, mut request: Request) {
         Map::new()
     };
 
-    let answer = route(service, &method, path, &query, &body);
+    let answer = route(service, panel, &method, path, &query, &body);
     respond(request, &answer);
 }
 
 fn route(
     service: &Service,
+    panel: &packset_core::Panel,
     method: &Method,
     path: &str,
     query: &HashMap<String, String>,
@@ -179,6 +187,47 @@ fn route(
                 Err(message) => Answer::err(400, message),
             }
         }
+        (Method::Get, "/v1/rules") => {
+            let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
+            let with_body = truthy(query.get("body").map(String::as_str));
+            Answer::ok(crate::context::rules_payload(
+                std::path::Path::new(&cwd),
+                &service.home().user_path(),
+                with_body,
+            ))
+        }
+        (Method::Get, "/v1/skills") => {
+            let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
+            let name = query.get("name").filter(|n| !n.is_empty());
+            // Global skills live under the seat's own home, not the pack home:
+            // a pack can be moved between seats and a skill catalog cannot.
+            let home = std::env::var_os("HOME")
+                .map_or_else(|| std::path::PathBuf::from("."), std::path::PathBuf::from);
+            Answer::ok(crate::context::skills_payload(
+                std::path::Path::new(&cwd),
+                &home,
+                name.map(String::as_str),
+            ))
+        }
+        (Method::Get, "/v1/map") => {
+            let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
+            Answer::ok(crate::context::repo_map(std::path::Path::new(&cwd)))
+        }
+        (Method::Get, "/v1/search") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => {
+                let limit = match query.get("limit").filter(|l| !l.is_empty()) {
+                    None => 16usize,
+                    Some(raw) => match raw.parse::<i64>() {
+                        Ok(v) => v.max(0) as usize,
+                        Err(_) => return Answer::err(400, "limit must be an integer"),
+                    },
+                };
+                let q = query.get("q").cloned().unwrap_or_default();
+                let set = query.get("set").filter(|s| !s.is_empty());
+                answer(service.search(&workspace, &q, limit, set.map(String::as_str), panel))
+            }
+        },
         (Method::Get, "/v1/rules") => {
             let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
             let with_body = truthy(query.get("body").map(String::as_str));
@@ -395,7 +444,7 @@ fn route(
             ) else {
                 return Answer::err(400, "workspace and id required");
             };
-            answer(service.store().delete(workspace, id).map(Value::Object))
+            answer(service.delete_atom(workspace, id).map(Value::Object))
         }
         (Method::Post, "/v1/grade") => {
             let workspace = body.get("workspace").and_then(Value::as_str).unwrap_or("");

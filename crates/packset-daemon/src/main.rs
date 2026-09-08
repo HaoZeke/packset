@@ -58,7 +58,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     let service = Arc::new(Service::open(Home::new(root))?);
-    http::serve(service, &host, port)
+    http::serve(service, panel, &host, port)
 }
 
 fn usage() -> String {
