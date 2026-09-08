@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""packsetd: loopback pack writer. One process, every client.
+"""The reference writer, kept to check the one that runs against.
+
+`crates/packset-daemon` is what a seat starts. This answers the same
+`/v1` and CI compares them: `just surface` asks both the same requests
+in the same order and diffs every status code and body, and `just
+interop` runs both over one store in both directions. A change to
+either that they disagree about fails there rather than on a seat.
 
 Listen on 127.0.0.1. USER.md and MEMORY.md stay files. Atoms live in
 LMDB (heed / redb family: mmap B+tree, not SQL). Isolated harness

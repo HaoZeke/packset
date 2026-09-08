@@ -61,12 +61,17 @@ Whether the deed exists is a question the pack cannot ask. It checks the shape;
 
 | Crate | Role |
 |---|---|
-| `packset-core` | atom schema, named fuse/diversify panel, decay, extract filters |
+| `packset-core` | atom schema, prose and readability, recall, search scoring, the named fuse/diversify panel, decay, extract filters |
+| `packset-daemon` | the writer: the LMDB store, the cards, and `/v1` |
 | `packset-client` | HTTP client |
 | `packset-milli` | inverted-index projection (build on the remote builder) |
 
-The running writer is `scripts/packsetd.py` until the Rust daemon
-matches `/v1`. Clients never open the LMDB.
+The running writer is `packset-daemon`. `scripts/packsetd.py` stays as
+the reference it is checked against: CI asks both the same requests in
+the same order and compares every status code and body, and runs both
+over one store, where a difference in the file on disk would show up.
+`packset which`
+says which one a seat would start. Clients never open the LMDB.
 
 ## Clients
 

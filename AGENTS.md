@@ -5,6 +5,10 @@ Do not embed git-tracked files into memory.
 
 ## Commands
 
+- `cargo test --workspace --exclude packset-milli` — the writer
+- `just surface` — the same requests against both writers, answers compared
+- `just interop` — both writers over one store, in both directions
+- `just goldens` — regenerate the corpus the Rust port is checked against
 - `just test-py` — pytest on `scripts/test_*.py`
 - `just lint` — ruff
 - `packset ensure` / `packset status`
@@ -15,8 +19,11 @@ when the binary is absent.
 
 ## Architecture
 
-- `scripts/packsetd.py` — one writer; atoms in LMDB
-- `crates/packset-core` — Borda, MMR, decay, extract filters
+- `crates/packset-daemon` — the writer; atoms in LMDB, cards on disk
+- `scripts/packsetd.py` — the reference the writer is checked against,
+  not the writer. `packset which` says which one a seat starts.
+- `crates/packset-core` — schema, prose, recall, scoring, Borda, MMR,
+  decay, extract filters
 - `crates/packset-client` — HTTP
 - `crates/packset-milli` — search projection
 

@@ -13,7 +13,22 @@ root="$(cd "$(dirname "$self")/.." && pwd)"
 
 PORT="${PACKSET_PORT:-${GROK_MEM_PORT:-8761}}"
 LOG="${PACKSET_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/packsetd.log}"
-daemon="$root/scripts/packsetd.py"
+reference="$root/scripts/packsetd.py"
+
+# The Rust writer, wherever this checkout keeps it. PACKSET_BIN names one
+# outright, for a seat that installs it somewhere else.
+resolve_daemon() {
+    local candidate
+    for candidate in "${PACKSET_BIN:-}" \
+                     "$root/bin/packsetd" \
+                     "$root/target/release/packsetd" \
+                     "$root/target/debug/packsetd"; do
+        [ -n "$candidate" ] || continue
+        [ -x "$candidate" ] && { printf '%s' "$candidate"; return 0; }
+    done
+    command -v packsetd 2>/dev/null && return 0
+    return 1
+}
 
 resolve_python() {
     if [ -x "$root/.pixi/envs/default/bin/python" ]; then
@@ -56,11 +71,21 @@ start() {
         return 1
     fi
     mkdir -p "$(dirname "$LOG")"
-    if ! py="$(resolve_python)"; then
-        echo "packset: python3 not found" >&2
-        return 1
+    if daemon="$(resolve_daemon)"; then
+        setsid "$daemon" --port "$PORT" >>"$LOG" 2>&1 </dev/null &
+    else
+        # The reference writer answers the same /v1 and is checked against the
+        # Rust one on every commit, so a seat without a build keeps working.
+        # Said out loud, because two writers that behave alike are still two
+        # different processes to debug.
+        if ! py="$(resolve_python)"; then
+            echo "packset: no packsetd binary and no python3" >&2
+            return 1
+        fi
+        echo "packset: no packsetd binary; starting the reference writer" >&2
+        echo "packset:   cargo build --release -p packset-daemon" >&2
+        setsid $py "$reference" --port "$PORT" >>"$LOG" 2>&1 </dev/null &
     fi
-    setsid $py "$daemon" --port "$PORT" >>"$LOG" 2>&1 </dev/null &
     for _ in $(seq 1 25); do
         listening && { echo "packset: listening on 127.0.0.1:$PORT" >&2; return 0; }
         sleep 0.2
@@ -133,6 +158,14 @@ case "${1:-ensure}" in
         fi
         ;;
     port) echo "$PORT" ;;
+    which)
+        # Which writer this seat would start, so nobody has to read the log.
+        if daemon="$(resolve_daemon)"; then
+            echo "$daemon"
+        else
+            echo "$reference (reference; no packsetd binary built)"
+        fi
+        ;;
     url) print_url ;;
     pin)
         shift
@@ -190,7 +223,7 @@ for accession in sorted(seen):
         exec $py -m packset_tui "$@"
         ;;
     *)
-        echo "usage: packset ensure|start|stop|status|port|url|pin [NAME]|accessions [WORKSPACE]|tui" >&2
+        echo "usage: packset ensure|start|stop|status|port|url|which|pin [NAME]|accessions [WORKSPACE]|tui" >&2
         exit 2
         ;;
 esac
