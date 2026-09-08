@@ -24,6 +24,7 @@ pub mod kemeny;
 pub mod mmr;
 pub mod panel;
 pub mod prose;
+pub mod recall;
 pub mod record;
 pub mod rrf;
 pub mod schulze;

@@ -160,6 +160,63 @@ fn route(
                 },
             }
         }
+        (Method::Get, "/v1/identity") => {
+            let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
+            let harness = query
+                .get("harness")
+                .filter(|h| !h.is_empty())
+                .cloned()
+                .unwrap_or_else(|| "any".into());
+            match crate::workspace::identity(
+                std::path::Path::new(&cwd),
+                packset_core::identity::Strategy::PerRepo,
+                &harness,
+                None,
+                None,
+                0,
+                None,
+            ) {
+                Ok(value) => Answer::ok(value),
+                Err(message) => Answer::err(400, message),
+            }
+        }
+        (Method::Get, "/v1/recall") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => {
+                let limit = match query.get("limit").filter(|l| !l.is_empty()) {
+                    None => None,
+                    Some(raw) => match raw.parse::<i64>() {
+                        Ok(v) => Some(v),
+                        Err(_) => return Answer::err(400, "limit must be an integer"),
+                    },
+                };
+                let seeds: Vec<String> = query
+                    .get("seed")
+                    .map(|raw| {
+                        raw.split(',')
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let hints = packset_core::recall::Hints {
+                    text: query.get("q").cloned().unwrap_or_default(),
+                    entities: Vec::new(),
+                };
+                match service.store().current(&workspace, None) {
+                    Err(e) => Answer::err(400, e),
+                    Ok(atoms) => Answer::ok(json!({
+                        "atoms": packset_core::recall::recall(
+                            &atoms,
+                            &seeds,
+                            &hints,
+                            limit,
+                            &packset_core::clock::utcnow(),
+                        )
+                    })),
+                }
+            }
+        },
         (Method::Get, "/v1/attach") => match required(query, "workspace") {
             Err(a) => a,
             Ok(workspace) => {

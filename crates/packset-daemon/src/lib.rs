@@ -9,6 +9,7 @@ pub mod home;
 pub mod http;
 pub mod service;
 pub mod store;
+pub mod workspace;
 
 pub use home::Home;
 pub use service::Service;

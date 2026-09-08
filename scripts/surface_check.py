@@ -22,7 +22,19 @@ from pathlib import Path
 
 WS = "git:github.com/HaoZeke/vissue"
 
-VOLATILE = {"id", "ts", "valid_from", "due_at", "last", "last_write_ts", "home", "index_dir"}
+VOLATILE = {
+    "id",
+    "ts",
+    "valid_from",
+    "due_at",
+    "last",
+    "last_write_ts",
+    "home",
+    "index_dir",
+    # Seat facts, not writer facts: the same on one machine, different on two.
+    "user_peer",
+    "cwd",
+}
 
 
 def request(port: int, method: str, path: str, body: dict | None = None):
@@ -168,6 +180,17 @@ def sequence(port: int):
     call("set pack", "GET", f"/v1/set?workspace={WS}&name=review")
     call("set pack needs a name", "GET", f"/v1/set?workspace={WS}")
     call("clear the pin", "PUT", "/v1/pin", {"workspace": WS, "set": ""})
+
+    call("recall", "GET", f"/v1/recall?workspace={WS}")
+    call("recall limited", "GET", f"/v1/recall?workspace={WS}&limit=2")
+    call("recall zero", "GET", f"/v1/recall?workspace={WS}&limit=0")
+    call("recall negative", "GET", f"/v1/recall?workspace={WS}&limit=-3")
+    call("recall over the cap", "GET", f"/v1/recall?workspace={WS}&limit=9999")
+    call("recall bad limit", "GET", f"/v1/recall?workspace={WS}&limit=abc")
+    call("recall by hint", "GET", f"/v1/recall?workspace={WS}&q=ripgrep")
+    call("recall needs a workspace", "GET", "/v1/recall")
+
+    call("identity", "GET", "/v1/identity?cwd=/tmp&harness=hermes")
 
     call("attach", "POST", "/v1/attach", {"workspace": WS, "text": "a log body", "label": "build"})
     call("peek", "GET", f"/v1/attach?workspace={WS}&peek=1")
