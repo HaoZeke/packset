@@ -7,6 +7,9 @@ pub fn claim_from_user(text: &str) -> Option<(&'static str, String)> {
         return None;
     }
     let lower = last.to_ascii_lowercase();
+    // A dispatch over three prefixes, not an early return: `?` would collapse
+    // the first arm and leave the other two unreachable.
+    #[allow(clippy::question_mark)]
     let (kind, rest) = if let Some(r) = strip_prefix_ci(&lower, last, "remember:") {
         ("lesson", r)
     } else if let Some(r) = strip_prefix_ci(&lower, last, "from now on:") {
