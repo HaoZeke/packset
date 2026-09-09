@@ -83,12 +83,19 @@ Ten conversations, 5882 turns loaded as atoms, 1536 answerable questions:
 | BM25 | 0.530 | 0.588 |
 | the pack's scorer + BM25 | 0.547 | 0.611 |
 | BM25 + dense, bge-small | 0.628 | 0.701 |
-| BM25 + dense, bge-large | **0.685** | **0.755** |
+| BM25 + dense, bge-large | 0.685 | 0.755 |
+| BM25 + dense, e5-large-v2 | **0.705** | **0.781** |
 
 `PACKSET_EMBED_MODEL` picks the encoder. bge-small is the default because it is
-130 MB against 1.3 GB and encodes about three times faster, and it costs 0.06
-R@10. bge-base measures no better than bge-small, so the choice is small or
-large rather than a ladder.
+130 MB against 1.3 GB and encodes about three times faster, and it costs 0.08
+R@10.
+
+Size is part of it and not all of it. bge-base measures no better than
+bge-small, so the small end is not a ladder; bge-large is worth 0.06 R@10 over
+bge-small. But e5-large-v2 is the same 335M parameters as bge-large and measures
+0.02 R@10 above it, which is a third of what the whole step up from small bought.
+Which family was trained how matters at the top end, so a seat naming a larger
+model should name which larger model.
 
 Every ballot is optional. A seat with no encoder gets the first three rows and
 loses 0.08 to 0.14 R@10, which is what the dense projection is worth.
@@ -99,10 +106,19 @@ corpus, not a judgement about what should have been remembered. And it is
 recall of labelled evidence with no model in the loop, so it is not the 92.5 and
 94.4 the memory papers report for end-to-end answers.
 
-Read a number against its unit. The table above ranks turns. The retrieval
-papers score a session by its best turn instead. Read that way, BM25 with
-bge-large reaches hit@1 0.643 and hit@10 0.952, against 0.752 hit@1 published
-for lexical fused with a late-interaction dense retriever.
+Read a number against its unit, and read the unit twice. The table above ranks
+turns. The retrieval papers score a session instead, and "at session
+granularity" covers two protocols that are not the same retriever: rank the
+turns and read off which session each came from, so a session is scored by its
+single best turn, or index the session itself, so BM25 gets one long document
+and a question whose words are spread over several turns matches what no single
+turn matches.
+
+Indexing the session is worth 1.8 points of hit@1 and 5.7 of R@20 over reading
+sessions off a turn ranking, with no vectors and no model. A published BM25
+baseline several points above one measured here is more likely a different unit
+than a better implementation of the same formula, and `examples/locomo` reports
+both protocols side by side so the question is answerable rather than arguable.
 
 Late interaction is the difference, and it is the scoring rather than the model.
 One model scored both ways, BGE-M3 over three of the conversations:
