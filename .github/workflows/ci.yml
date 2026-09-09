@@ -26,10 +26,13 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Rust formatting
         run: cargo fmt --all --check
+      # The two projections are excluded for the same reason they are separate
+      # crates: each carries a native dependency with a download behind it, and
+      # neither is needed to build or run the writer.
       - name: Clippy
-        run: cargo clippy --locked --workspace --exclude packset-milli --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude packset-milli --exclude packset-embed --all-targets -- -D warnings
       - name: Workspace tests
-        run: cargo test --locked --workspace --exclude packset-milli --no-fail-fast
+        run: cargo test --locked --workspace --exclude packset-milli --exclude packset-embed --no-fail-fast
 
   lifecycle:
     name: the daemon comes up and answers

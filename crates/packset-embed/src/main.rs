@@ -16,11 +16,12 @@
 //! $ echo '{"id":"q","text":"which search tool"}' | packset-embed --query
 //! ```
 //!
-//! Documents and questions are encoded differently: BGE asks a question to
-//! carry a retrieval instruction that a document must not. Passing `--query`
-//! for a document, or forgetting it for a question, silently costs recall
-//! rather than failing, which is why it is a flag and not a guess. The library
-//! applies no prefix of its own, so the instruction is written out here.
+//! Documents and questions are encoded differently, and differently again per
+//! family: BGE asks a question to carry a retrieval instruction that a document
+//! must not, and E5 wants a word on both sides. Passing `--query` for a
+//! document, or the wrong pair for a model, silently costs recall rather than
+//! failing. The library applies no prefix of its own, so both live here beside
+//! the name they belong to.
 
 use std::io::{BufRead, Write};
 
@@ -41,8 +42,46 @@ struct Vector {
     v: Vec<f32>,
 }
 
-/// What BGE wants in front of a question, and in front of nothing else.
-const QUERY_PREFIX: &str = "Represent this sentence for searching relevant passages: ";
+/// A model, and the instructions its family wants in front of a text.
+///
+/// The prefixes are part of the model rather than decoration. BGE was trained
+/// with a retrieval instruction on the question only; E5 was trained with a
+/// word on both sides. Using the wrong pair costs recall silently, which is
+/// why they live beside the name they belong to instead of being a default.
+struct Choice {
+    model: EmbeddingModel,
+    query: &'static str,
+    passage: &'static str,
+}
+
+/// BGE's instruction, on the question only.
+const BGE_QUERY: &str = "Represent this sentence for searching relevant passages: ";
+
+/// The models this binary will load, by the name a seat writes.
+fn choose(name: &str) -> Option<Choice> {
+    let (model, query, passage) = match name {
+        "bge-small" | "" => (EmbeddingModel::BGESmallENV15, BGE_QUERY, ""),
+        "bge-base" => (EmbeddingModel::BGEBaseENV15, BGE_QUERY, ""),
+        "bge-large" => (EmbeddingModel::BGELargeENV15, BGE_QUERY, ""),
+        "e5-large" => (EmbeddingModel::MultilingualE5Large, "query: ", "passage: "),
+        "e5-base" => (EmbeddingModel::MultilingualE5Base, "query: ", "passage: "),
+        "gte-large" => (EmbeddingModel::GTELargeENV15, "", ""),
+        "mxbai-large" => (
+            EmbeddingModel::MxbaiEmbedLargeV1,
+            "Represent this sentence for searching relevant passages: ",
+            "",
+        ),
+        _ => return None,
+    };
+    Some(Choice {
+        model,
+        query,
+        passage,
+    })
+}
+
+/// Every name [`choose`] answers to, for the error that lists them.
+const KNOWN: &str = "bge-small, bge-base, bge-large, e5-base, e5-large, gte-large, mxbai-large";
 
 fn main() -> anyhow::Result<()> {
     let mut query = false;
@@ -63,8 +102,16 @@ fn main() -> anyhow::Result<()> {
 
     // Named so a seat can put the weights where its policy allows, and so a
     // build machine and a run machine can share one copy.
+    let name = std::env::var("PACKSET_EMBED_MODEL").unwrap_or_default();
+    let choice = choose(name.trim())
+        .ok_or_else(|| anyhow::anyhow!("unknown model `{name}`; known: {KNOWN}"))?;
+    let prefix = if query {
+        choice.query
+    } else {
+        choice.passage
+    };
     let mut options =
-        TextInitOptions::new(EmbeddingModel::BGESmallENV15).with_show_download_progress(false);
+        TextInitOptions::new(choice.model).with_show_download_progress(false);
     if let Some(dir) = std::env::var_os("PACKSET_EMBED_CACHE") {
         options = options.with_cache_dir(std::path::PathBuf::from(dir));
     }
@@ -82,10 +129,10 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
         let item: Item = serde_json::from_str(&line)?;
-        let text = if query {
-            format!("{QUERY_PREFIX}{}", item.text)
-        } else {
+        let text = if prefix.is_empty() {
             item.text
+        } else {
+            format!("{prefix}{}", item.text)
         };
         let mut vectors = model.embed(&[text], None)?;
         let v = vectors.pop().unwrap_or_default();
@@ -104,4 +151,7 @@ const USAGE: &str = "packset-embed: text in, vectors out\n\
     reads JSON lines {\"id\",\"text\"} and writes {\"id\",\"v\"}\n\
     \n\
         --query   encode as a question rather than a document\n\
-        PACKSET_EMBED_CACHE   where the weights live";
+    \n\
+        PACKSET_EMBED_CACHE   where the weights live\n\
+        PACKSET_EMBED_MODEL   bge-small (default), bge-base, bge-large,\n\
+                              e5-base, e5-large, gte-large, mxbai-large";

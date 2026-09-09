@@ -3,8 +3,8 @@ root := justfile_directory()
 # Everything but the search projection, which needs its own toolchain.
 check:
     cargo fmt --all --check
-    cargo clippy --locked --workspace --exclude packset-milli --all-targets -- -D warnings
-    cargo test --locked --workspace --exclude packset-milli --no-fail-fast
+    cargo clippy --locked --workspace --exclude packset-milli --exclude packset-embed --all-targets -- -D warnings
+    cargo test --locked --workspace --exclude packset-milli --exclude packset-embed --no-fail-fast
 
 # What a pack costs as it grows, and the shape of the graph inside it.
 bench sizes="":
