@@ -10,6 +10,7 @@
 //! choose this.
 
 pub mod atom;
+pub mod bm25;
 pub mod borda;
 pub mod cheap;
 pub mod clock;

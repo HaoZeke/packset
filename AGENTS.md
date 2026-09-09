@@ -18,8 +18,8 @@ when the binary is absent.
 - `crates/packset-daemon` — the writer; atoms in LMDB, cards on disk
 - `crates/packset-cli` — `packset`: lifecycle and the `/v1` reads a
   seat runs from a shell. `bin/packset` execs whichever build exists.
-- `crates/packset-core` — schema, prose, recall, scoring, Borda, MMR,
-  decay, extract filters
+- `crates/packset-core` — schema, prose, recall, scoring, BM25, Borda,
+  MMR, decay, extract filters
 - `crates/packset-client` — HTTP
 - `crates/packset-milli` — search projection
 

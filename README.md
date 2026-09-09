@@ -46,6 +46,11 @@ Whether the deed exists is a question the pack cannot ask. It checks the shape;
 
 - One writer. Working tree is not the pack.
 - `Remember:` / `Prefer:` are instant. One claim per atom.
+- Search asks two scorers and fuses their answers. One finds an atom
+  through a typo or a prefix and weighs every word alike; BM25 weighs a
+  word by how much it narrows the pack down, normalises for length, and
+  finds nothing a typo hides. The milli projection is a third when it is
+  built.
 - Search merge is a host voter panel. Default is Borda then MMR,
   decay off. `PACKSET_FUSE`, `PACKSET_DIVERSIFY`, and
   `PACKSET_DECAY` select the sequence. Not a client header.

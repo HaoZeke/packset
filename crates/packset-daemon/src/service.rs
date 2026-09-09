@@ -528,7 +528,9 @@ impl Service {
                 cards::read_text(&self.home.memory_path(workspace)),
             ),
         };
-        let atoms = self.store.live(workspace)?;
+        // The snapshot and the index over it come as a pair: an ordinal in the
+        // index means a position in that snapshot and in no other.
+        let (atoms, index) = self.store.searchable(workspace)?;
         let now = clock::utcnow();
 
         if packset_core::search::tokens(query).is_empty() {
@@ -542,31 +544,54 @@ impl Service {
             memory: &memory,
             atoms: &atoms,
         };
+        // Two scorers over the same pack, because they are strong at different
+        // queries: one finds an atom through a typo or a prefix and weighs every
+        // word alike, the other weighs a word by how much it narrows the pack
+        // down and normalises for length. The panel is what turns the two
+        // rankings into one, and two lists agreeing about a hit is a vote for
+        // it rather than a duplicate.
+        let ask = packset_core::search::Ask {
+            user: &user,
+            memory: &memory,
+            atoms: &atoms,
+            query,
+            limit,
+            set: scope,
+            now: &now,
+        };
+        let ranked_terms = packset_core::search::search_bm25(&ask, &index);
+
         let projected = crate::milli::search(corpus, query, limit, &dir, scope);
         let (mut ranked, engine) = match projected {
             Some(atom_hits) => {
                 // Prose always comes from the pack, so the index copy of a card
                 // can be stale without anyone reading it.
-                let prose = packset_core::search::search_linear(
-                    &user,
-                    &memory,
-                    &[],
-                    query,
-                    limit,
-                    scope,
-                    &now,
-                );
+                let prose = packset_core::search::search_linear(&packset_core::search::Ask {
+                    atoms: &[],
+                    ..ask
+                });
                 (
-                    packset_core::search::merge_ballots(&[prose, atom_hits], limit, panel, &now),
+                    packset_core::search::merge_ballots(
+                        &[prose, atom_hits, ranked_terms],
+                        limit,
+                        panel,
+                        &now,
+                    ),
                     "milli",
                 )
             }
-            None => (
-                packset_core::search::search_linear(
-                    &user, &memory, &atoms, query, limit, scope, &now,
-                ),
-                "linear",
-            ),
+            None => {
+                let lexical = packset_core::search::search_linear(&ask);
+                (
+                    packset_core::search::merge_ballots(
+                        &[lexical, ranked_terms],
+                        limit,
+                        panel,
+                        &now,
+                    ),
+                    "linear",
+                )
+            }
         };
         let due = packset_core::search::due_hits(&atoms, scope, &now);
         if !due.is_empty() {

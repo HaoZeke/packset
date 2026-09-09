@@ -14,6 +14,7 @@ use std::sync::{Arc, RwLock};
 
 use heed::types::Bytes;
 use heed::{Database, Env, EnvFlags, EnvOpenOptions};
+use packset_core::bm25::Index;
 use packset_core::record::{self, AtomError};
 use serde_json::{Map, Value};
 
@@ -31,6 +32,9 @@ pub type Record = Map<String, Value>;
 /// link for good the moment the id it names came back, so the stored form is
 /// what a write is folded into and the shown form is derived from it.
 type Snapshot = (u64, Vec<Record>, Arc<Vec<Record>>);
+
+/// A workspace's live atoms and the index over them, at one generation.
+type Searchable = (u64, Arc<Vec<Record>>, Arc<Index>);
 
 /// The key for one atom.
 #[must_use]
@@ -66,6 +70,14 @@ pub struct Store {
     /// the same work several times. One writer means one obvious way to know
     /// a snapshot is current.
     live: RwLock<HashMap<String, Snapshot>>,
+    /// The inverted index over one workspace's live atoms, per generation.
+    ///
+    /// The postings change only when the pack does, and building them inside a
+    /// query made a search cost what a write costs while a search happens far
+    /// more often. The snapshot is kept beside the index rather than looked up
+    /// again, because an ordinal in the index means a position in that exact
+    /// snapshot and in no other.
+    terms: RwLock<HashMap<String, Searchable>>,
 }
 
 impl Store {
@@ -98,6 +110,7 @@ impl Store {
             _lock: lock,
             generation: AtomicU64::new(0),
             live: RwLock::new(HashMap::new()),
+            terms: RwLock::new(HashMap::new()),
         })
     }
 
@@ -277,6 +290,45 @@ impl Store {
             }
         }
         Ok(shared)
+    }
+
+    /// One workspace's live atoms and the index over them, as a matched pair.
+    ///
+    /// The corpus is the atoms, and card paragraphs are scored against it: both
+    /// are short written claims, and "how rare is this word in the pack" is the
+    /// question either way. Keeping one corpus is also what makes a card hit
+    /// and an atom hit comparable at all.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the scan does.
+    pub fn searchable(&self, workspace: &str) -> anyhow::Result<(Arc<Vec<Record>>, Arc<Index>)> {
+        let generation = self.generation.load(Ordering::Acquire);
+        if let Ok(cache) = self.terms.read() {
+            if let Some((seen, atoms, index)) = cache.get(workspace) {
+                if *seen == generation {
+                    return Ok((Arc::clone(atoms), Arc::clone(index)));
+                }
+            }
+        }
+        let atoms = self.live(workspace)?;
+        let documents: Vec<Vec<String>> = atoms
+            .iter()
+            .map(packset_core::search::atom_tokens)
+            .collect();
+        let index = Arc::new(Index::build(documents.iter().map(Vec::as_slice)));
+        // Same rule as the snapshot: cached only if nothing committed while
+        // this was built, since an index over a superseded pack served under
+        // the newer generation would never be rebuilt.
+        if self.generation.load(Ordering::Acquire) == generation {
+            if let Ok(mut cache) = self.terms.write() {
+                cache.insert(
+                    workspace.to_string(),
+                    (generation, Arc::clone(&atoms), Arc::clone(&index)),
+                );
+            }
+        }
+        Ok((atoms, index))
     }
 
     /// The live and due records in one workspace, as a copy the caller owns.

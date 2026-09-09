@@ -230,17 +230,41 @@ fn sort_hits(hits: &mut [Value]) {
     });
 }
 
+/// What a search is asked, apart from how it is scored.
+///
+/// Two scorers take the same question, so it is one value rather than seven
+/// arguments repeated at every call: two strings of the same type next to each
+/// other, then two more, is a swap nobody reads at the call site.
+#[derive(Debug, Clone, Copy)]
+pub struct Ask<'a> {
+    /// The seat card.
+    pub user: &'a str,
+    /// The workspace card.
+    pub memory: &'a str,
+    /// The live atoms to score.
+    pub atoms: &'a [Record],
+    /// What was asked.
+    pub query: &'a str,
+    /// How many hits to return.
+    pub limit: usize,
+    /// The named set to stay inside, if any.
+    pub set: Option<&'a str>,
+    /// The instant liveness and recency are measured against.
+    pub now: &'a str,
+}
+
 /// The prefix-and-one-edit scan over a whole pack.
 #[must_use]
-pub fn search_linear(
-    user: &str,
-    memory: &str,
-    atoms: &[Record],
-    query: &str,
-    limit: usize,
-    set: Option<&str>,
-    now: &str,
-) -> Vec<Value> {
+pub fn search_linear(ask: &Ask<'_>) -> Vec<Value> {
+    let Ask {
+        user,
+        memory,
+        atoms,
+        query,
+        limit,
+        set,
+        now,
+    } = *ask;
     let qtoks = tokens(query);
     if qtoks.is_empty() {
         return Vec::new();
@@ -282,6 +306,95 @@ pub fn search_linear(
                 + if due { 2.0 } else { 0.0 },
         }));
     }
+    sort_hits(&mut hits);
+    hits.truncate(limit);
+    hits
+}
+
+/// The tokens one atom is searchable by: its text and its entities.
+///
+/// One definition, because the corpus that counts terms and the document that
+/// is scored against those counts have to agree about what a document is.
+#[must_use]
+pub fn atom_tokens(atom: &Record) -> Vec<String> {
+    let text = atom.get("text").and_then(Value::as_str).unwrap_or("");
+    let mut out = tokens(text);
+    if let Some(Value::Array(items)) = atom.get("entities") {
+        for item in items {
+            let name = item
+                .as_str()
+                .map_or_else(|| item.to_string(), str::to_string);
+            out.extend(tokens(&name));
+        }
+    }
+    out
+}
+
+/// The same pack, scored by BM25 over an index rather than by a scan.
+///
+/// A second ballot, not a replacement: the two scorers are strong at different
+/// queries. The pack's own scorer finds an atom through a typo or a prefix and
+/// weighs every word alike; BM25 weighs a word by how much it narrows the pack
+/// down and normalises for length, and finds nothing a typo hides. The panel is
+/// what turns two rankings into one.
+///
+/// `index` must have been built over `ask.atoms` in that order, which is what
+/// lets a score name what was scored without a second lookup.
+///
+/// Cards are scored against the same corpus, because a standing preference
+/// competes with a conclusion for the same place in the answer.
+#[must_use]
+pub fn search_bm25(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
+    let Ask {
+        user,
+        memory,
+        atoms,
+        query,
+        limit,
+        set,
+        now,
+    } = *ask;
+    let qtoks = tokens(query);
+    if qtoks.is_empty() || index.is_empty() {
+        return Vec::new();
+    }
+
+    let mut hits: Vec<Value> = Vec::new();
+    for (field, text, bias) in [("user", user, 0.5), ("memory", memory, 0.25)] {
+        for para in paragraphs(text) {
+            let relevance = index.score_foreign(&qtoks, &tokens(&para));
+            if relevance == 0.0 {
+                continue;
+            }
+            hits.push(json!({
+                "field": field,
+                "id": Value::Null,
+                "kind": field,
+                "text": para,
+                "score": relevance + bias,
+            }));
+        }
+    }
+
+    // Only the atoms carrying a query term, straight from the postings.
+    for (ordinal, relevance) in index.score(&qtoks) {
+        let Some(atom) = atoms.get(ordinal) else {
+            continue;
+        };
+        if !record::is_live(atom, now) || !atom_in_set(atom, set) {
+            continue;
+        }
+        let ts = atom.get("ts").and_then(Value::as_str);
+        hits.push(json!({
+            "field": "atom",
+            "id": atom.get("id").cloned().unwrap_or(Value::Null),
+            "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
+            "text": atom.get("text").cloned().unwrap_or(Value::Null),
+            "due_at": atom.get("due_at").cloned().unwrap_or(Value::Null),
+            "score": relevance + 0.1 * trust_of(atom) + recency(ts, now),
+        }));
+    }
+
     sort_hits(&mut hits);
     hits.truncate(limit);
     hits
@@ -356,6 +469,26 @@ pub fn front_due(due: Vec<Value>, ranked: Vec<Value>, limit: usize) -> Vec<Value
 mod tests {
     use super::*;
 
+    /// One question, for the tests that only vary part of it.
+    fn ask<'a>(
+        user: &'a str,
+        memory: &'a str,
+        atoms: &'a [Record],
+        query: &'a str,
+        limit: usize,
+        set: Option<&'a str>,
+    ) -> Ask<'a> {
+        Ask {
+            user,
+            memory,
+            atoms,
+            query,
+            limit,
+            set,
+            now: NOW,
+        }
+    }
+
     const NOW: &str = "2026-01-01T00:00:00.000Z";
 
     fn atom(value: Value) -> Record {
@@ -418,15 +551,14 @@ mod tests {
 
     #[test]
     fn the_seat_card_outranks_the_workspace_card_at_equal_relevance() {
-        let hits = search_linear(
+        let hits = search_linear(&ask(
             "prefer ripgrep",
             "prefer ripgrep",
             &[],
             "ripgrep",
             10,
             None,
-            NOW,
-        );
+        ));
         assert_eq!(hits[0]["field"], json!("user"), "{hits:?}");
         assert!(
             hits[0]["score"].as_f64().unwrap() > hits[1]["score"].as_f64().unwrap(),
@@ -440,7 +572,7 @@ mod tests {
             "id": "a", "text": "nothing in the prose", "kind": "voice",
             "entities": ["ripgrep"]
         }))];
-        let hits = search_linear("", "", &atoms, "ripgrep", 10, None, NOW);
+        let hits = search_linear(&ask("", "", &atoms, "ripgrep", 10, None));
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert_eq!(hits[0]["id"], json!("a"));
     }
@@ -451,7 +583,7 @@ mod tests {
             "id": "a", "text": "utterly unrelated", "kind": "voice",
             "due_at": "2020-01-01T00:00:00.000Z"
         }))];
-        let hits = search_linear("", "", &atoms, "ripgrep", 10, None, NOW);
+        let hits = search_linear(&ask("", "", &atoms, "ripgrep", 10, None));
         assert_eq!(hits.len(), 1, "a deadline outranks relevance: {hits:?}");
     }
 
@@ -461,7 +593,7 @@ mod tests {
             "id": "a", "text": "ripgrep here", "kind": "voice",
             "valid_to": "2020-01-01T00:00:00.000Z"
         }))];
-        assert!(search_linear("", "", &atoms, "ripgrep", 10, None, NOW).is_empty());
+        assert!(search_linear(&ask("", "", &atoms, "ripgrep", 10, None)).is_empty());
     }
 
     #[test]
@@ -470,7 +602,7 @@ mod tests {
             atom(json!({"id": "in", "text": "ripgrep", "kind": "voice", "set": "review"})),
             atom(json!({"id": "out", "text": "ripgrep", "kind": "voice"})),
         ];
-        let hits = search_linear("", "", &atoms, "ripgrep", 10, Some("review"), NOW);
+        let hits = search_linear(&ask("", "", &atoms, "ripgrep", 10, Some("review")));
         let ids: Vec<&str> = hits.iter().filter_map(|h| h["id"].as_str()).collect();
         assert_eq!(ids, vec!["in"], "{hits:?}");
     }
@@ -478,8 +610,8 @@ mod tests {
     #[test]
     fn an_empty_query_finds_nothing_rather_than_everything() {
         let atoms = vec![atom(json!({"id": "a", "text": "x", "kind": "voice"}))];
-        assert!(search_linear("u", "m", &atoms, "", 10, None, NOW).is_empty());
-        assert!(search_linear("u", "m", &atoms, "the and of", 10, None, NOW).is_empty());
+        assert!(search_linear(&ask("u", "m", &atoms, "", 10, None)).is_empty());
+        assert!(search_linear(&ask("u", "m", &atoms, "the and of", 10, None)).is_empty());
     }
 
     #[test]
@@ -489,7 +621,7 @@ mod tests {
             "due_at": "2020-01-01T00:00:00.000Z"
         }))];
         let due = due_hits(&atoms, None, NOW);
-        let ranked = search_linear("", "", &atoms, "ripgrep", 10, None, NOW);
+        let ranked = search_linear(&ask("", "", &atoms, "ripgrep", 10, None));
         assert_eq!(due.len(), 1);
         assert_eq!(ranked.len(), 1);
         let merged = front_due(due, ranked, 10);
@@ -499,7 +631,7 @@ mod tests {
     #[test]
     fn a_zero_limit_answers_nothing() {
         let atoms = vec![atom(json!({"id": "a", "text": "ripgrep", "kind": "voice"}))];
-        assert!(search_linear("", "", &atoms, "ripgrep", 0, None, NOW).is_empty());
+        assert!(search_linear(&ask("", "", &atoms, "ripgrep", 0, None)).is_empty());
         assert!(front_due(vec![json!({})], vec![], 0).is_empty());
     }
 }
