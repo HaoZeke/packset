@@ -264,6 +264,17 @@ const VOTERS: &[&str] = &[
     "borda", "rrf", "combsum", "combmnz", "dowdall", "kemeny", "schulze", "copeland", "tideman",
 ];
 
+/// The voters swept a second time, over the ballots the seat ships.
+///
+/// Five rather than nine, because the second sweep is what takes a run past
+/// what this builder lets finish. Schulze, ranked pairs and Copeland build a
+/// pairwise matrix over every candidate, which is the expensive part, and the
+/// sweep above already measures all three: the first two degenerate to their
+/// own first ballot on two voters, and Copeland tracks Borda. That every name
+/// reaches its own implementation is a property, and it is pinned by a test
+/// rather than by paying for it once a question here.
+const SHIPPED_VOTERS: &[&str] = &["borda", "rrf", "combsum", "combmnz", "dowdall"];
+
 /// Where encodings are kept between runs, when the seat names a directory.
 ///
 /// The encode dominates a run, costs the same every time, and depends on
@@ -771,8 +782,12 @@ fn main() -> anyhow::Result<()> {
     // The pair the seat actually ships, swept the same way, because a default
     // argued from a pair the seat does not use is an argument about a
     // different retriever.
-    let mut shipped_voted: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
-    let mut shipped_sessions: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
+    let shipped_panels: Vec<Panel> = SHIPPED_VOTERS
+        .iter()
+        .map(|name| Panel::named(name, "mmr", "off"))
+        .collect::<Result<_, _>>()?;
+    let mut shipped_voted: Vec<Tally> = SHIPPED_VOTERS.iter().map(|_| Tally::new()).collect();
+    let mut shipped_sessions: Vec<Tally> = SHIPPED_VOTERS.iter().map(|_| Tally::new()).collect();
     let mut ranking = Tally::new();
     let mut hopped = Tally::new();
     let mut walked = Tally::new();
@@ -1078,7 +1093,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 vec![lexical.clone(), terms.clone(), meaning.clone()]
             };
-            for (slot, panel) in panels.iter().enumerate() {
+            for (slot, panel) in shipped_panels.iter().enumerate() {
                 let ranked = hit_ids(&search::merge_ballots(
                     &shipped_pair,
                     ask.limit,
@@ -1188,11 +1203,11 @@ fn main() -> anyhow::Result<()> {
         }
     );
     println!();
-    table(VOTERS, &shipped_voted);
+    table(SHIPPED_VOTERS, &shipped_voted);
     println!();
     println!("the same, by session:");
     println!();
-    table(VOTERS, &shipped_sessions);
+    table(SHIPPED_VOTERS, &shipped_sessions);
 
     println!();
     println!("a session as the document, against a session read off a turn");
