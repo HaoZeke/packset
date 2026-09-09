@@ -24,8 +24,13 @@ pub const MAP_SIZE: usize = 256 * 1024 * 1024;
 /// One atom record.
 pub type Record = Map<String, Value>;
 
-/// One workspace's parsed live set, with the write count it was built at.
-type Snapshot = (u64, Arc<Vec<Record>>);
+/// One workspace's live set at a write count: as stored, and as shown.
+///
+/// The two differ because links are narrowed to the ids actually present, and
+/// that narrowing only ever removes. Patching the narrowed copy would lose a
+/// link for good the moment the id it names came back, so the stored form is
+/// what a write is folded into and the shown form is derived from it.
+type Snapshot = (u64, Vec<Record>, Arc<Vec<Record>>);
 
 /// The key for one atom.
 #[must_use]
@@ -182,8 +187,55 @@ impl Store {
         wtxn.commit()?;
         // After the commit, never before: a reader that scans between a bump
         // and its write would otherwise cache the older corpus as the newer.
-        self.generation.fetch_add(1, Ordering::AcqRel);
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.patch_live(atoms, generation);
         Ok(())
+    }
+
+    /// Fold a committed write into the cached snapshot instead of dropping it.
+    ///
+    /// A write knows exactly which records it touched, and re-deriving the
+    /// whole live set from the database means parsing every atom in the
+    /// workspace again. That is most of what a write costs once the corpus is
+    /// large, and it is paid by whoever reads next rather than by the writer.
+    ///
+    /// Only workspaces already cached are patched: this never builds a
+    /// snapshot that nobody asked for. The result has to equal a fresh scan,
+    /// which is what the test beside it checks.
+    fn patch_live(&self, written: &[Record], generation: u64) {
+        let now = packset_core::clock::utcnow();
+        let Ok(mut cache) = self.live.write() else {
+            return;
+        };
+        for (workspace, (seen, stored, shown)) in cache.iter_mut() {
+            // One behind is this write; anything else raced and the snapshot
+            // is not a base this write can be added to.
+            if *seen + 1 != generation {
+                continue;
+            }
+            for record in written {
+                if record.get("workspace").and_then(Value::as_str) != Some(workspace.as_str()) {
+                    continue;
+                }
+                let Some(id) = record.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let visible = record::is_live(record, &now) || record::is_due(record, &now);
+                let at = stored
+                    .iter()
+                    .position(|a| a.get("id").and_then(Value::as_str) == Some(id));
+                match (at, visible) {
+                    (Some(i), true) => stored[i] = record.clone(),
+                    (Some(i), false) => {
+                        stored.remove(i);
+                    }
+                    (None, true) => stored.push(record.clone()),
+                    (None, false) => {}
+                }
+            }
+            *seen = generation;
+            *shown = Arc::new(shown_from(stored));
+        }
     }
 
     /// The live and due records in one workspace, parsed once per write.
@@ -197,29 +249,31 @@ impl Store {
     pub fn live(&self, workspace: &str) -> anyhow::Result<Arc<Vec<Record>>> {
         let generation = self.generation.load(Ordering::Acquire);
         if let Ok(cache) = self.live.read() {
-            if let Some((seen, atoms)) = cache.get(workspace) {
+            if let Some((seen, _stored, shown)) = cache.get(workspace) {
                 if *seen == generation {
-                    return Ok(Arc::clone(atoms));
+                    return Ok(Arc::clone(shown));
                 }
             }
         }
         // Built outside the write lock, so a slow parse does not hold up a
         // reader whose own workspace is current.
         let now = packset_core::clock::utcnow();
-        let mut atoms: Vec<Record> = self
+        let stored: Vec<Record> = self
             .scan(Some(workspace))?
             .into_iter()
             .filter(|atom| record::is_live(atom, &now) || record::is_due(atom, &now))
             .collect();
-        record::filter_live_links(&mut atoms);
-        let shared = Arc::new(atoms);
+        let shared = Arc::new(shown_from(&stored));
         // Cached only if nothing committed while the scan ran. A write that
         // landed halfway through is not in this snapshot, and storing it under
         // the newer generation would serve it as though it were: the next
         // reader would be told a committed write does not exist.
         if self.generation.load(Ordering::Acquire) == generation {
             if let Ok(mut cache) = self.live.write() {
-                cache.insert(workspace.to_string(), (generation, Arc::clone(&shared)));
+                cache.insert(
+                    workspace.to_string(),
+                    (generation, stored, Arc::clone(&shared)),
+                );
             }
         }
         Ok(shared)
@@ -283,6 +337,13 @@ impl Store {
         self.upsert(&tomb)?;
         Ok(tomb)
     }
+}
+
+/// The live set as a reader sees it: links narrowed to the ids present.
+fn shown_from(stored: &[Record]) -> Vec<Record> {
+    let mut shown = stored.to_vec();
+    record::filter_live_links(&mut shown);
+    shown
 }
 
 fn push_record(out: &mut Vec<Record>, raw: &[u8]) {
@@ -551,6 +612,120 @@ mod snapshot_tests {
             .unwrap();
         assert_eq!(store.live("two").unwrap().len(), 1);
         assert_eq!(store.live("one").unwrap().len(), 1, "still correct");
+    }
+
+    /// The whole safety argument for patching: whatever the snapshot says
+    /// after a write has to be what a scan of the database would say.
+    fn assert_matches_a_fresh_scan(store: &Store, workspace: &str) {
+        let patched: Vec<Value> = store
+            .live(workspace)
+            .unwrap()
+            .iter()
+            .map(|a| Value::Object(a.clone()))
+            .collect();
+        // Force the next read to derive from the database rather than the
+        // cache, and compare what comes back.
+        store.live.write().unwrap().clear();
+        let fresh: Vec<Value> = store
+            .live(workspace)
+            .unwrap()
+            .iter()
+            .map(|a| Value::Object(a.clone()))
+            .collect();
+        assert_eq!(
+            patched, fresh,
+            "the patched snapshot drifted from the store"
+        );
+    }
+
+    #[test]
+    fn a_patched_snapshot_says_what_a_fresh_scan_says() {
+        let (_dir, store) = store();
+        // Read first, so there is a cached snapshot for the writes to fold
+        // into rather than nothing to patch.
+        assert!(store.live("w").unwrap().is_empty());
+
+        store
+            .upsert(&record(json!({"id": "a", "workspace": "w", "text": "a"})))
+            .unwrap();
+        assert_matches_a_fresh_scan(&store, "w");
+
+        // An update in place.
+        store
+            .upsert(&record(
+                json!({"id": "a", "workspace": "w", "text": "changed"}),
+            ))
+            .unwrap();
+        assert_eq!(store.live("w").unwrap()[0]["text"], json!("changed"));
+        assert_matches_a_fresh_scan(&store, "w");
+
+        // A record that leaves the live set has to leave the snapshot.
+        store
+            .upsert(&record(json!({
+                "id": "a", "workspace": "w", "text": "changed",
+                "valid_to": "2000-01-01T00:00:00.000Z"
+            })))
+            .unwrap();
+        assert!(store.live("w").unwrap().is_empty());
+        assert_matches_a_fresh_scan(&store, "w");
+
+        // And one that is expired but still due stays, because the review
+        // clock is a separate question.
+        store
+            .upsert(&record(json!({
+                "id": "b", "workspace": "w", "text": "b",
+                "valid_to": "2000-01-01T00:00:00.000Z",
+                "due_at": "2000-01-01T00:00:00.000Z"
+            })))
+            .unwrap();
+        assert_eq!(store.live("w").unwrap().len(), 1);
+        assert_matches_a_fresh_scan(&store, "w");
+    }
+
+    #[test]
+    fn a_patch_narrows_links_the_way_a_scan_does() {
+        let (_dir, store) = store();
+        assert!(store.live("w").unwrap().is_empty());
+        store
+            .upsert(&record(json!({
+                "id": "a", "workspace": "w", "text": "a", "links": ["b"]
+            })))
+            .unwrap();
+        // `b` does not exist, so the link must not be reported.
+        assert_eq!(store.live("w").unwrap()[0]["links"], json!([]));
+        assert_matches_a_fresh_scan(&store, "w");
+
+        store
+            .upsert(&record(json!({"id": "b", "workspace": "w", "text": "b"})))
+            .unwrap();
+        assert_matches_a_fresh_scan(&store, "w");
+    }
+
+    #[test]
+    fn a_write_to_one_workspace_leaves_another_alone() {
+        let (_dir, store) = store();
+        store
+            .upsert(&record(json!({"id": "a", "workspace": "one", "text": "a"})))
+            .unwrap();
+        assert_eq!(store.live("one").unwrap().len(), 1);
+        assert!(store.live("two").unwrap().is_empty());
+        store
+            .upsert(&record(json!({"id": "b", "workspace": "two", "text": "b"})))
+            .unwrap();
+        assert_matches_a_fresh_scan(&store, "one");
+        assert_matches_a_fresh_scan(&store, "two");
+    }
+
+    #[test]
+    fn a_delete_is_visible_and_matches_a_scan() {
+        let (_dir, store) = store();
+        store
+            .upsert(&record(json!({"id": "a", "workspace": "w", "text": "a"})))
+            .unwrap();
+        assert_eq!(store.live("w").unwrap().len(), 1);
+        store.delete("w", "a").unwrap();
+        assert!(store.live("w").unwrap().is_empty());
+        assert_matches_a_fresh_scan(&store, "w");
     }
 
     #[test]
