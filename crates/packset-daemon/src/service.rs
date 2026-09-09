@@ -768,7 +768,11 @@ impl Service {
     /// # Errors
     ///
     /// The scan's.
-    pub fn status(&self, workspace: Option<&str>) -> anyhow::Result<Value> {
+    pub fn status(
+        &self,
+        workspace: Option<&str>,
+        panel: &packset_core::Panel,
+    ) -> anyhow::Result<Value> {
         let now = clock::utcnow();
         let mut live: BTreeMap<String, usize> = BTreeMap::new();
         let mut tomb: BTreeMap<String, usize> = BTreeMap::new();
@@ -818,7 +822,16 @@ impl Service {
             },
             "embedder": {
                 "enabled": embed_enabled(),
-                "available": false,
+                "binary": crate::embed::binary().map(|path| path.display().to_string()),
+                "available": embed_enabled() && crate::embed::binary().is_some(),
+            },
+            // Which voters are running, because the panel is host
+            // configuration a client cannot see and a wrong one changes every
+            // answer without changing any of them into an error.
+            "panel": {
+                "fuse": panel.fuse.as_str(),
+                "diversify": panel.diversify.as_str(),
+                "decay": panel.decay.as_str(),
             },
         }))
     }
@@ -826,8 +839,9 @@ impl Service {
 
 /// Whether the dense-rank embedder is switched on.
 ///
-/// The Rust writer reports it unavailable because the ONNX runtime behind it is
-/// not in this process. Keyword search does not depend on it.
+/// Switched on and present are different questions. The runtime behind the
+/// encoder lives in its own binary, so a seat can have it enabled with nothing
+/// to run; keyword search does not depend on either.
 fn embed_enabled() -> bool {
     let raw = std::env::var("INSIDE_EMBED").unwrap_or_else(|_| "on".into());
     !matches!(
@@ -1057,8 +1071,13 @@ mod tests {
         second.insert("kind".into(), json!("preference"));
         svc.add(second).unwrap();
 
-        let status = svc.status(Some("w")).unwrap();
+        let panel = packset_core::Panel::named("rrf", "none", "off").unwrap();
+        let status = svc.status(Some("w"), &panel).unwrap();
         assert_eq!(status["live"], json!(1));
+        // The panel is host configuration a client cannot see, so status is
+        // where an operator finds out which voters answered.
+        assert_eq!(status["panel"]["fuse"], json!("rrf"));
+        assert_eq!(status["panel"]["diversify"], json!("none"));
         assert_eq!(status["tombstone"], json!(1));
         assert_eq!(status["live_by_kind"]["preference"], json!(1));
         assert_eq!(status["workspace"], json!("w"));

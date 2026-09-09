@@ -152,7 +152,7 @@ fn route(
         (Method::Get, "/__inside_memd/health") => Answer::err(404, "not found"),
         (Method::Get, "/v1/status") => {
             let workspace = query.get("workspace").filter(|w| !w.is_empty());
-            answer(service.status(workspace.map(String::as_str)))
+            answer(service.status(workspace.map(String::as_str), panel))
         }
         (Method::Get, "/v1/workspaces") => match service.store().workspaces() {
             Ok(found) => Answer::ok(json!({
