@@ -60,6 +60,17 @@ struct Tokens {
     id: String,
     t: Vec<Vec<f32>>,
     v: Vec<f32>,
+    /// The learned term weights from the same pass: which vocabulary entries
+    /// this text activates, and how much. One number a term where the token
+    /// form is a vector a token, so it costs what an inverted index costs.
+    s: Sparse,
+}
+
+/// Learned term weights, as the pair of arrays the model returns.
+#[derive(Serialize, Default)]
+struct Sparse {
+    i: Vec<u32>,
+    w: Vec<f32>,
 }
 
 /// A model, and the instructions its family wants in front of a text.
@@ -207,10 +218,27 @@ fn late_interaction(query: bool) -> anyhow::Result<()> {
         } else {
             encoded.dense.remove(0)
         };
+        // The learned sparse weights, also from that pass. BGE-M3 is trained to
+        // emit all three, and a caller that already paid for the forward pass
+        // has this for nothing.
+        let s = if encoded.sparse.is_empty() {
+            Sparse::default()
+        } else {
+            let raw = encoded.sparse.remove(0);
+            Sparse {
+                i: raw.indices.iter().map(|index| *index as u32).collect(),
+                w: raw.values,
+            }
+        };
         writeln!(
             out,
             "{}",
-            serde_json::to_string(&Tokens { id: item.id, t, v })?
+            serde_json::to_string(&Tokens {
+                id: item.id,
+                t,
+                v,
+                s
+            })?
         )?;
         out.flush()?;
     }

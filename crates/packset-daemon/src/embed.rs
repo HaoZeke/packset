@@ -119,8 +119,8 @@ impl Encoder {
         })
     }
 
-    /// One line in, one line carrying both forms out.
-    fn encode_tokens(&mut self, text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>)> {
+    /// One line in, one line carrying all three forms out.
+    fn encode_tokens(&mut self, text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>, Sparse)> {
         let reply = self.ask(text)?;
         let parsed: Value = serde_json::from_str(reply.trim()).ok()?;
         let rows = parsed.get("t")?.as_array()?;
@@ -145,7 +145,29 @@ impl Encoder {
                     .collect()
             })
             .unwrap_or_default();
-        (!tokens.is_empty()).then_some((tokens, pooled))
+        let sparse = parsed
+            .get("s")
+            .map(|raw| {
+                let indices = raw
+                    .get("i")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|value| value.as_u64().map(|index| index as u32));
+                let weights = raw
+                    .get("w")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|value| value.as_f64().map(|weight| weight as f32));
+                indices.zip(weights).collect()
+            })
+            .unwrap_or_default();
+        let mut sparse: Sparse = sparse;
+        sparse.sort_unstable_by_key(|(index, _)| *index);
+        (!tokens.is_empty()).then_some((tokens, pooled, sparse))
     }
 
     /// Write one request and read its one-line reply.
@@ -177,6 +199,10 @@ impl Encoder {
         matches!(self.child.try_wait(), Ok(None))
     }
 }
+
+/// Learned term weights: which vocabulary entries a text activates, and how
+/// much. Ascending by index, so two of them intersect in one pass.
+pub type Sparse = Vec<(u32, f32)>;
 
 /// The two kept encoders, started on first use.
 type Slot = Mutex<Option<Encoder>>;
@@ -238,17 +264,18 @@ fn late_slot() -> &'static Slot {
     LATE.get_or_init(|| Mutex::new(None))
 }
 
-/// Encode one text both ways from one pass: a vector per token, and the
-/// model's own pooled vector.
+/// Encode one text three ways from one pass: a vector per token, the model's
+/// own pooled vector, and its learned term weights.
 ///
 /// A different binary mode rather than a model name, because the shape it
 /// returns is different: a caller that asked for one and got the other would
-/// score nonsense rather than fail. Both come back so a caller can compare the
-/// two scorings with the model held fixed. Nothing in the writer reads this; it
-/// exists so the retrieval benchmark can ask whether late interaction is the
-/// gap.
+/// score nonsense rather than fail. All three come back so a caller can compare
+/// the scorings with the model held fixed, and because the pass has already
+/// been paid for by the time any one of them is wanted. Nothing in the writer
+/// reads this; it exists so the retrieval benchmark can ask which of the three
+/// is the gap.
 #[must_use]
-pub fn encode_late(text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>)> {
+pub fn encode_late(text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>, Sparse)> {
     if text.trim().is_empty() {
         return None;
     }

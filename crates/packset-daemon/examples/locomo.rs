@@ -229,6 +229,7 @@ const PROTOCOLS: &[&str] = &[
     "turn dense",
     "session bm25 + turn dense",
     "session bm25 + turn late",
+    "session bm25 + turn m3 sparse",
 ];
 
 /// The arms compared, each a way of turning one question into a ranking.
@@ -245,6 +246,9 @@ const ARMS: &[&str] = &[
     "bm25+late",
     "m3 pooled",
     "bm25+m3 pooled",
+    "m3 sparse",
+    "bm25+m3 sparse",
+    "m3 sparse+late",
 ];
 
 /// Every fusion the panel accepts, run over one pair of ballots.
@@ -383,6 +387,45 @@ fn rank_late(ask: &Ask<'_>, query: &[Vec<f32>], documents: &[Vec<Vec<f32>>]) -> 
             "score": relevance,
         }));
     }
+    sort_by_score(&mut hits);
+    hits.truncate(ask.limit);
+    hits
+}
+
+/// Rank by the learned term weights the same pass returned.
+///
+/// The scorer is a dot product over shared vocabulary entries, so this is the
+/// inverted index's shape with the weights learned rather than counted. It
+/// costs one number a term where the per-token form costs a vector a token.
+fn rank_sparse(
+    ask: &Ask<'_>,
+    query: &packset_daemon::embed::Sparse,
+    documents: &[packset_daemon::embed::Sparse],
+) -> Vec<Value> {
+    let mut hits: Vec<Value> = Vec::new();
+    for (ordinal, atom) in ask.atoms.iter().enumerate() {
+        let Some(weights) = documents.get(ordinal).filter(|held| !held.is_empty()) else {
+            continue;
+        };
+        let relevance = search::sparse_dot(query, weights);
+        if relevance <= 0.0 {
+            continue;
+        }
+        hits.push(json!({
+            "field": "atom",
+            "id": atom.get("id").cloned().unwrap_or(Value::Null),
+            "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
+            "text": atom.get("text").cloned().unwrap_or(Value::Null),
+            "score": relevance,
+        }));
+    }
+    sort_by_score(&mut hits);
+    hits.truncate(ask.limit);
+    hits
+}
+
+/// Best score first, then the id, so a tie is broken the same way every run.
+fn sort_by_score(hits: &mut [Value]) {
     hits.sort_by(|a, b| {
         b["score"]
             .as_f64()
@@ -396,8 +439,6 @@ fn rank_late(ask: &Ask<'_>, query: &[Vec<f32>], documents: &[Vec<Vec<f32>>]) -> 
                     .cmp(b["id"].as_str().unwrap_or(""))
             })
     });
-    hits.truncate(ask.limit);
-    hits
 }
 
 /// Rank by cosine against vectors held beside the atoms rather than inside
@@ -420,19 +461,7 @@ fn rank_pooled(ask: &Ask<'_>, query: &[f32], documents: &[Vec<f32>]) -> Vec<Valu
             "score": relevance,
         }));
     }
-    hits.sort_by(|a, b| {
-        b["score"]
-            .as_f64()
-            .unwrap_or(0.0)
-            .partial_cmp(&a["score"].as_f64().unwrap_or(0.0))
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                a["id"]
-                    .as_str()
-                    .unwrap_or("")
-                    .cmp(b["id"].as_str().unwrap_or(""))
-            })
-    });
+    sort_by_score(&mut hits);
     hits.truncate(ask.limit);
     hits
 }
@@ -679,6 +708,9 @@ fn main() -> anyhow::Result<()> {
     // the model held fixed rather than against a different one.
     let mut m3_questions: std::collections::HashMap<String, Vec<f32>> =
         std::collections::HashMap::new();
+    // And the learned term weights, from that same pass.
+    let mut sparse_questions: std::collections::HashMap<String, packset_daemon::embed::Sparse> =
+        std::collections::HashMap::new();
 
     for conversation in &mut corpus {
         turns += conversation.atoms.len();
@@ -772,20 +804,26 @@ fn main() -> anyhow::Result<()> {
         // making every other read pay for it.
         let mut late_atoms: Vec<Vec<Vec<f32>>> = Vec::new();
         let mut m3_atoms: Vec<Vec<f32>> = Vec::new();
+        let mut sparse_atoms: Vec<packset_daemon::embed::Sparse> = Vec::new();
         if late {
             for atom in &conversation.atoms {
                 let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
-                let (tokens, pooled) = packset_daemon::embed::encode_late(text).unwrap_or_default();
+                let (tokens, pooled, weights) =
+                    packset_daemon::embed::encode_late(text).unwrap_or_default();
                 late_atoms.push(tokens);
                 m3_atoms.push(pooled);
+                sparse_atoms.push(weights);
             }
             for question in &conversation.questions {
                 if late_questions.contains_key(question.text.as_str()) {
                     continue;
                 }
-                if let Some((tokens, pooled)) = packset_daemon::embed::encode_late(&question.text) {
+                if let Some((tokens, pooled, weights)) =
+                    packset_daemon::embed::encode_late(&question.text)
+                {
                     late_questions.insert(question.text.clone(), tokens);
                     m3_questions.insert(question.text.clone(), pooled);
+                    sparse_questions.insert(question.text.clone(), weights);
                 }
             }
         }
@@ -821,6 +859,10 @@ fn main() -> anyhow::Result<()> {
                 .get(question.text.as_str())
                 .map(|vector| rank_pooled(&ask, vector, &m3_atoms))
                 .unwrap_or_default();
+            let m3_sparse = sparse_questions
+                .get(question.text.as_str())
+                .map(|weights| rank_sparse(&ask, weights, &sparse_atoms))
+                .unwrap_or_default();
 
             // Does the stored graph earn a place in an answer? Half the places
             // are the ranking's, and the rest go either to the ranking
@@ -849,10 +891,13 @@ fn main() -> anyhow::Result<()> {
                     "dense" => hit_ids(&meaning),
                     "late" => hit_ids(&interaction),
                     "m3 pooled" => hit_ids(&m3_pooled),
+                    "m3 sparse" => hit_ids(&m3_sparse),
                     other => {
                         let ballots = match other {
                             "bm25+late" => vec![terms.clone(), interaction.clone()],
                             "bm25+m3 pooled" => vec![terms.clone(), m3_pooled.clone()],
+                            "bm25+m3 sparse" => vec![terms.clone(), m3_sparse.clone()],
+                            "m3 sparse+late" => vec![m3_sparse.clone(), interaction.clone()],
                             "bm25+dense" => vec![terms.clone(), meaning.clone()],
                             "bm25 rm3+dense" => vec![fed.clone(), meaning.clone()],
                             "lexical+bm25+dense" => {
@@ -905,6 +950,7 @@ fn main() -> anyhow::Result<()> {
             let by_turn = collapse(&terms);
             let by_meaning = collapse(&meaning);
             let by_late = collapse(&interaction);
+            let by_sparse = collapse(&m3_sparse);
             for (slot, arm) in PROTOCOLS.iter().enumerate() {
                 let ranked = match *arm {
                     "turn bm25" => hit_ids(&by_turn),
@@ -913,6 +959,12 @@ fn main() -> anyhow::Result<()> {
                     "turn dense" => hit_ids(&by_meaning),
                     "session bm25 + turn late" => hit_ids(&search::merge_ballots(
                         &[room_terms.clone(), by_late.clone()],
+                        ask.limit,
+                        &shipped,
+                        &now,
+                    )),
+                    "session bm25 + turn m3 sparse" => hit_ids(&search::merge_ballots(
+                        &[room_terms.clone(), by_sparse.clone()],
                         ask.limit,
                         &shipped,
                         &now,

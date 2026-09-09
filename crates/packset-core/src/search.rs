@@ -451,6 +451,31 @@ fn bm25_hits(ask: &Ask<'_>, index: &crate::bm25::Index, query: &[(String, f64)])
     hits
 }
 
+/// The weight two texts share, over the terms a model says they are about.
+///
+/// Both sides ascend by index, so this is one pass rather than a lookup per
+/// term. A learned sparse representation is BM25's shape with the weights
+/// learned instead of counted: a term the model thinks the text is about
+/// carries weight even where the text says it once, and a term it thinks is
+/// filler carries little where the text repeats it.
+#[must_use]
+pub fn sparse_dot(left: &[(u32, f32)], right: &[(u32, f32)]) -> f64 {
+    let (mut here, mut there) = (0usize, 0usize);
+    let mut total = 0.0f64;
+    while here < left.len() && there < right.len() {
+        match left[here].0.cmp(&right[there].0) {
+            std::cmp::Ordering::Less => here += 1,
+            std::cmp::Ordering::Greater => there += 1,
+            std::cmp::Ordering::Equal => {
+                total += f64::from(left[here].1) * f64::from(right[there].1);
+                here += 1;
+                there += 1;
+            }
+        }
+    }
+    total
+}
+
 /// Cosine between two vectors, zero when either says nothing.
 ///
 /// Normalised here rather than assumed: the encoder normalises its output and
@@ -649,6 +674,19 @@ mod tests {
     /// A hit with a key and a score, for the fusion tests.
     fn scored(id: &str, score: f64) -> Value {
         json!({ "field": "atom", "id": id, "text": id, "score": score })
+    }
+
+    /// Only the terms both sides carry count, and the pass depends on both
+    /// sides ascending.
+    #[test]
+    fn shared_terms_are_the_only_ones_that_count() {
+        let left = [(1u32, 0.5f32), (4, 2.0), (9, 1.0)];
+        let right = [(2u32, 3.0f32), (4, 0.5), (9, 0.25)];
+        // 4 and 9 are shared: 2.0*0.5 + 1.0*0.25.
+        assert!((sparse_dot(&left, &right) - 1.25).abs() < 1e-9);
+        // Nothing shared is nothing, not an error and not a default score.
+        assert_eq!(sparse_dot(&left, &[(2u32, 1.0f32), (3, 1.0)]), 0.0);
+        assert_eq!(sparse_dot(&[], &right), 0.0);
     }
 
     /// Every name the panel accepts has to reach its own implementation.
