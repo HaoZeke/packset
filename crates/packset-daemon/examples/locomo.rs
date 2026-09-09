@@ -68,8 +68,35 @@ struct Tally {
     recall: Vec<f64>,
     /// Questions with at least one labelled turn inside the cut-off.
     hit: Vec<usize>,
+    /// Discounted gain at `NDCG_CUT`, summed, against the ideal ordering.
+    ndcg: f64,
     /// Questions counted.
     asked: usize,
+}
+
+/// Where NDCG is reported. The published number on this benchmark is at five.
+const NDCG_CUT: usize = 5;
+
+/// Discounted cumulative gain of a ranking, against the best it could be.
+///
+/// Relevance is binary here, because the benchmark labels a turn as evidence
+/// or not and says nothing about how much. So the ideal ranking puts every
+/// labelled item first, and the ideal gain depends only on how many there are.
+fn ndcg_at(ranked: &[String], evidence: &BTreeSet<String>, cut: usize) -> f64 {
+    let discount = |place: usize| 1.0 / ((place + 2) as f64).log2();
+    let gain: f64 = ranked
+        .iter()
+        .take(cut)
+        .enumerate()
+        .filter(|(_, id)| evidence.contains(*id))
+        .map(|(place, _)| discount(place))
+        .sum();
+    let ideal: f64 = (0..cut.min(evidence.len())).map(discount).sum();
+    if ideal <= 0.0 {
+        0.0
+    } else {
+        gain / ideal
+    }
 }
 
 impl Tally {
@@ -77,12 +104,14 @@ impl Tally {
         Self {
             recall: vec![0.0; CUTOFFS.len()],
             hit: vec![0; CUTOFFS.len()],
+            ndcg: 0.0,
             asked: 0,
         }
     }
 
     fn add(&mut self, ranked: &[String], evidence: &BTreeSet<String>) {
         self.asked += 1;
+        self.ndcg += ndcg_at(ranked, evidence, NDCG_CUT);
         for (slot, cut) in CUTOFFS.iter().enumerate() {
             let seen: BTreeSet<&String> = ranked.iter().take(*cut).collect();
             let found = evidence.iter().filter(|id| seen.contains(id)).count();
@@ -95,6 +124,7 @@ impl Tally {
 
     fn merge(&mut self, other: &Self) {
         self.asked += other.asked;
+        self.ndcg += other.ndcg;
         for slot in 0..CUTOFFS.len() {
             self.recall[slot] += other.recall[slot];
             self.hit[slot] += other.hit[slot];
@@ -582,8 +612,9 @@ fn table(names: &[&str], tallies: &[Tally]) {
     for cut in CUTOFFS {
         print!("{:>10}", format!("hit@{cut}"));
     }
+    print!("{:>10}", format!("nDCG@{NDCG_CUT}"));
     println!();
-    println!("{}", "-".repeat(22 + CUTOFFS.len() * 20));
+    println!("{}", "-".repeat(32 + CUTOFFS.len() * 20));
     for (slot, name) in names.iter().enumerate() {
         let tally = &tallies[slot];
         let counted = tally.asked.max(1) as f64;
@@ -594,6 +625,7 @@ fn table(names: &[&str], tallies: &[Tally]) {
         for value in &tally.hit {
             print!("{:>10.3}", *value as f64 / counted);
         }
+        print!("{:>10.3}", tally.ndcg / counted);
         println!();
     }
 }
