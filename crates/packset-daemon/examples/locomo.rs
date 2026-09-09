@@ -182,6 +182,24 @@ fn conversations(raw: &Value) -> Vec<Conversation> {
     out
 }
 
+/// The arms compared at session granularity, where the difference between them
+/// is what a document is.
+///
+/// A retrieval number reported "at session granularity" can mean either of two
+/// protocols, and they are not the same retriever. Rank the turns and read off
+/// which session each came from, so a session is scored by its single best
+/// turn; or index the session itself, so every word anyone said in it counts
+/// toward one score. A published BM25 baseline five points above the one here
+/// is more likely a different unit than a better implementation of the same
+/// formula, and this table is what says which.
+const PROTOCOLS: &[&str] = &[
+    "turn bm25",
+    "session bm25",
+    "turn dense",
+    "session bm25 + turn dense",
+    "session bm25 + turn late",
+];
+
 /// The arms compared, each a way of turning one question into a ranking.
 const ARMS: &[&str] = &[
     "lexical",
@@ -194,6 +212,17 @@ const ARMS: &[&str] = &[
     "bm25+late",
     "m3 pooled",
     "bm25+m3 pooled",
+];
+
+/// Every fusion the panel accepts, run over one pair of ballots.
+///
+/// The published lexical-plus-dense system on this benchmark attributes its
+/// gain to fusing at the score level rather than the rank level, and packset
+/// ships a rank fusion. Fusing ballots that are already computed costs a merge,
+/// so the question is answered inside the run that produced them rather than by
+/// nine runs of the encoder.
+const VOTERS: &[&str] = &[
+    "borda", "rrf", "combsum", "combmnz", "dowdall", "kemeny", "schulze", "copeland", "tideman",
 ];
 
 /// How many conversations to score, when a machine cannot hold a whole run.
@@ -239,6 +268,65 @@ fn sessions_of(ranked: &[String]) -> Vec<String> {
         .map(|id| session_of(id).to_string())
         .filter(|session| seen.insert(session.clone()))
         .collect()
+}
+
+/// A conversation's sessions as one document each, in the order they happened.
+///
+/// Concatenating a session's turns is a different document from any of them:
+/// it is longer, so BM25's length normalisation treats it differently, and a
+/// question whose words are spread over several turns matches it where it
+/// matches no single turn.
+fn session_documents(atoms: &[Record]) -> Vec<Record> {
+    let mut order: Vec<String> = Vec::new();
+    let mut bodies: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for atom in atoms {
+        let id = atom.get("id").and_then(Value::as_str).unwrap_or_default();
+        let room = session_of(id).to_string();
+        let line = atom.get("text").and_then(Value::as_str).unwrap_or_default();
+        match bodies.get_mut(&room) {
+            Some(held) => {
+                held.push('\n');
+                held.push_str(line);
+            }
+            None => {
+                order.push(room.clone());
+                bodies.insert(room, line.to_string());
+            }
+        }
+    }
+    order
+        .into_iter()
+        .map(|room| {
+            let text = bodies.remove(&room).unwrap_or_default();
+            json!({
+                "id": room,
+                "workspace": "locomo",
+                "kind": "conclusion",
+                "text": text,
+            })
+            .as_object()
+            .expect("object")
+            .clone()
+        })
+        .collect()
+}
+
+/// A turn ranking read as a session ranking: each session keeps the place of
+/// its best turn, which is the maximum-similarity protocol the papers state.
+fn collapse(hits: &[Value]) -> Vec<Value> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for hit in hits {
+        let id = hit.get("id").and_then(Value::as_str).unwrap_or_default();
+        let room = session_of(id).to_string();
+        if !seen.insert(room.clone()) {
+            continue;
+        }
+        let mut copy = hit.clone();
+        copy["id"] = json!(room);
+        out.push(copy);
+    }
+    out
 }
 
 /// Rank the corpus by late interaction, in the same hit shape as the others.
@@ -355,6 +443,31 @@ fn one_hop(ranked: &[String], atoms: &[Record], limit: usize) -> Vec<String> {
     out
 }
 
+/// One table: a row per name, recall then hit at every cut-off.
+fn table(names: &[&str], tallies: &[Tally]) {
+    print!("{:<22}", "arm");
+    for cut in CUTOFFS {
+        print!("{:>10}", format!("R@{cut}"));
+    }
+    for cut in CUTOFFS {
+        print!("{:>10}", format!("hit@{cut}"));
+    }
+    println!();
+    println!("{}", "-".repeat(22 + CUTOFFS.len() * 20));
+    for (slot, name) in names.iter().enumerate() {
+        let tally = &tallies[slot];
+        let counted = tally.asked.max(1) as f64;
+        print!("{name:<22}");
+        for value in &tally.recall {
+            print!("{:>10.3}", value / counted);
+        }
+        for value in &tally.hit {
+            print!("{:>10.3}", *value as f64 / counted);
+        }
+        println!();
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let path = std::env::args()
         .nth(1)
@@ -369,8 +482,16 @@ fn main() -> anyhow::Result<()> {
 
     let now = packset_core::clock::utcnow();
     let shipped = Panel::named("borda", "mmr", "off")?;
+    let panels: Vec<Panel> = VOTERS
+        .iter()
+        .map(|name| Panel::named(name, "mmr", "off"))
+        .collect::<Result<_, _>>()?;
     let mut totals: Vec<Tally> = ARMS.iter().map(|_| Tally::new()).collect();
     let mut by_session: Vec<Tally> = ARMS.iter().map(|_| Tally::new()).collect();
+    let mut voted: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
+    let mut voted_sessions: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
+    let mut protocol: Vec<Tally> = PROTOCOLS.iter().map(|_| Tally::new()).collect();
+    let mut room_voted: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
     let mut ranking = Tally::new();
     let mut hopped = Tally::new();
     let mut turns = 0usize;
@@ -449,6 +570,11 @@ fn main() -> anyhow::Result<()> {
         let documents: Vec<Vec<String>> =
             conversation.atoms.iter().map(search::atom_tokens).collect();
         let index = Index::build(documents.iter().map(Vec::as_slice));
+        // The same corpus with the session as the document rather than the turn.
+        let session_corpus = session_documents(&conversation.atoms);
+        let room_documents: Vec<Vec<String>> =
+            session_corpus.iter().map(search::atom_tokens).collect();
+        let room_index = Index::build(room_documents.iter().map(Vec::as_slice));
 
         // One encode of the corpus and one of the questions, through the kept
         // child the daemon uses. Absent encoder means the dense arms are empty
@@ -577,6 +703,71 @@ fn main() -> anyhow::Result<()> {
                     .collect();
                 by_session[slot].add(&sessions_of(&ranked), &rooms);
             }
+
+            // The strongest pair this run has, fused every way the panel
+            // knows. Same ballots, same questions, one difference.
+            let pair = if interaction.is_empty() {
+                if meaning.is_empty() {
+                    vec![lexical.clone(), terms.clone()]
+                } else {
+                    vec![terms.clone(), meaning.clone()]
+                }
+            } else {
+                vec![terms.clone(), interaction.clone()]
+            };
+            let rooms: BTreeSet<String> = question
+                .evidence
+                .iter()
+                .map(|id| session_of(id).to_string())
+                .collect();
+            for (slot, panel) in panels.iter().enumerate() {
+                let ranked = hit_ids(&search::merge_ballots(&pair, ask.limit, panel, &now));
+                voted[slot].add(&ranked, &question.evidence);
+                voted_sessions[slot].add(&sessions_of(&ranked), &rooms);
+            }
+
+            // The same question against a corpus of sessions, so what varies
+            // between these arms is what a document is.
+            let asking = Ask {
+                atoms: &session_corpus,
+                ..ask
+            };
+            let room_terms = search::search_bm25(&asking, &room_index);
+            let by_turn = collapse(&terms);
+            let by_meaning = collapse(&meaning);
+            let by_late = collapse(&interaction);
+            for (slot, arm) in PROTOCOLS.iter().enumerate() {
+                let ranked = match *arm {
+                    "turn bm25" => hit_ids(&by_turn),
+                    "session bm25" => hit_ids(&room_terms),
+                    "turn dense" => hit_ids(&by_meaning),
+                    "session bm25 + turn late" => hit_ids(&search::merge_ballots(
+                        &[room_terms.clone(), by_late.clone()],
+                        ask.limit,
+                        &shipped,
+                        &now,
+                    )),
+                    _ => hit_ids(&search::merge_ballots(
+                        &[room_terms.clone(), by_meaning.clone()],
+                        ask.limit,
+                        &shipped,
+                        &now,
+                    )),
+                };
+                protocol[slot].add(&ranked, &rooms);
+            }
+            // And the fusion question again, on the pair this table says is
+            // strongest, because the published gain is credited to the fusion
+            // rather than to either retriever.
+            let room_pair = if by_late.is_empty() {
+                vec![room_terms.clone(), by_meaning.clone()]
+            } else {
+                vec![room_terms.clone(), by_late.clone()]
+            };
+            for (slot, panel) in panels.iter().enumerate() {
+                let ranked = hit_ids(&search::merge_ballots(&room_pair, ask.limit, panel, &now));
+                room_voted[slot].add(&ranked, &rooms);
+            }
         }
     }
 
@@ -591,53 +782,46 @@ fn main() -> anyhow::Result<()> {
         linked as f64 / turns.max(1) as f64
     );
     println!();
-    print!("{:<22}", "arm");
-    for cut in CUTOFFS {
-        print!("{:>10}", format!("R@{cut}"));
-    }
-    for cut in CUTOFFS {
-        print!("{:>10}", format!("hit@{cut}"));
-    }
-    println!();
-    println!("{}", "-".repeat(22 + CUTOFFS.len() * 20));
-    for (slot, arm) in ARMS.iter().enumerate() {
-        let tally = &totals[slot];
-        let asked = tally.asked.max(1) as f64;
-        print!("{arm:<22}");
-        for value in &tally.recall {
-            print!("{:>10.3}", value / asked);
-        }
-        for value in &tally.hit {
-            print!("{:>10.3}", *value as f64 / asked);
-        }
-        println!();
-    }
+    table(ARMS, &totals);
 
     println!();
     println!("the same rankings read as sessions, which is the unit the");
     println!("retrieval papers on this benchmark score:");
     println!();
-    print!("{:<22}", "arm");
-    for cut in CUTOFFS {
-        print!("{:>10}", format!("R@{cut}"));
-    }
-    for cut in CUTOFFS {
-        print!("{:>10}", format!("hit@{cut}"));
-    }
+    table(ARMS, &by_session);
+
+    let swept = if late {
+        "bm25+late"
+    } else if encoder {
+        "bm25+dense"
+    } else {
+        "lexical+bm25"
+    };
     println!();
-    println!("{}", "-".repeat(22 + CUTOFFS.len() * 20));
-    for (slot, arm) in ARMS.iter().enumerate() {
-        let tally = &by_session[slot];
-        let counted = tally.asked.max(1) as f64;
-        print!("{arm:<22}");
-        for value in &tally.recall {
-            print!("{:>10.3}", value / counted);
+    println!("{swept}, fused every way the panel knows, by turn:");
+    println!();
+    table(VOTERS, &voted);
+    println!();
+    println!("the same, by session:");
+    println!();
+    table(VOTERS, &voted_sessions);
+
+    println!();
+    println!("a session as the document, against a session read off a turn");
+    println!("ranking, which are two protocols behind one word:");
+    println!();
+    table(PROTOCOLS, &protocol);
+    println!();
+    println!(
+        "{}, fused every way the panel knows:",
+        if late {
+            "session bm25 + turn late"
+        } else {
+            "session bm25 + turn dense"
         }
-        for value in &tally.hit {
-            print!("{:>10.3}", *value as f64 / counted);
-        }
-        println!();
-    }
+    );
+    println!();
+    table(VOTERS, &room_voted);
 
     let slot = CUTOFFS.iter().position(|cut| *cut == HOP_CUT).expect("cut");
     let counted = ranking.asked.max(1) as f64;
