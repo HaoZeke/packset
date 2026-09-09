@@ -27,6 +27,12 @@
 //!   it is not comparable to 92.5 or 94.4 and is not offered as though it were.
 //! - Category 5 is adversarial, meaning the conversation does not answer the
 //!   question. Recall is undefined there and those questions are excluded.
+//!
+//! Two knobs, both off by default and both for a machine that cannot hold a
+//! whole run: `PACKSET_LOCOMO_LATE` adds the per-token arms, and
+//! `PACKSET_LOCOMO_CONVERSATIONS` scores the first N. A capped run keeps the
+//! arms comparable to each other and stops them being comparable to a run over
+//! all ten, so a number from one says which it was.
 
 use std::collections::BTreeSet;
 
@@ -188,6 +194,18 @@ const ARMS: &[&str] = &[
     "bm25+late",
 ];
 
+/// How many conversations to score, when a machine cannot hold a whole run.
+///
+/// All ten by default. A smaller number is not a smaller benchmark so much as a
+/// different one, and the arms stay comparable to each other because they all
+/// see the same corpus; they stop being comparable to a run over ten.
+fn conversation_cap() -> Option<usize> {
+    std::env::var("PACKSET_LOCOMO_CONVERSATIONS")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .filter(|n| *n > 0)
+}
+
 /// Whether to spend the time and memory on the per-token encoding.
 ///
 /// Off unless asked, because it is one vector per token: the same corpus that
@@ -305,6 +323,10 @@ fn main() -> anyhow::Result<()> {
     let raw: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
     let mut corpus = conversations(&raw);
     anyhow::ensure!(!corpus.is_empty(), "no conversations in {path}");
+    if let Some(cap) = conversation_cap() {
+        corpus.truncate(cap);
+        println!("scoring {} of the conversations, as asked", corpus.len());
+    }
 
     let now = packset_core::clock::utcnow();
     let shipped = Panel::named("borda", "mmr", "off")?;
