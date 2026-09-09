@@ -595,6 +595,87 @@ mod tests {
         assert_eq!(max_sim(std::slice::from_ref(&a), &[]), 0.0);
     }
 
+    /// A hit with a key and a score, for the fusion tests.
+    fn scored(id: &str, score: f64) -> Value {
+        json!({ "field": "atom", "id": id, "text": id, "score": score })
+    }
+
+    /// Every name the panel accepts has to reach its own implementation.
+    ///
+    /// Five of the nine used to fall through to Borda, so asking for Schulze
+    /// got Borda's answer under Schulze's name. The enum's own doc says only
+    /// implemented names parse, and that has to be true of what runs rather
+    /// than only of what parses.
+    #[test]
+    fn a_named_fuse_runs_the_voter_it_names() {
+        // `c` is second on both ballots and close behind the leader on both,
+        // so it carries the most score mass and the least rank credit. A voter
+        // that reads scores puts it first; a voter that reads positions cannot.
+        let first = vec![scored("a", 10.0), scored("c", 9.9), scored("b", 1.0)];
+        let second = vec![scored("b", 10.0), scored("c", 9.9), scored("a", 1.0)];
+        let now = crate::clock::utcnow();
+
+        let order = |name: &str| -> Vec<String> {
+            let panel = crate::panel::Panel::named(name, "none", "off").expect("voter");
+            merge_ballots(&[first.clone(), second.clone()], 3, &panel, &now)
+                .iter()
+                .map(|hit| hit["id"].as_str().unwrap_or("").to_string())
+                .collect()
+        };
+
+        let borda = order("borda");
+        assert_eq!(borda.first().map(String::as_str), Some("a"), "{borda:?}");
+
+        // The bug this pins: both score fusions used to return Borda's answer.
+        for name in ["combsum", "combmnz"] {
+            let ranked = order(name);
+            assert_eq!(
+                ranked.first().map(String::as_str),
+                Some("c"),
+                "{name}: {ranked:?}"
+            );
+            assert_ne!(ranked, borda, "{name} is still answering as borda");
+        }
+
+        // And every rank voter answers with what its own module answers,
+        // which is the property a fall-through breaks silently: a wrong
+        // dispatch still returns a plausible full ranking.
+        let lists = [first.clone(), second.clone()];
+        let keys: Vec<Vec<String>> = lists.iter().map(|hits| ballot_keys(hits)).collect();
+        let k = 3;
+        let expected: Vec<(&str, Vec<String>)> = vec![
+            ("rrf", crate::rrf::rrf_merge(&keys, RRF_K0)),
+            ("dowdall", crate::dowdall::dowdall_merge(&keys, k)),
+            ("kemeny", crate::kemeny::kemeny_merge(&keys, k)),
+            ("schulze", crate::schulze::schulze_merge(&keys, k)),
+            ("copeland", crate::copeland::copeland_merge(&keys, k)),
+            ("tideman", crate::tideman::ranked_pairs_merge(&keys, k)),
+        ];
+        for (name, want) in expected {
+            let want: Vec<String> = want
+                .iter()
+                .map(|key| key.rsplit('\u{0}').next().unwrap_or(key).to_string())
+                .collect();
+            assert_eq!(order(name), want, "{name} did not answer as its own module");
+        }
+    }
+
+    /// Position stands in for a weight, so the diversify slot downstream sees a
+    /// relevance that decreases with rank whichever voter produced the order.
+    #[test]
+    fn a_fused_weight_falls_with_position() {
+        let ballots = vec![vec!["a".to_string(), "b".to_string(), "c".to_string()]];
+        let scored_ballots = vec![vec![
+            ("a".to_string(), 1.0),
+            ("b".to_string(), 0.5),
+            ("c".to_string(), 0.1),
+        ]];
+        let (ranked, weights) =
+            fuse_scores(crate::panel::Fuse::Borda, &ballots, &scored_ballots, 3);
+        assert_eq!(ranked, vec!["a", "b", "c"]);
+        assert!(weights["a"] > weights["b"] && weights["b"] > weights["c"]);
+    }
+
     /// One question, for the tests that only vary part of it.
     fn ask<'a>(
         user: &'a str,
@@ -788,62 +869,57 @@ fn ballot_keys(hits: &[Value]) -> Vec<String> {
 ///
 /// A tie broken by hash order would reorder results between two runs over the
 /// same data, so the order a key was first seen in decides.
+/// Reciprocal rank fusion's smoothing constant, as the paper sets it.
+const RRF_K0: usize = 60;
+
+/// Run the named voter and give every key a weight from where it landed.
+///
+/// One dispatch, to the module that implements the name. The voters do not
+/// share a score scale, so position stands in as the weight: what reads it is
+/// the diversify slot, which needs a monotone relevance and not a calibrated
+/// one.
 fn fuse_scores(
     fuse: crate::panel::Fuse,
     ballots: &[Vec<String>],
+    scored: &[crate::comb::ScoredBallot<String>],
     k: usize,
 ) -> (Vec<String>, std::collections::HashMap<String, f64>) {
-    use std::collections::HashMap;
-    let mut scores: HashMap<String, f64> = HashMap::new();
-    let mut first_seen: Vec<String> = Vec::new();
+    use crate::panel::Fuse;
     if ballots.is_empty() || k == 0 {
-        return (Vec::new(), scores);
+        return (Vec::new(), std::collections::HashMap::new());
     }
-
-    if matches!(fuse, crate::panel::Fuse::Kemeny) {
-        // Kemeny has no per-key score of its own, so position stands in, which
-        // is what the writer being replaced does with it.
-        let refs: Vec<Vec<String>> = ballots.to_vec();
-        let ranked = crate::kemeny::kemeny_merge(&refs, k);
-        let n = ranked.len() as f64;
-        for (i, key) in ranked.iter().enumerate() {
-            scores.insert(key.clone(), n - i as f64);
-        }
-        return (ranked, scores);
-    }
-
-    for ballot in ballots {
-        let taken: Vec<&String> = match fuse {
-            crate::panel::Fuse::Rrf => ballot.iter().collect(),
-            _ => ballot.iter().take(k).collect(),
-        };
-        for (pos, key) in taken.into_iter().enumerate() {
-            if !scores.contains_key(key) {
-                first_seen.push(key.clone());
-            }
-            let add = match fuse {
-                crate::panel::Fuse::Rrf => 1.0 / (60.0 + pos as f64 + 1.0),
-                crate::panel::Fuse::Dowdall => 1.0 / (pos as f64 + 1.0),
-                // Borda, and anything else, is k minus the position.
-                _ => (k - pos) as f64,
-            };
-            *scores.entry(key.clone()).or_insert(0.0) += add;
-        }
-    }
-    let order: std::collections::HashMap<&String, usize> = first_seen
+    let ranked = match fuse {
+        Fuse::Borda => crate::borda::borda_merge(ballots, k),
+        Fuse::Rrf => crate::rrf::rrf_merge(ballots, RRF_K0),
+        // The two score fusions are the only voters that read the scores; every
+        // other one reads position alone.
+        Fuse::CombSum => crate::comb::combsum_merge(scored),
+        Fuse::CombMnz => crate::comb::combmnz_merge(scored),
+        Fuse::Dowdall => crate::dowdall::dowdall_merge(ballots, k),
+        Fuse::Kemeny => crate::kemeny::kemeny_merge(ballots, k),
+        Fuse::Schulze => crate::schulze::schulze_merge(ballots, k),
+        Fuse::Copeland => crate::copeland::copeland_merge(ballots, k),
+        Fuse::Tideman => crate::tideman::ranked_pairs_merge(ballots, k),
+    };
+    let n = ranked.len() as f64;
+    let scores = ranked
         .iter()
         .enumerate()
-        .map(|(i, key)| (key, i))
+        .map(|(index, key)| (key.clone(), n - index as f64))
         .collect();
-    let mut ranked = first_seen.clone();
-    ranked.sort_by(|a, b| {
-        let sa = scores.get(a).copied().unwrap_or(0.0);
-        let sb = scores.get(b).copied().unwrap_or(0.0);
-        sb.partial_cmp(&sa)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| order[a].cmp(&order[b]))
-    });
     (ranked, scores)
+}
+
+/// One ballot as (key, score) pairs, which is what a score fusion needs.
+fn scored_ballot(hits: &[Value]) -> crate::comb::ScoredBallot<String> {
+    let mut seen = std::collections::HashSet::new();
+    hits.iter()
+        .filter_map(|hit| {
+            let key = hit_key_of(hit);
+            seen.insert(key.clone())
+                .then(|| (key, hit["score"].as_f64().unwrap_or(0.0)))
+        })
+        .collect()
 }
 
 /// Named fuse, then diversify, then decay, over two ranked lists.
@@ -868,7 +944,9 @@ pub fn merge_ballots(
         }
     }
     let keys: Vec<Vec<String>> = ballots.iter().map(|hits| ballot_keys(hits)).collect();
-    let (mut ranked, scores) = fuse_scores(panel.fuse, &keys, limit);
+    let scored: Vec<crate::comb::ScoredBallot<String>> =
+        ballots.iter().map(|hits| scored_ballot(hits)).collect();
+    let (mut ranked, scores) = fuse_scores(panel.fuse, &keys, &scored, limit);
     let mut weights: std::collections::HashMap<String, f64> = ranked
         .iter()
         .map(|key| (key.clone(), scores.get(key).copied().unwrap_or(0.0)))
