@@ -28,12 +28,13 @@
 //! - Category 5 is adversarial, meaning the conversation does not answer the
 //!   question. Recall is undefined there and those questions are excluded.
 //!
-//! Three knobs, all off by default and all for a machine that cannot hold a
-//! whole run: `PACKSET_LOCOMO_LATE` adds the per-token arms,
-//! `PACKSET_LOCOMO_CONVERSATIONS` scores the first N, and
-//! `PACKSET_LOCOMO_CACHE` names a directory to keep the encodings in. A capped
-//! run keeps the arms comparable to each other and stops them being comparable
-//! to a run over all ten, so a number from one says which it was.
+//! Four knobs, all off by default and all about what a run costs:
+//! `PACKSET_LOCOMO_LATE` adds the per-token arms, `PACKSET_LOCOMO_WALK` adds
+//! the restart walk over the link graph, `PACKSET_LOCOMO_CONVERSATIONS` scores
+//! the first N, and `PACKSET_LOCOMO_CACHE` names a directory to keep the
+//! encodings in. A capped run keeps the arms comparable to each other and stops
+//! them being comparable to a run over all ten, so a number from one says which
+//! it was.
 
 use std::collections::BTreeSet;
 
@@ -351,6 +352,18 @@ fn conversation_cap() -> Option<usize> {
 /// Off unless asked, because it is one vector per token: the same corpus that
 /// costs twenty five megabytes pooled costs about a gigabyte this way, and the
 /// encode takes several times as long.
+/// Whether to spend the time on the restart walk.
+///
+/// Off unless asked. The walk touches every edge on every round for every
+/// question, which is most of a run's time, and it has answered its question
+/// twice over: on three conversations and on ten, filling the last ten places
+/// of twenty by a personalised PageRank scored below letting the ranking
+/// continue, and barely above one hop. Leaving it on taxes every future run
+/// with a settled question.
+fn walk_wanted() -> bool {
+    std::env::var("PACKSET_LOCOMO_WALK").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
 fn late_wanted() -> bool {
     std::env::var("PACKSET_LOCOMO_LATE").is_ok_and(|v| !v.is_empty() && v != "0")
 }
@@ -775,6 +788,10 @@ fn main() -> anyhow::Result<()> {
     let encoder = encoder.is_some();
     let mut questions: std::collections::HashMap<String, Vec<f32>> =
         std::collections::HashMap::new();
+    let walking = walk_wanted();
+    if walking {
+        println!("restart walk: on, which is most of the time a run takes");
+    }
     let late = encoder && late_wanted();
     if late {
         println!("late interaction: on, one vector per token");
@@ -839,7 +856,9 @@ fn main() -> anyhow::Result<()> {
                 .max()
                 .unwrap_or(0),
         );
-        let graph = Graph::of(&conversation.atoms);
+        // Built only when the walk runs: the adjacency costs a pass over every
+        // atom's links, which a run that is not walking has no use for.
+        let graph = walking.then(|| Graph::of(&conversation.atoms));
         let documents: Vec<Vec<String>> =
             conversation.atoms.iter().map(search::atom_tokens).collect();
         let index = Index::build(documents.iter().map(Vec::as_slice));
@@ -995,7 +1014,9 @@ fn main() -> anyhow::Result<()> {
                 &one_hop(&shallow, &conversation.atoms, HOP_CUT),
                 &question.evidence,
             );
-            walked.add(&graph.expand(&shallow, HOP_CUT), &question.evidence);
+            if let Some(graph) = graph.as_ref() {
+                walked.add(&graph.expand(&shallow, HOP_CUT), &question.evidence);
+            }
 
             for (slot, arm) in ARMS.iter().enumerate() {
                 let ranked = match *arm {
@@ -1207,11 +1228,13 @@ fn main() -> anyhow::Result<()> {
         hopped.recall[slot] / counted,
         hopped.hit[slot] as f64 / counted
     );
-    println!(
-        "  a restart walk from it R@{HOP_CUT} {:.3}   hit@{HOP_CUT} {:.3}",
-        walked.recall[slot] / counted,
-        walked.hit[slot] as f64 / counted
-    );
+    if walking {
+        println!(
+            "  a restart walk from it R@{HOP_CUT} {:.3}   hit@{HOP_CUT} {:.3}",
+            walked.recall[slot] / counted,
+            walked.hit[slot] as f64 / counted
+        );
+    }
 
     let mut merged = Tally::new();
     merged.merge(&totals[0]);
