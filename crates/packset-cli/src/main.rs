@@ -80,7 +80,11 @@ fn run() -> anyhow::Result<()> {
         }
         "pin" => pin(port, rest.first().map(String::as_str)),
         "accessions" => accessions(port, rest.first().map(String::as_str)),
-        "citers" => citers(port, rest.first().map(String::as_str), rest.get(1).map(String::as_str)),
+        "citers" => citers(
+            port,
+            rest.first().map(String::as_str),
+            rest.get(1).map(String::as_str),
+        ),
         "-h" | "--help" | "help" => {
             println!("{}", usage());
             Ok(())
@@ -311,7 +315,10 @@ fn citers(port: u16, accession: Option<&str>, given: Option<&str>) -> anyhow::Re
         accession.ok_or_else(|| anyhow::anyhow!("name an accession: packset citers ACCESSION"))?;
     let workspace = workspace(given)?;
     for atom in client(port).citers(&workspace, accession)? {
-        let id = atom.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
+        let id = atom
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
         let text = atom
             .get("text")
             .and_then(serde_json::Value::as_str)

@@ -1053,10 +1053,7 @@ mod tests {
     fn only_the_atom_that_cites_an_accession_is_named() {
         let (_dir, svc) = service();
         let mut cites = atom("The overlay landed as a frozen deed.");
-        cites.insert(
-            "entities".into(),
-            json!(["deed-patch-overlay", "overlay"]),
-        );
+        cites.insert("entities".into(), json!(["deed-patch-overlay", "overlay"]));
         let stored = svc.add(cites).unwrap();
         let mut elsewhere = atom("The parser was rewritten.");
         elsewhere.insert("entities".into(), json!(["parser"]));
@@ -1096,7 +1093,10 @@ mod tests {
     fn what_a_pack_cites_and_who_cites_it_agree() {
         let (_dir, svc) = service();
         let mut cites = atom("The overlay landed as a frozen deed.");
-        cites.insert("entities".into(), json!(["deed-patch-overlay", "sha256:abc"]));
+        cites.insert(
+            "entities".into(),
+            json!(["deed-patch-overlay", "sha256:abc"]),
+        );
         svc.add(cites).unwrap();
 
         let listed = svc.accessions("w").unwrap();
