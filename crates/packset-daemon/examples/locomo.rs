@@ -28,11 +28,12 @@
 //! - Category 5 is adversarial, meaning the conversation does not answer the
 //!   question. Recall is undefined there and those questions are excluded.
 //!
-//! Two knobs, both off by default and both for a machine that cannot hold a
-//! whole run: `PACKSET_LOCOMO_LATE` adds the per-token arms, and
-//! `PACKSET_LOCOMO_CONVERSATIONS` scores the first N. A capped run keeps the
-//! arms comparable to each other and stops them being comparable to a run over
-//! all ten, so a number from one says which it was.
+//! Three knobs, all off by default and all for a machine that cannot hold a
+//! whole run: `PACKSET_LOCOMO_LATE` adds the per-token arms,
+//! `PACKSET_LOCOMO_CONVERSATIONS` scores the first N, and
+//! `PACKSET_LOCOMO_CACHE` names a directory to keep the encodings in. A capped
+//! run keeps the arms comparable to each other and stops them being comparable
+//! to a run over all ten, so a number from one says which it was.
 
 use std::collections::BTreeSet;
 
@@ -261,6 +262,68 @@ const ARMS: &[&str] = &[
 const VOTERS: &[&str] = &[
     "borda", "rrf", "combsum", "combmnz", "dowdall", "kemeny", "schulze", "copeland", "tideman",
 ];
+
+/// Where encodings are kept between runs, when the seat names a directory.
+///
+/// The encode dominates a run, costs the same every time, and depends on
+/// nothing but the model and the text. A benchmark that pays it again on every
+/// run is a benchmark that cannot be re-run, which is how a question about
+/// fusion ends up waiting on a question about a scheduler.
+fn cache_dir() -> Option<std::path::PathBuf> {
+    let raw = std::env::var_os("PACKSET_LOCOMO_CACHE")?;
+    let dir = std::path::PathBuf::from(raw);
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// The model the vectors came from, so two models never share a file.
+fn model_name() -> String {
+    std::env::var("PACKSET_EMBED_MODEL").unwrap_or_else(|_| "default".to_string())
+}
+
+/// Rows of floats, length-prefixed, so a ragged set reads back as it was
+/// written and a truncated file fails the count check rather than the scoring.
+fn write_rows(path: &std::path::Path, rows: &[Vec<f32>]) {
+    let mut bytes: Vec<u8> = Vec::new();
+    bytes.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+    for row in rows {
+        bytes.extend_from_slice(&(row.len() as u32).to_le_bytes());
+        for value in row {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    // Written beside and renamed, so a cancelled run leaves no half file that
+    // the next one would read as complete.
+    let temporary = path.with_extension("part");
+    if std::fs::write(&temporary, &bytes).is_ok() {
+        let _ = std::fs::rename(&temporary, path);
+    }
+}
+
+fn read_rows(path: &std::path::Path, expected: usize) -> Option<Vec<Vec<f32>>> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut at = 0usize;
+    let mut take = |width: usize| -> Option<&[u8]> {
+        let slice = bytes.get(at..at + width)?;
+        at += width;
+        Some(slice)
+    };
+    let count = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+    if count != expected {
+        return None;
+    }
+    let mut rows = Vec::with_capacity(count);
+    for _ in 0..count {
+        let width = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+        let raw = take(width * 4)?;
+        rows.push(
+            raw.chunks_exact(4)
+                .filter_map(|four| four.try_into().ok().map(f32::from_le_bytes))
+                .collect(),
+        );
+    }
+    Some(rows)
+}
 
 /// How many conversations to score, when a machine cannot hold a whole run.
 ///
@@ -712,7 +775,7 @@ fn main() -> anyhow::Result<()> {
     let mut sparse_questions: std::collections::HashMap<String, packset_daemon::embed::Sparse> =
         std::collections::HashMap::new();
 
-    for conversation in &mut corpus {
+    for (index, conversation) in corpus.iter_mut().enumerate() {
         turns += conversation.atoms.len();
         // The write path is what builds the graph, so the benchmark runs it
         // rather than a copy of it: `apply_links` is what bounds the peer side
@@ -776,26 +839,63 @@ fn main() -> anyhow::Result<()> {
         // child the daemon uses. Absent encoder means the dense arms are empty
         // and the lexical ones still report, which is the seat's own fallback.
         if encoder {
-            for atom in &mut conversation.atoms {
-                let text = atom
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                if let Some(vector) = packset_daemon::embed::encode_document(&text) {
-                    atom.insert(
-                        "embedding".into(),
-                        Value::Array(vector.into_iter().map(|f| json!(f)).collect()),
-                    );
+            let model = model_name();
+            let held = cache_dir();
+            let atom_file = held
+                .as_ref()
+                .map(|dir| dir.join(format!("{model}-atoms-{index}.vec")));
+            let question_file = held
+                .as_ref()
+                .map(|dir| dir.join(format!("{model}-questions-{index}.vec")));
+
+            let cached = atom_file
+                .as_deref()
+                .and_then(|path| read_rows(path, conversation.atoms.len()));
+            let vectors = cached.unwrap_or_else(|| {
+                let fresh: Vec<Vec<f32>> = conversation
+                    .atoms
+                    .iter()
+                    .map(|atom| {
+                        let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
+                        packset_daemon::embed::encode_document(text).unwrap_or_default()
+                    })
+                    .collect();
+                if let Some(path) = atom_file.as_deref() {
+                    write_rows(path, &fresh);
                 }
-            }
-            for question in &conversation.questions {
-                if questions.contains_key(question.text.as_str()) {
+                fresh
+            });
+            for (atom, vector) in conversation.atoms.iter_mut().zip(vectors) {
+                if vector.is_empty() {
                     continue;
                 }
-                if let Some(vector) = packset_daemon::embed::encode_query(&question.text) {
-                    questions.insert(question.text.clone(), vector);
+                atom.insert(
+                    "embedding".into(),
+                    Value::Array(vector.into_iter().map(|f| json!(f)).collect()),
+                );
+            }
+
+            let cached = question_file
+                .as_deref()
+                .and_then(|path| read_rows(path, conversation.questions.len()));
+            let asked = cached.unwrap_or_else(|| {
+                let fresh: Vec<Vec<f32>> = conversation
+                    .questions
+                    .iter()
+                    .map(|question| {
+                        packset_daemon::embed::encode_query(&question.text).unwrap_or_default()
+                    })
+                    .collect();
+                if let Some(path) = question_file.as_deref() {
+                    write_rows(path, &fresh);
                 }
+                fresh
+            });
+            for (question, vector) in conversation.questions.iter().zip(asked) {
+                if vector.is_empty() {
+                    continue;
+                }
+                questions.insert(question.text.clone(), vector);
             }
         }
 

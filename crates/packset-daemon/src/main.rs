@@ -42,7 +42,11 @@ fn main() -> anyhow::Result<()> {
             // Answered before the store is opened, so anything checking for
             // drift can ask a build that cannot take the lock.
             "-V" | "--version" => {
-                println!("packsetd {}", env!("CARGO_PKG_VERSION"));
+                println!(
+                    "packsetd {} ({})",
+                    env!("CARGO_PKG_VERSION"),
+                    env!("PACKSET_COMMIT")
+                );
                 return Ok(());
             }
             other => anyhow::bail!("unknown argument: {other}\n\n{}", usage()),

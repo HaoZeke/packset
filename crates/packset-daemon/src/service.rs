@@ -806,6 +806,11 @@ impl Service {
         let pin = workspace.map(|w| self.pin(w)).unwrap_or_default();
         Ok(json!({
             "home": self.home.root().display().to_string(),
+            // Which build is answering. The version does not move between
+            // releases and the code does, so a seat comparing an installed
+            // daemon against a repository needs the commit to compare.
+            "version": env!("CARGO_PKG_VERSION"),
+            "commit": env!("PACKSET_COMMIT"),
             "workspace": workspace.unwrap_or(""),
             "set": pin,
             "live": live.values().sum::<usize>(),
@@ -1077,6 +1082,9 @@ mod tests {
         // The panel is host configuration a client cannot see, so status is
         // where an operator finds out which voters answered.
         assert_eq!(status["panel"]["fuse"], json!("rrf"));
+        // A build that cannot say which commit it is says so, rather than
+        // saying nothing and reading as current.
+        assert!(!status["commit"].as_str().unwrap_or_default().is_empty());
         assert_eq!(status["panel"]["diversify"], json!("none"));
         assert_eq!(status["tombstone"], json!(1));
         assert_eq!(status["live_by_kind"]["preference"], json!(1));

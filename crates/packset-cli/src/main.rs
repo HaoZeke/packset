@@ -90,7 +90,11 @@ fn run() -> anyhow::Result<()> {
             Ok(())
         }
         "-V" | "--version" => {
-            println!("packset {}", env!("CARGO_PKG_VERSION"));
+            println!(
+                "packset {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                env!("PACKSET_COMMIT")
+            );
             Ok(())
         }
         other => anyhow::bail!("unknown command: {other}\n\n{}", usage()),
