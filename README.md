@@ -169,6 +169,32 @@ baseline several points above one measured here is more likely a different unit
 than a better implementation of the same formula, and `examples/locomo` reports
 both protocols side by side so the question is answerable rather than arguable.
 
+## Where this sits against the published numbers
+
+The best arm measured here, against the best published on this benchmark:
+
+| | session hit@1 | nDCG@5 |
+|---|---|---|
+| session BM25 + dense, CombMNZ, bge-small (33M) | 0.654 | 0.747 |
+| published, BM25 + e5-large-v2 (335M) | 0.752 | 0.829 |
+
+What is comparable: the corpus is the same ten conversations, the questions are
+the same 1536 with labelled evidence, and both score a session. What is not
+established: that paper does not state which subset of LoCoMo it used, and the
+benchmark family runs to fifty dialogues where the public file holds ten. A
+number from ten conversations and a number from an unstated subset are not the
+same measurement, and no amount of work on this side closes that.
+
+So the honest form is: the distance has gone from 0.203 to 0.098 of hit@1, and
+three of the four things that closed it were defects rather than missing
+capability. Score fusion parsed and never ran. A relevance model weighted rarity
+twice. A voter could stop the process. The fourth was a unit: "session
+granularity" naming two protocols.
+
+What has not been tried at this scale is late interaction on the session
+protocol, which led on a three-conversation subset, and it needs one vector per
+token rather than one per atom.
+
 Late interaction is the difference, and it is the scoring rather than the model.
 One model scored both ways, BGE-M3 over three of the conversations:
 
