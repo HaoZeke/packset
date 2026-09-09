@@ -39,6 +39,12 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", usage());
                 return Ok(());
             }
+            // Answered before the store is opened, so anything checking for
+            // drift can ask a build that cannot take the lock.
+            "-V" | "--version" => {
+                println!("packsetd {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
             other => anyhow::bail!("unknown argument: {other}\n\n{}", usage()),
         }
     }
@@ -65,6 +71,7 @@ fn usage() -> String {
     format!(
         "packsetd: the loopback pack writer\n\
          \n\
+             -V, --version       the build this is\n\
              --host <addr>       {} only, which is the contract\n\
              --port <n>          default {}, or PACKSET_PORT\n\
              --home <dir>        the pack home, or GROKINSIDE_HOME\n\
