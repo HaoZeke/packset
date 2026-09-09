@@ -102,9 +102,30 @@ recall of labelled evidence with no model in the loop, so it is not the 92.5 and
 Read a number against its unit. The table above ranks turns. The retrieval
 papers score a session by its best turn instead. Read that way, BM25 with
 bge-large reaches hit@1 0.643 and hit@10 0.952, against 0.752 hit@1 published
-for lexical fused with a late-interaction dense retriever. Late interaction is a
-different retrieval architecture rather than a bigger model, and it is the
-remaining structural difference.
+for lexical fused with a late-interaction dense retriever.
+
+Late interaction is the difference, and it is the scoring rather than the model.
+One model scored both ways, BGE-M3 over three of the conversations:
+
+| arm | R@10 | session hit@1 |
+|---|---|---|
+| its pooled vector, by cosine | 0.562 | 0.499 |
+| its per-token vectors, by max-sim | **0.649** | **0.564** |
+| BM25 + pooled | 0.635 | 0.590 |
+| BM25 + max-sim | **0.653** | **0.642** |
+
+The same weights, the same corpus, the same questions. Scoring a document by the
+best match each query token finds anywhere in it beats pooling those tokens into
+one vector, by 0.087 R@10 and 0.065 session hit@1 alone, and by 0.052 session
+hit@1 once BM25 is fused in.
+
+Size is not hiding in there either: BGE-M3's pooled output at 568M parameters is
+*worse* here than bge-small's at 33M, 0.562 R@10 against 0.641.
+
+`packset-embed --late` and `search::max_sim` implement it, and nothing in the
+writer reads them. A vector per token is thirty vectors where the pooled form is
+one, so an atom's `embedding` would grow accordingly, and whether a pack can
+afford that depends on how large a pack is.
 
 The stored link graph does not help a query. Given twenty places, filling the
 last ten by following the neighbours of the first ten scores 0.562 R@20 against
