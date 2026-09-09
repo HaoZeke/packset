@@ -7,6 +7,8 @@ Do not embed git-tracked files into memory.
 
 - `just check` — fmt, clippy, and the workspace tests
 - `just bench` — what a pack costs as it grows, and its link degree
+- `cargo run --release -p packset-daemon --example locomo -- locomo10.json`
+  — retrieval quality against LoCoMo's labelled evidence
 - `packset ensure` / `packset status`
 
 The search binary is built on the remote builder. `just milli`

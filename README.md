@@ -56,11 +56,50 @@ Whether the deed exists is a question the pack cannot ask. It checks the shape;
   through a typo or a prefix and weighs every word alike; BM25 weighs a
   word by how much it narrows the pack down, normalises for length, and
   finds nothing a typo hides. The milli projection is a third when it is
-  built.
+  built. Fusing measures better than either alone: see Retrieval below.
 - Search merge is a host voter panel. Default is Borda then MMR,
   decay off. `PACKSET_FUSE`, `PACKSET_DIVERSIFY`, and
   `PACKSET_DECAY` select the sequence. Not a client header.
 - Tool dumps and fetched bodies are not atoms.
+
+## Retrieval
+
+The fusion is measured rather than argued. `examples/locomo` runs the scorers
+against LoCoMo (DOI 10.48550/arXiv.2402.17753), which labels each of its
+questions with the dialogue turns that answer it:
+
+```console
+$ curl -sSLO https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json
+$ cargo run --release -p packset-daemon --example locomo -- locomo10.json
+```
+
+Ten conversations, 5882 turns loaded as atoms, 1536 answerable questions:
+
+| arm | R@10 | hit@10 |
+|---|---|---|
+| the pack's own scorer | 0.514 | 0.580 |
+| BM25 | 0.530 | 0.588 |
+| both, Borda then MMR | **0.547** | **0.611** |
+
+Three things this does not say. It measures the scorer, not the system. Turns
+are loaded as atoms and nothing in packset extracts. So this is the ranking
+given a corpus, not a judgement about what should have been remembered.
+It is recall of labelled evidence with no model in the loop, so it is not the
+92.5 and 94.4 the memory papers report for end-to-end answers. And it is not a
+good number. Published lexical-plus-dense fusion on this benchmark reaches
+Hit@1 0.752 at session granularity where the best arm here reaches 0.589. The
+difference is the dense half, which packset does not have.
+
+Read a number against its unit. The table above ranks turns. The retrieval
+papers score a session by its best turn instead, which gives 0.928 hit@10 for
+BM25 alone here. A session holds dozens of turns, so it is an easier question.
+Fusing wins on turns and loses on sessions. Turns are what a pack stores, which
+is why the panel stays the default.
+
+The stored link graph does not help a query. Given twenty places, filling the
+last ten by following the neighbours of the first ten scores 0.562 R@20 against
+0.617 for letting the ranking continue. A neighbourhood is for walking out from
+something already found, not for answering.
 
 ## Crates
 
