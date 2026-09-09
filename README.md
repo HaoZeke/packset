@@ -113,6 +113,9 @@ ballots this crate ships, same questions, same corpus, read as sessions:
 | Dowdall | 0.618 | 0.713 |
 | RRF | 0.613 | 0.708 |
 
+The margin grows with the strength of the ballots. On session BM25 fused with
+e5-large, CombMNZ leads Borda by 3.2 points of hit@1 and 0.020 nDCG@5.
+
 Score fusion beats rank fusion here, which is what the published system on this
 benchmark credits its own gain to. CombMNZ is the default.
 
@@ -175,24 +178,33 @@ The best arm measured here, against the best published on this benchmark:
 
 | | session hit@1 | nDCG@5 |
 |---|---|---|
-| session BM25 + dense, CombMNZ, bge-small (33M) | 0.654 | 0.747 |
-| published, BM25 + e5-large-v2 (335M) | 0.752 | 0.829 |
+| what this shipped before | 0.549 | 0.660 |
+| session BM25 alone | 0.607 | 0.710 |
+| session BM25 + dense, Borda | 0.684 | 0.774 |
+| session BM25 + dense, CombMNZ | **0.716** | **0.794** |
+| published, BM25 + e5-large-v2 | 0.752 | 0.829 |
 
-What is comparable: the corpus is the same ten conversations, the questions are
-the same 1536 with labelled evidence, and both score a session. What is not
-established: that paper does not state which subset of LoCoMo it used, and the
-benchmark family runs to fifty dialogues where the public file holds ten. A
-number from ten conversations and a number from an unstated subset are not the
-same measurement, and no amount of work on this side closes that.
+Same encoder family as the published system, same ten conversations, same 1536
+questions, and every method here is training-free.
 
-So the honest form is: the distance has gone from 0.203 to 0.098 of hit@1, and
-three of the four things that closed it were defects rather than missing
-capability. Score fusion parsed and never ran. A relevance model weighted rarity
-twice. A voter could stop the process. The fourth was a unit: "session
-granularity" naming two protocols.
+The gain reproduces almost exactly. That paper reports +11.2 points over BM25
+alone; fusing dense into session BM25 here is worth +10.9, and CombMNZ over
+Borda is 3.2 of those. What does not reproduce is the starting point: their
+BM25 baseline implies 0.640 against the 0.607 measured here, and 0.033 of
+baseline accounts for almost all of the 0.036 that remains.
+
+So the residual is a difference in the BM25 side or in the sample, not in the
+fusion. The paper does not state which subset of LoCoMo it used and the family
+runs to fifty dialogues where the public file holds ten, so that last part is
+not closable from here and is not worth tuning against.
+
+Of the distance that did close, from 0.203 to 0.036, three of four causes were
+defects rather than missing capability. Score fusion parsed and never ran. A
+relevance model weighted rarity twice. A voter could stop the process. The
+fourth was a unit: "session granularity" naming two protocols.
 
 What has not been tried at this scale is late interaction on the session
-protocol, which led on a three-conversation subset, and it needs one vector per
+protocol, which led on a three-conversation subset. It needs one vector per
 token rather than one per atom.
 
 Late interaction is the difference, and it is the scoring rather than the model.
