@@ -302,6 +302,52 @@ fn ranks_as_scored<T: Clone>(ballots: &[Ballot<T>]) -> Vec<ScoredBallot<T>> {
 
 #[cfg(test)]
 mod tests {
+    /// Every voter, over ballots that disagree about order and about which
+    /// candidates exist at all.
+    ///
+    /// The sort in the standard library panics on a comparator that is not a
+    /// total order rather than returning a wrong answer, so a voter whose
+    /// ordering can cycle takes the process down. Schulze's did, and only on
+    /// three ballots or more: with two, every contested pair ties and the
+    /// tie-break alone decides, which is total. A panel is host configuration,
+    /// so the input that reaches a voter is not one a client chose and not one
+    /// a fixed example is likely to contain.
+    #[test]
+    fn no_voter_asks_the_sort_for_an_impossible_order() {
+        // Deterministic, so a failure here is reproducible and this needs no
+        // dependency to generate it.
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let names: Vec<String> = (0..9).map(|n| format!("id{n}")).collect();
+        let voters = [
+            "borda", "rrf", "combsum", "combmnz", "dowdall", "kemeny", "schulze", "copeland",
+            "tideman",
+        ];
+        for round in 0..200 {
+            let ballots: Vec<Vec<String>> = (0..3 + (round % 3))
+                .map(|_| {
+                    let mut pool = names.clone();
+                    for at in (1..pool.len()).rev() {
+                        pool.swap(at, (next() % (at as u64 + 1)) as usize);
+                    }
+                    pool.truncate(4 + (next() % 5) as usize);
+                    pool
+                })
+                .collect();
+            for voter in voters {
+                let panel = Panel::named(voter, "none", "off").expect("voter");
+                let ranked = panel.fuse_merge(&ballots, names.len());
+                let seen: std::collections::HashSet<&String> = ranked.iter().collect();
+                assert_eq!(seen.len(), ranked.len(), "{voter} repeated a key");
+            }
+        }
+    }
+
     use super::*;
 
     fn keep_dup_other() -> Vec<Ranked> {
