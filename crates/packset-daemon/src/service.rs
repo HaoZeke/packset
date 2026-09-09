@@ -99,6 +99,7 @@ impl Service {
         }
         atom.insert("tombstone".into(), Value::Bool(false));
         atom.entry("embedding").or_insert(Value::Null);
+        self.encode_into(&mut atom);
 
         let workspace = atom
             .get("workspace")
@@ -160,6 +161,22 @@ impl Service {
         self.store.upsert_many(&all)?;
         self.project_atoms(&all);
         Ok(atom)
+    }
+
+    /// Fill the vector slot, when this seat has an encoder.
+    ///
+    /// Silent on every failure, because the slot has always been allowed to be
+    /// null: a seat without a model stores what it always stored, and the
+    /// dense ballot simply does not appear in a search.
+    fn encode_into(&self, atom: &mut Record) {
+        let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
+        let Some(vector) = crate::embed::encode_document(text) else {
+            return;
+        };
+        atom.insert(
+            "embedding".into(),
+            Value::Array(vector.into_iter().map(|f| json!(f)).collect()),
+        );
     }
 
     /// Merge `fields` into one current atom.
@@ -560,6 +577,12 @@ impl Service {
             now: &now,
         };
         let ranked_terms = packset_core::search::search_bm25(&ask, &index);
+        // A third ballot when this seat has an encoder. The two lexical
+        // scorers both need the question and the atom to share words, and this
+        // one does not, which is the gap it exists to close.
+        let ranked_meaning = crate::embed::encode_query(query)
+            .map(|vector| packset_core::search::search_dense(&ask, &vector))
+            .filter(|hits| !hits.is_empty());
 
         let projected = crate::milli::search(corpus, query, limit, &dir, scope);
         let (mut ranked, engine) = match projected {
@@ -570,26 +593,21 @@ impl Service {
                     atoms: &[],
                     ..ask
                 });
+                let mut ballots = vec![prose, atom_hits, ranked_terms];
+                ballots.extend(ranked_meaning);
                 (
-                    packset_core::search::merge_ballots(
-                        &[prose, atom_hits, ranked_terms],
-                        limit,
-                        panel,
-                        &now,
-                    ),
+                    packset_core::search::merge_ballots(&ballots, limit, panel, &now),
                     "milli",
                 )
             }
             None => {
                 let lexical = packset_core::search::search_linear(&ask);
+                let mut ballots = vec![lexical, ranked_terms];
+                ballots.extend(ranked_meaning);
+                let engine = if ballots.len() > 2 { "dense" } else { "linear" };
                 (
-                    packset_core::search::merge_ballots(
-                        &[lexical, ranked_terms],
-                        limit,
-                        panel,
-                        &now,
-                    ),
-                    "linear",
+                    packset_core::search::merge_ballots(&ballots, limit, panel, &now),
+                    engine,
                 )
             }
         };

@@ -24,6 +24,8 @@ when the binary is absent.
   MMR, decay, extract filters
 - `crates/packset-client` — HTTP
 - `crates/packset-milli` — search projection
+- `crates/packset-embed` — dense projection, a kept child process so the
+  model loads once rather than per question
 
 Listen on `127.0.0.1` only. Never `localhost`.
 

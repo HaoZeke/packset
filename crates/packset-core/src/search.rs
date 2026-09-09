@@ -400,6 +400,89 @@ pub fn search_bm25(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
     hits
 }
 
+/// Cosine between two vectors, zero when either says nothing.
+///
+/// Normalised here rather than assumed: the encoder normalises its output and
+/// a stored vector may predate that, so dividing by the norms costs two passes
+/// and removes a silent way for one atom to outrank another by magnitude.
+#[must_use]
+pub fn cosine(left: &[f32], right: &[f32]) -> f64 {
+    if left.len() != right.len() || left.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f64;
+    let mut left_norm = 0.0f64;
+    let mut right_norm = 0.0f64;
+    for (a, b) in left.iter().zip(right) {
+        dot += f64::from(*a) * f64::from(*b);
+        left_norm += f64::from(*a) * f64::from(*a);
+        right_norm += f64::from(*b) * f64::from(*b);
+    }
+    if left_norm <= 0.0 || right_norm <= 0.0 {
+        return 0.0;
+    }
+    dot / (left_norm.sqrt() * right_norm.sqrt())
+}
+
+/// The vector an atom carries, if it carries one.
+#[must_use]
+pub fn embedding_of(atom: &Record) -> Option<Vec<f32>> {
+    let items = atom.get("embedding")?.as_array()?;
+    let vector: Vec<f32> = items
+        .iter()
+        .filter_map(|v| v.as_f64().map(|f| f as f32))
+        .collect();
+    (vector.len() == items.len() && !vector.is_empty()).then_some(vector)
+}
+
+/// The pack ranked by what an atom means rather than which words it used.
+///
+/// A third ballot. The two lexical scorers both need the question and the atom
+/// to share words; this one does not, which is the whole point and also its
+/// cost, since it will happily rank something adjacent above something exact.
+///
+/// Atoms without a stored vector are skipped rather than scored as zero: an
+/// unencoded atom has not been judged irrelevant, and putting it at the bottom
+/// of this ballot would let the fuse read a missing encoder as a vote.
+#[must_use]
+pub fn search_dense(ask: &Ask<'_>, query: &[f32]) -> Vec<Value> {
+    let Ask {
+        atoms,
+        limit,
+        set,
+        now,
+        ..
+    } = *ask;
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let mut hits: Vec<Value> = Vec::new();
+    for atom in atoms {
+        if !record::is_live(atom, now) || !atom_in_set(atom, set) {
+            continue;
+        }
+        let Some(vector) = embedding_of(atom) else {
+            continue;
+        };
+        let relevance = cosine(query, &vector);
+        if relevance <= 0.0 {
+            continue;
+        }
+        let ts = atom.get("ts").and_then(Value::as_str);
+        hits.push(json!({
+            "field": "atom",
+            "id": atom.get("id").cloned().unwrap_or(Value::Null),
+            "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
+            "text": atom.get("text").cloned().unwrap_or(Value::Null),
+            "due_at": atom.get("due_at").cloned().unwrap_or(Value::Null),
+            "score": relevance + 0.1 * trust_of(atom) + recency(ts, now),
+        }));
+    }
+    sort_hits(&mut hits);
+    hits.truncate(limit);
+    hits
+}
+
 /// Live atoms whose review is due, whatever the query says.
 ///
 /// A review that is late is the one thing in the pack with a deadline, so it

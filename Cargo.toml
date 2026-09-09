@@ -5,6 +5,7 @@ members = [
     "crates/packset-client",
     "crates/packset-cli",
     "crates/packset-daemon",
+    "crates/packset-embed",
     "crates/packset-milli",
 ]
 

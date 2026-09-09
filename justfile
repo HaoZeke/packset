@@ -25,5 +25,20 @@ milli:
     esac
     cargo build -p packset-milli --release
 
+# The dense projection. Same rule as milli: it carries a native runtime and a
+# model download, so it is built where the model is allowed to live.
+embed:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    host="$(hostname -s || hostname)"
+    case "$host" in
+        terra|rg.terra|*.terra|*terra) ;;
+        *)
+            echo "just embed: build on the remote builder, not $host" >&2
+            exit 1
+            ;;
+    esac
+    cargo build -p packset-embed --release
+
 ensure:
     bin/packset ensure

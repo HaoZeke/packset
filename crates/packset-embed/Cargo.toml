@@ -1,0 +1,20 @@
+[package]
+name = "packset-embed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The dense projection: text in, vectors out"
+
+[[bin]]
+name = "packset-embed"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+# The model, its tokenizer and the runtime under it. This is why the crate is
+# separate: the writer must not carry a native inference runtime on a machine
+# that will never hold a model.
+fastembed = "6"
+serde.workspace = true
+serde_json.workspace = true

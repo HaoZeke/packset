@@ -52,11 +52,13 @@ Whether the deed exists is a question the pack cannot ask. It checks the shape;
 
 - One writer. Working tree is not the pack.
 - `Remember:` / `Prefer:` are instant. One claim per atom.
-- Search asks two scorers and fuses their answers. One finds an atom
+- Search asks several scorers and fuses their answers. One finds an atom
   through a typo or a prefix and weighs every word alike; BM25 weighs a
   word by how much it narrows the pack down, normalises for length, and
-  finds nothing a typo hides. The milli projection is a third when it is
-  built. Fusing measures better than either alone: see Retrieval below.
+  finds nothing a typo hides; the dense projection matches meaning and
+  needs no shared word at all. milli is a fourth when it is built. Every
+  projection is optional and its absence is a supported state. Fusing
+  measures better than any alone: see Retrieval below.
 - Search merge is a host voter panel. Default is Borda then MMR,
   decay off. `PACKSET_FUSE`, `PACKSET_DIVERSIFY`, and
   `PACKSET_DECAY` select the sequence. Not a client header.
@@ -79,22 +81,24 @@ Ten conversations, 5882 turns loaded as atoms, 1536 answerable questions:
 |---|---|---|
 | the pack's own scorer | 0.514 | 0.580 |
 | BM25 | 0.530 | 0.588 |
-| both, Borda then MMR | **0.547** | **0.611** |
+| dense (bge-small-en-v1.5) | 0.585 | 0.656 |
+| the pack's scorer + BM25 | 0.547 | 0.611 |
+| all three | 0.619 | 0.690 |
+| BM25 + dense | **0.628** | **0.701** |
 
-Three things this does not say. It measures the scorer, not the system. Turns
-are loaded as atoms and nothing in packset extracts. So this is the ranking
-given a corpus, not a judgement about what should have been remembered.
-It is recall of labelled evidence with no model in the loop, so it is not the
-92.5 and 94.4 the memory papers report for end-to-end answers. And it is not a
-good number. Published lexical-plus-dense fusion on this benchmark reaches
-Hit@1 0.752 at session granularity where the best arm here reaches 0.589. The
-difference is the dense half, which packset does not have.
+Every ballot is optional. A seat with no encoder gets the first two rows and
+loses about 0.08 R@10, which is what the dense projection is worth.
+
+Two things this does not say. It measures the scorer, not the system. Turns are
+loaded as atoms and nothing in packset extracts. So this is the ranking given a
+corpus, not a judgement about what should have been remembered. And it is
+recall of labelled evidence with no model in the loop, so it is not the 92.5 and
+94.4 the memory papers report for end-to-end answers.
 
 Read a number against its unit. The table above ranks turns. The retrieval
-papers score a session by its best turn instead, which gives 0.928 hit@10 for
-BM25 alone here. A session holds dozens of turns, so it is an easier question.
-Fusing wins on turns and loses on sessions. Turns are what a pack stores, which
-is why the panel stays the default.
+papers score a session by its best turn instead. Read that way, BM25 with dense
+reaches hit@1 0.612 and hit@10 0.951, against 0.752 hit@1 published for
+lexical fused with a dense retriever ten times the size of this one.
 
 The stored link graph does not help a query. Given twenty places, filling the
 last ten by following the neighbours of the first ten scores 0.562 R@20 against
@@ -110,6 +114,7 @@ something already found, not for answering.
 | `packset-client` | HTTP client |
 | `packset-cli` | `packset`: lifecycle and the `/v1` reads a shell runs |
 | `packset-milli` | inverted-index projection (build on the remote builder) |
+| `packset-embed` | dense projection: text in, vectors out (build where the model is) |
 
 One process owns `memory.lmdb`; clients never open it. `packset` finds the
 `packsetd` beside itself, so a checkout runs its own build rather than

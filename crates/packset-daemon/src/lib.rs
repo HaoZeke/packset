@@ -6,6 +6,7 @@
 
 pub mod cards;
 pub mod context;
+pub mod embed;
 pub mod glob;
 pub mod home;
 pub mod http;

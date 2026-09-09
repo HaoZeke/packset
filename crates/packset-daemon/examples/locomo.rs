@@ -177,7 +177,14 @@ fn conversations(raw: &Value) -> Vec<Conversation> {
 }
 
 /// The arms compared, each a way of turning one question into a ranking.
-const ARMS: &[&str] = &["lexical", "bm25", "borda+mmr (shipped)", "borda", "rrf"];
+const ARMS: &[&str] = &[
+    "lexical",
+    "bm25",
+    "dense",
+    "lexical+bm25 (shipped)",
+    "lexical+bm25+dense",
+    "bm25+dense",
+];
 
 /// Where the one-hop comparison is made: half the places are retrieved and the
 /// rest are filled, either by the ranking continuing or by neighbours.
@@ -251,6 +258,7 @@ fn main() -> anyhow::Result<()> {
     anyhow::ensure!(!corpus.is_empty(), "no conversations in {path}");
 
     let now = packset_core::clock::utcnow();
+    let shipped = Panel::named("borda", "mmr", "off")?;
     let mut totals: Vec<Tally> = ARMS.iter().map(|_| Tally::new()).collect();
     let mut by_session: Vec<Tally> = ARMS.iter().map(|_| Tally::new()).collect();
     let mut ranking = Tally::new();
@@ -259,6 +267,14 @@ fn main() -> anyhow::Result<()> {
     let mut adversarial = 0usize;
     let mut linked = 0usize;
     let mut widest = 0usize;
+    let encoder = packset_daemon::embed::binary();
+    match &encoder {
+        Some(path) => println!("encoder: {}", path.display()),
+        None => println!("encoder: absent, so the dense arms will be empty"),
+    }
+    let encoder = encoder.is_some();
+    let mut questions: std::collections::HashMap<String, Vec<f32>> =
+        std::collections::HashMap::new();
 
     for conversation in &mut corpus {
         turns += conversation.atoms.len();
@@ -314,6 +330,33 @@ fn main() -> anyhow::Result<()> {
             conversation.atoms.iter().map(search::atom_tokens).collect();
         let index = Index::build(documents.iter().map(Vec::as_slice));
 
+        // One encode of the corpus and one of the questions, through the kept
+        // child the daemon uses. Absent encoder means the dense arms are empty
+        // and the lexical ones still report, which is the seat's own fallback.
+        if encoder {
+            for atom in &mut conversation.atoms {
+                let text = atom
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if let Some(vector) = packset_daemon::embed::encode_document(&text) {
+                    atom.insert(
+                        "embedding".into(),
+                        Value::Array(vector.into_iter().map(|f| json!(f)).collect()),
+                    );
+                }
+            }
+            for question in &conversation.questions {
+                if questions.contains_key(question.text.as_str()) {
+                    continue;
+                }
+                if let Some(vector) = packset_daemon::embed::encode_query(&question.text) {
+                    questions.insert(question.text.clone(), vector);
+                }
+            }
+        }
+
         for question in &conversation.questions {
             if question.category == ADVERSARIAL || question.evidence.is_empty() {
                 adversarial += 1;
@@ -332,12 +375,16 @@ fn main() -> anyhow::Result<()> {
             };
             let lexical = search::search_linear(&ask);
             let terms = search::search_bm25(&ask, &index);
+            let meaning = questions
+                .get(question.text.as_str())
+                .map(|vector| search::search_dense(&ask, vector))
+                .unwrap_or_default();
 
             // Does the stored graph earn a place in an answer? Half the places
             // are the ranking's, and the rest go either to the ranking
             // continuing or to the neighbours of what it already found. Same
             // budget, same question, one difference.
-            let shipped = Panel::named("borda", "mmr", "off")?;
+
             let deep = hit_ids(&search::merge_ballots(
                 &[lexical.clone(), terms.clone()],
                 HOP_CUT,
@@ -355,19 +402,16 @@ fn main() -> anyhow::Result<()> {
                 let ranked = match *arm {
                     "lexical" => hit_ids(&lexical),
                     "bm25" => hit_ids(&terms),
+                    "dense" => hit_ids(&meaning),
                     other => {
-                        let (fuse, diversify) = match other {
-                            "borda" => ("borda", "none"),
-                            "rrf" => ("rrf", "none"),
-                            _ => ("borda", "mmr"),
+                        let ballots = match other {
+                            "bm25+dense" => vec![terms.clone(), meaning.clone()],
+                            "lexical+bm25+dense" => {
+                                vec![lexical.clone(), terms.clone(), meaning.clone()]
+                            }
+                            _ => vec![lexical.clone(), terms.clone()],
                         };
-                        let panel = Panel::named(fuse, diversify, "off")?;
-                        hit_ids(&search::merge_ballots(
-                            &[lexical.clone(), terms.clone()],
-                            ask.limit,
-                            &panel,
-                            &now,
-                        ))
+                        hit_ids(&search::merge_ballots(&ballots, ask.limit, &shipped, &now))
                     }
                 };
                 totals[slot].add(&ranked, &question.evidence);
