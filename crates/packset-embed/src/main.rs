@@ -105,13 +105,8 @@ fn main() -> anyhow::Result<()> {
     let name = std::env::var("PACKSET_EMBED_MODEL").unwrap_or_default();
     let choice = choose(name.trim())
         .ok_or_else(|| anyhow::anyhow!("unknown model `{name}`; known: {KNOWN}"))?;
-    let prefix = if query {
-        choice.query
-    } else {
-        choice.passage
-    };
-    let mut options =
-        TextInitOptions::new(choice.model).with_show_download_progress(false);
+    let prefix = if query { choice.query } else { choice.passage };
+    let mut options = TextInitOptions::new(choice.model).with_show_download_progress(false);
     if let Some(dir) = std::env::var_os("PACKSET_EMBED_CACHE") {
         options = options.with_cache_dir(std::path::PathBuf::from(dir));
     }
