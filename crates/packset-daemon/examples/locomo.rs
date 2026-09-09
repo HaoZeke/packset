@@ -184,7 +184,18 @@ const ARMS: &[&str] = &[
     "lexical+bm25 (shipped)",
     "lexical+bm25+dense",
     "bm25+dense",
+    "late",
+    "bm25+late",
 ];
+
+/// Whether to spend the time and memory on the per-token encoding.
+///
+/// Off unless asked, because it is one vector per token: the same corpus that
+/// costs twenty five megabytes pooled costs about a gigabyte this way, and the
+/// encode takes several times as long.
+fn late_wanted() -> bool {
+    std::env::var("PACKSET_LOCOMO_LATE").is_ok_and(|v| !v.is_empty() && v != "0")
+}
 
 /// Where the one-hop comparison is made: half the places are retrieved and the
 /// rest are filled, either by the ranking continuing or by neighbours.
@@ -208,6 +219,44 @@ fn sessions_of(ranked: &[String]) -> Vec<String> {
         .map(|id| session_of(id).to_string())
         .filter(|session| seen.insert(session.clone()))
         .collect()
+}
+
+/// Rank the corpus by late interaction, in the same hit shape as the others.
+///
+/// Ordinals line up with `ask.atoms`, the way the BM25 index's do.
+fn rank_late(ask: &Ask<'_>, query: &[Vec<f32>], documents: &[Vec<Vec<f32>>]) -> Vec<Value> {
+    let mut hits: Vec<Value> = Vec::new();
+    for (ordinal, atom) in ask.atoms.iter().enumerate() {
+        let Some(tokens) = documents.get(ordinal) else {
+            continue;
+        };
+        let relevance = search::max_sim(query, tokens);
+        if relevance <= 0.0 {
+            continue;
+        }
+        hits.push(json!({
+            "field": "atom",
+            "id": atom.get("id").cloned().unwrap_or(Value::Null),
+            "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
+            "text": atom.get("text").cloned().unwrap_or(Value::Null),
+            "score": relevance,
+        }));
+    }
+    hits.sort_by(|a, b| {
+        b["score"]
+            .as_f64()
+            .unwrap_or(0.0)
+            .partial_cmp(&a["score"].as_f64().unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                a["id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["id"].as_str().unwrap_or(""))
+            })
+    });
+    hits.truncate(ask.limit);
+    hits
 }
 
 /// Follow each hit's stored links once, appending neighbours behind the hits.
@@ -274,6 +323,12 @@ fn main() -> anyhow::Result<()> {
     }
     let encoder = encoder.is_some();
     let mut questions: std::collections::HashMap<String, Vec<f32>> =
+        std::collections::HashMap::new();
+    let late = encoder && late_wanted();
+    if late {
+        println!("late interaction: on, one vector per token");
+    }
+    let mut late_questions: std::collections::HashMap<String, Vec<Vec<f32>>> =
         std::collections::HashMap::new();
 
     for conversation in &mut corpus {
@@ -357,6 +412,25 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
+        // Per-token vectors live beside the atoms rather than inside them: a
+        // thousand floats per token would not fit an atom's JSON without
+        // making every other read pay for it.
+        let mut late_atoms: Vec<Vec<Vec<f32>>> = Vec::new();
+        if late {
+            for atom in &conversation.atoms {
+                let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
+                late_atoms.push(packset_daemon::embed::encode_late(text).unwrap_or_default());
+            }
+            for question in &conversation.questions {
+                if late_questions.contains_key(question.text.as_str()) {
+                    continue;
+                }
+                if let Some(tokens) = packset_daemon::embed::encode_late(&question.text) {
+                    late_questions.insert(question.text.clone(), tokens);
+                }
+            }
+        }
+
         for question in &conversation.questions {
             if question.category == ADVERSARIAL || question.evidence.is_empty() {
                 adversarial += 1;
@@ -378,6 +452,10 @@ fn main() -> anyhow::Result<()> {
             let meaning = questions
                 .get(question.text.as_str())
                 .map(|vector| search::search_dense(&ask, vector))
+                .unwrap_or_default();
+            let interaction = late_questions
+                .get(question.text.as_str())
+                .map(|tokens| rank_late(&ask, tokens, &late_atoms))
                 .unwrap_or_default();
 
             // Does the stored graph earn a place in an answer? Half the places
@@ -403,8 +481,10 @@ fn main() -> anyhow::Result<()> {
                     "lexical" => hit_ids(&lexical),
                     "bm25" => hit_ids(&terms),
                     "dense" => hit_ids(&meaning),
+                    "late" => hit_ids(&interaction),
                     other => {
                         let ballots = match other {
+                            "bm25+late" => vec![terms.clone(), interaction.clone()],
                             "bm25+dense" => vec![terms.clone(), meaning.clone()],
                             "lexical+bm25+dense" => {
                                 vec![lexical.clone(), terms.clone(), meaning.clone()]

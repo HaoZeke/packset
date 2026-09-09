@@ -102,7 +102,44 @@ impl Encoder {
         })
     }
 
-    fn encode(&mut self, text: &str) -> Option<Vec<f32>> {
+    fn start_late(binary: &Path) -> Option<Self> {
+        let mut child = Command::new(binary)
+            .arg("--late")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let stdin = child.stdin.take()?;
+        let stdout = BufReader::new(child.stdout.take()?);
+        Some(Self {
+            child,
+            stdin,
+            stdout,
+        })
+    }
+
+    /// One line in, one line of per-token vectors out.
+    fn encode_tokens(&mut self, text: &str) -> Option<Vec<Vec<f32>>> {
+        let reply = self.ask(text)?;
+        let parsed: Value = serde_json::from_str(reply.trim()).ok()?;
+        let rows = parsed.get("t")?.as_array()?;
+        let tokens: Vec<Vec<f32>> = rows
+            .iter()
+            .filter_map(|row| {
+                let vector: Vec<f32> = row
+                    .as_array()?
+                    .iter()
+                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                    .collect();
+                (!vector.is_empty()).then_some(vector)
+            })
+            .collect();
+        (!tokens.is_empty()).then_some(tokens)
+    }
+
+    /// Write one request and read its one-line reply.
+    fn ask(&mut self, text: &str) -> Option<String> {
         let line = json!({ "id": "0", "text": text });
         writeln!(self.stdin, "{line}").ok()?;
         self.stdin.flush().ok()?;
@@ -110,6 +147,11 @@ impl Encoder {
         if self.stdout.read_line(&mut reply).ok()? == 0 {
             return None;
         }
+        Some(reply)
+    }
+
+    fn encode(&mut self, text: &str) -> Option<Vec<f32>> {
+        let reply = self.ask(text)?;
         let parsed: Value = serde_json::from_str(reply.trim()).ok()?;
         let vector: Vec<f32> = parsed
             .get("v")?
@@ -178,6 +220,41 @@ pub fn encode_query(text: &str) -> Option<Vec<f32>> {
 #[must_use]
 pub fn encode_document(text: &str) -> Option<Vec<f32>> {
     encode(text, false)
+}
+
+/// The kept encoder for the per-token form, which is a third child.
+fn late_slot() -> &'static Slot {
+    static LATE: OnceLock<Slot> = OnceLock::new();
+    LATE.get_or_init(|| Mutex::new(None))
+}
+
+/// Encode one text as a vector per token, for late interaction.
+///
+/// A different binary mode rather than a model name, because the shape it
+/// returns is different: a caller that asked for one and got the other would
+/// score nonsense rather than fail. Nothing in the writer reads this; it exists
+/// so the retrieval benchmark can ask whether late interaction is the gap.
+#[must_use]
+pub fn encode_late(text: &str) -> Option<Vec<Vec<f32>>> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    let binary = binary()?;
+    let mut held = late_slot().lock().ok()?;
+    for attempt in 0..2 {
+        if held.as_mut().is_none_or(|running| !running.alive()) {
+            *held = Encoder::start_late(&binary);
+        }
+        let running = held.as_mut()?;
+        if let Some(tokens) = running.encode_tokens(text) {
+            return Some(tokens);
+        }
+        *held = None;
+        if attempt == 1 {
+            return None;
+        }
+    }
+    None
 }
 
 #[cfg(test)]

@@ -435,6 +435,32 @@ pub fn embedding_of(atom: &Record) -> Option<Vec<f32>> {
     (vector.len() == items.len() && !vector.is_empty()).then_some(vector)
 }
 
+/// Late interaction: every query token against every document token, best wins.
+///
+/// A pooled vector asks whether two texts are about the same thing overall. This
+/// asks whether each thing the question names is answered somewhere in the
+/// document, and sums those answers, which is why it finds a short passage
+/// inside a long one that pooling averages away.
+///
+/// Zero when either side has no tokens, so a caller can drop a document without
+/// a second pass.
+#[must_use]
+pub fn max_sim(query: &[Vec<f32>], document: &[Vec<f32>]) -> f64 {
+    if query.is_empty() || document.is_empty() {
+        return 0.0;
+    }
+    query
+        .iter()
+        .map(|term| {
+            document
+                .iter()
+                .map(|token| cosine(term, token))
+                .fold(f64::MIN, f64::max)
+        })
+        .filter(|best| *best > f64::MIN)
+        .sum()
+}
+
 /// The pack ranked by what an atom means rather than which words it used.
 ///
 /// A third ballot. The two lexical scorers both need the question and the atom
@@ -551,6 +577,23 @@ pub fn front_due(due: Vec<Value>, ranked: Vec<Value>, limit: usize) -> Vec<Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The point of late interaction: a question whose terms are answered in
+    /// different parts of one document, which pooling averages away.
+    #[test]
+    fn late_interaction_sums_the_best_match_for_each_query_term() {
+        let a = vec![1.0f32, 0.0, 0.0];
+        let b = vec![0.0f32, 1.0, 0.0];
+        let c = vec![0.0f32, 0.0, 1.0];
+        // Both query terms are matched exactly, in different tokens.
+        let scored = max_sim(&[a.clone(), b.clone()], &[c.clone(), a.clone(), b.clone()]);
+        assert!((scored - 2.0).abs() < 1e-9, "{scored}");
+        // One matched, one absent.
+        let half = max_sim(&[a.clone(), b.clone()], &[a.clone(), c.clone()]);
+        assert!(half < scored, "{half} vs {scored}");
+        assert_eq!(max_sim(&[], std::slice::from_ref(&a)), 0.0);
+        assert_eq!(max_sim(std::slice::from_ref(&a), &[]), 0.0);
+    }
 
     /// One question, for the tests that only vary part of it.
     fn ask<'a>(
