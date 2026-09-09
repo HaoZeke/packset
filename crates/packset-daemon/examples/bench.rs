@@ -75,10 +75,10 @@ fn main() -> anyhow::Result<()> {
     let service = Service::open(Home::new(dir.path()))?;
 
     println!(
-        "{:>7} {:>9} {:>9} {:>9} {:>9} {:>9} {:>10} {:>9}",
-        "atoms", "search", "worst", "recall", "list", "write", "links", "per atom"
+        "{:>7} {:>9} {:>9} {:>9} {:>9} {:>9} {:>10} {:>9} {:>7}",
+        "atoms", "search", "worst", "recall", "list", "write", "links", "per atom", "widest"
     );
-    println!("{}", "-".repeat(76));
+    println!("{}", "-".repeat(84));
 
     let panel = packset_core::Panel::from_env()?;
     let mut made = 0usize;
@@ -148,10 +148,14 @@ fn main() -> anyhow::Result<()> {
         made = counter;
 
         let atoms = service.store().live(WORKSPACE)?;
-        let links: usize = atoms
+        let degrees: Vec<usize> = atoms
             .iter()
             .map(|a| a.get("links").and_then(Value::as_array).map_or(0, Vec::len))
-            .sum();
+            .collect();
+        let links: usize = degrees.iter().sum();
+        // The widest neighbourhood, because the average hides the atom
+        // everything links to, and that is the one a walk falls into.
+        let widest = degrees.iter().copied().max().unwrap_or(0);
         let per_atom = if atoms.is_empty() {
             0.0
         } else {
@@ -159,7 +163,7 @@ fn main() -> anyhow::Result<()> {
         };
         println!(
             "{made:>7} {search:>8.1}m {worst:>8.1}m {recall:>8.1}m {list:>8.1}m \
-             {write:>8.1}m {links:>10} {per_atom:>9.1}"
+             {write:>8.1}m {links:>10} {per_atom:>9.1} {widest:>7}"
         );
     }
     Ok(())

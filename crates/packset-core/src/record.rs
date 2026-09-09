@@ -5,7 +5,7 @@
 //! dropping a field on a round trip would lose somebody's data. Every rule
 //! here reads the fields it knows and leaves the rest alone.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
@@ -435,44 +435,156 @@ fn backtick_names(text: &str) -> BTreeSet<String> {
     out
 }
 
+/// One candidate neighbour: how alike it is, its id, and what it is about.
+struct Candidate<'a> {
+    overlap: f64,
+    id: &'a str,
+    /// Order among equals, from the pair rather than from the id alone.
+    tie: u64,
+    entities: BTreeSet<String>,
+}
+
+/// FNV-1a, written out because the order it decides is part of the stored
+/// graph: a hasher whose seed or algorithm may change between toolchains would
+/// make two builds disagree about a pack neither of them wrote.
+fn fnv1a(parts: &[&str]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            hash = (hash ^ 0xff).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        for byte in part.as_bytes() {
+            hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    hash
+}
+
+/// How many candidates the diversifying selection looks at.
+///
+/// The selection is quadratic in what it considers, so considering everything
+/// above the threshold would make a write quadratic in the workspace. Sorting
+/// first means the pool holds the best candidates there are, and a neighbour
+/// that would have been chosen from outside it was, by construction, less
+/// alike than sixty-four that were not chosen.
+const LINK_POOL: usize = LINK_MAX * 8;
+
+/// Keep the most alike, dropping any that is more alike a kept neighbour than
+/// it is the atom itself.
+///
+/// Taking the top [`LINK_MAX`] by similarity is the obvious rule and it builds
+/// the wrong graph: every atom sharing an entity is alike every other, so the
+/// eight kept neighbours are eight restatements of one another and a one-hop
+/// walk returns the same claim eight times. The relative-neighbourhood
+/// condition is what proximity graphs use instead (it is the neighbour
+/// heuristic in HNSW, and the pruning rule of a relative neighbourhood graph):
+/// a candidate earns an edge only when the atom is its closest kept point, so
+/// the neighbourhood spreads over the directions an atom is about rather than
+/// piling into one of them.
+///
+/// Candidates must arrive sorted by decreasing overlap. When the condition
+/// rejects more than it keeps, the rejected fill the remaining places in
+/// similarity order, so a dense corner of the corpus does not leave an atom
+/// with one neighbour.
+fn diversified(candidates: &[Candidate<'_>], cap: usize) -> Vec<String> {
+    let mut kept: Vec<&Candidate<'_>> = Vec::with_capacity(cap);
+    let mut rejected: Vec<&Candidate<'_>> = Vec::new();
+    for candidate in candidates {
+        if kept.len() >= cap {
+            break;
+        }
+        let refs: Vec<&str> = candidate.entities.iter().map(String::as_str).collect();
+        let spreads = kept.iter().all(|near| {
+            let theirs: Vec<&str> = near.entities.iter().map(String::as_str).collect();
+            candidate.overlap
+                > crate::atom::entity_jaccard(refs.iter().copied(), theirs.iter().copied())
+        });
+        if spreads {
+            kept.push(candidate);
+        } else {
+            rejected.push(candidate);
+        }
+    }
+    let mut out: Vec<String> = kept.iter().map(|c| c.id.to_string()).collect();
+    for filler in rejected {
+        if out.len() >= cap {
+            break;
+        }
+        out.push(filler.id.to_string());
+    }
+    out
+}
+
+/// Rank peers by overlap with `mine`, best first.
+///
+/// Ties are settled by a hash of the pair, not by the id alone, and that is
+/// load bearing rather than cosmetic. Entity sets are small, so equal overlap
+/// is the common case rather than the rare one, and a tie-break on the id
+/// alone means the same few atoms win every tie in the whole workspace: they
+/// are chosen by every newcomer, and then each of them, over its own bound,
+/// drops the newcomer in favour of the others. The graph collapses onto
+/// whichever atoms happen to sort first and everything written afterwards ends
+/// up with no neighbours at all. Hashing the pair gives each atom its own
+/// order over the same candidates, which is still the same on every machine.
+fn ranked<'a>(
+    base: &str,
+    mine: &BTreeSet<String>,
+    peers: impl IntoIterator<Item = (&'a str, BTreeSet<String>)>,
+    threshold: f64,
+) -> Vec<Candidate<'a>> {
+    let mine_refs: Vec<&str> = mine.iter().map(String::as_str).collect();
+    let mut scored: Vec<Candidate<'a>> = peers
+        .into_iter()
+        .filter_map(|(id, entities)| {
+            let theirs: Vec<&str> = entities.iter().map(String::as_str).collect();
+            let overlap =
+                crate::atom::entity_jaccard(mine_refs.iter().copied(), theirs.iter().copied());
+            (overlap >= threshold).then_some(Candidate {
+                overlap,
+                id,
+                tie: fnv1a(&[base, id]),
+                entities,
+            })
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        b.overlap
+            .partial_cmp(&a.overlap)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.tie.cmp(&b.tie))
+            .then_with(|| a.id.cmp(b.id))
+    });
+    scored.truncate(LINK_POOL);
+    scored
+}
+
 /// The live peers this atom is most about, at most [`LINK_MAX`] of them.
 ///
-/// Similarity decides which, and the id breaks a tie, so the same corpus gives
-/// the same neighbourhood on every machine.
+/// Similarity decides which and the id breaks a tie, so the same corpus gives
+/// the same neighbourhood on every machine. See [`diversified`] for why the
+/// most alike eight are not the answer.
 #[must_use]
 pub fn link_targets(
     atom: &Map<String, Value>,
-    peers: &[Map<String, Value>],
+    peers: &[&Map<String, Value>],
     threshold: f64,
     now: &str,
 ) -> Vec<String> {
-    let mine = entities_of(atom);
-    let mine_refs: Vec<&str> = mine.iter().map(String::as_str).collect();
     let atom_id = atom.get("id").and_then(Value::as_str);
-    let mut scored: Vec<(f64, String)> = Vec::new();
-    for other in peers {
-        let other_id = other.get("id").and_then(Value::as_str);
-        if other_id.is_none() || other_id == atom_id {
-            continue;
-        }
-        if !is_live(other, now) {
-            continue;
-        }
-        let theirs = entities_of(other);
-        let theirs_refs: Vec<&str> = theirs.iter().map(String::as_str).collect();
-        let overlap =
-            crate::atom::entity_jaccard(mine_refs.iter().copied(), theirs_refs.iter().copied());
-        if overlap >= threshold {
-            scored.push((overlap, other_id.unwrap_or_default().to_string()));
-        }
-    }
-    scored.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    scored.truncate(LINK_MAX);
-    scored.into_iter().map(|(_, id)| id).collect()
+    let mine = entities_of(atom);
+    let candidates = ranked(
+        atom_id.unwrap_or_default(),
+        &mine,
+        peers.iter().filter_map(|other| {
+            let other_id = other.get("id").and_then(Value::as_str)?;
+            if Some(other_id) == atom_id || !is_live(other, now) {
+                return None;
+            }
+            Some((other_id, entities_of(other)))
+        }),
+        threshold,
+    );
+    diversified(&candidates, LINK_MAX)
 }
 
 /// Set overlap links on `atom` and rewrite the peers that changed.
@@ -480,6 +592,15 @@ pub fn link_targets(
 /// A link is symmetric, so adding one to an atom means adding it to the peer,
 /// and dropping one means dropping it on both sides. The returned peers are the
 /// ones the caller has to write back.
+///
+/// Symmetry is also why the degree bound is enforced here rather than only in
+/// [`link_targets`]: an atom chooses at most [`LINK_MAX`] neighbours, but every
+/// atom that chooses the same peer adds an edge to it, so a peer everything is
+/// about would otherwise collect one from every write. A neighbourhood that
+/// grows without bound is not only a cost, it has stopped meaning anything,
+/// because a one-hop walk from it returns most of the workspace. A peer past
+/// the bound is re-selected by the same rule its own links were chosen by, and
+/// each edge that goes is dropped from both ends.
 pub fn apply_links(
     atom: &mut Map<String, Value>,
     live: &[Map<String, Value>],
@@ -491,16 +612,81 @@ pub fn apply_links(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let peers: Vec<Map<String, Value>> = live
+    // Borrowed, not copied: a write already reads the whole live set, and
+    // copying it as well made what a write costs grow with the pack. Only the
+    // peers that actually change are cloned, at the end.
+    let peers: Vec<&Map<String, Value>> = live
         .iter()
         .filter(|other| {
             other.get("id").and_then(Value::as_str) != Some(atom_id.as_str()) && is_live(other, now)
         })
-        .cloned()
         .collect();
-    let targets: BTreeSet<String> = link_targets(atom, &peers, threshold, now)
+    let mut targets: BTreeSet<String> = link_targets(atom, &peers, threshold, now)
         .into_iter()
         .collect();
+
+    // What every atom in play is about, so a link id can be scored without
+    // going back to the store for it.
+    let mut about: BTreeMap<String, BTreeSet<String>> = peers
+        .iter()
+        .filter_map(|peer| {
+            let id = peer.get("id").and_then(Value::as_str)?;
+            Some((id.to_string(), entities_of(peer)))
+        })
+        .collect();
+    about.insert(atom_id.clone(), entities_of(atom));
+
+    let before: BTreeMap<String, BTreeSet<String>> = peers
+        .iter()
+        .filter_map(|peer| {
+            let id = peer.get("id").and_then(Value::as_str)?;
+            Some((id.to_string(), links_of(peer)))
+        })
+        .collect();
+    let mut after = before.clone();
+    for (id, links) in &mut after {
+        if targets.contains(id) {
+            links.insert(atom_id.clone());
+        } else {
+            links.remove(&atom_id);
+        }
+    }
+
+    // A peer past the bound keeps the neighbours the rule would have chosen.
+    // An id nothing in the live set answers to is left alone: it is already
+    // half an edge, and [`filter_live_links`] is what drops those.
+    let mut cut: Vec<(String, String)> = Vec::new();
+    for (id, links) in &after {
+        if links.len() <= LINK_MAX {
+            continue;
+        }
+        let Some(mine) = about.get(id) else { continue };
+        let candidates = ranked(
+            id,
+            mine,
+            links
+                .iter()
+                .filter_map(|link| Some((link.as_str(), about.get(link)?.clone()))),
+            0.0,
+        );
+        let keep: BTreeSet<String> = diversified(&candidates, LINK_MAX).into_iter().collect();
+        for link in links {
+            if about.contains_key(link) && !keep.contains(link) {
+                cut.push((id.clone(), link.clone()));
+            }
+        }
+    }
+    for (from, to) in cut {
+        if let Some(links) = after.get_mut(&from) {
+            links.remove(&to);
+        }
+        if to == atom_id {
+            targets.remove(&from);
+        } else if let Some(links) = after.get_mut(&to) {
+            links.remove(&from);
+        }
+    }
+
     atom.insert(
         "links".into(),
         Value::Array(
@@ -512,34 +698,32 @@ pub fn apply_links(
     );
 
     let mut rewritten = Vec::new();
-    for mut other in peers {
-        let other_id = other
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let mut links: BTreeSet<String> = other
-            .get("links")
-            .and_then(Value::as_array)
-            .map(|items| items.iter().map(value_text).collect())
-            .unwrap_or_default();
-        let should_link = targets.contains(&other_id);
-        let has_link = links.contains(&atom_id);
-        if should_link == has_link {
+    for other in peers {
+        let Some(other_id) = other.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let (Some(was), Some(now_links)) = (before.get(other_id), after.get(other_id)) else {
+            continue;
+        };
+        if was == now_links {
             continue;
         }
-        if should_link {
-            links.insert(atom_id.clone());
-        } else {
-            links.remove(&atom_id);
-        }
-        other.insert(
+        let mut changed = other.clone();
+        changed.insert(
             "links".into(),
-            Value::Array(links.into_iter().map(Value::String).collect()),
+            Value::Array(now_links.iter().cloned().map(Value::String).collect()),
         );
-        rewritten.push(other);
+        rewritten.push(changed);
     }
     rewritten
+}
+
+/// The ids one atom links to.
+fn links_of(atom: &Map<String, Value>) -> BTreeSet<String> {
+    atom.get("links")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(value_text).collect())
+        .unwrap_or_default()
 }
 
 /// Drop links pointing outside the supplied live set.
@@ -819,5 +1003,156 @@ mod tests {
             "a lapse restarts the count"
         );
         assert_eq!(recalled["review"]["reps"], json!(4));
+    }
+
+    /// An atom about `n` things, so overlap is a set question with a knob.
+    fn about(id: &str, entities: &[&str]) -> Map<String, Value> {
+        atom(serde_json::json!({
+            "id": id,
+            "workspace": "w",
+            "kind": "conclusion",
+            "text": format!("Atom {id} says something."),
+            "entities": entities,
+        }))
+    }
+
+    fn links(atom: &Map<String, Value>) -> Vec<String> {
+        links_of(atom).into_iter().collect()
+    }
+
+    /// Taking the eight most alike would take eight from the larger cluster and
+    /// none from the smaller, because everything in a cluster is alike
+    /// everything else in it. The neighbourhood has to reach both.
+    #[test]
+    fn a_neighbourhood_spreads_over_what_an_atom_is_about() {
+        let mut subject = about("mine", &["parser", "overlay"]);
+        let mut peers: Vec<Map<String, Value>> = Vec::new();
+        for n in 0..12 {
+            peers.push(about(&format!("parser{n}"), &["parser", "shared"]));
+        }
+        for n in 0..12 {
+            peers.push(about(&format!("overlay{n}"), &["overlay", "other"]));
+        }
+        apply_links(&mut subject, &peers, 0.2, &clock::utcnow());
+
+        let chosen = links(&subject);
+        assert_eq!(chosen.len(), LINK_MAX);
+        assert!(
+            chosen.iter().any(|id| id.starts_with("parser")),
+            "{chosen:?}"
+        );
+        assert!(
+            chosen.iter().any(|id| id.starts_with("overlay")),
+            "{chosen:?}"
+        );
+    }
+
+    /// Every atom that picks the same peer adds an edge to it, so the bound has
+    /// to hold on the peer's side too.
+    #[test]
+    fn no_atom_collects_more_neighbours_than_the_bound() {
+        let hub = about("hub", &["parser"]);
+        let mut store: Vec<Map<String, Value>> = vec![hub];
+        for n in 0..40 {
+            let mut fresh = about(&format!("a{n}"), &["parser"]);
+            let rewritten = apply_links(&mut fresh, &store, LINK_THRESHOLD, &clock::utcnow());
+            for peer in rewritten {
+                let id = peer.get("id").and_then(Value::as_str).unwrap().to_string();
+                if let Some(slot) = store
+                    .iter_mut()
+                    .find(|s| s.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                {
+                    *slot = peer;
+                }
+            }
+            store.push(fresh);
+        }
+        for held in &store {
+            let degree = links_of(held).len();
+            assert!(
+                degree <= LINK_MAX,
+                "{} has {degree}",
+                held.get("id").and_then(Value::as_str).unwrap_or("?")
+            );
+        }
+    }
+
+    /// A link the pack cannot walk in both directions is half an edge, and a
+    /// dropped one has to go from both ends.
+    #[test]
+    fn dropping_an_edge_drops_it_on_both_sides() {
+        let mut store: Vec<Map<String, Value>> = Vec::new();
+        for n in 0..24 {
+            let mut fresh = about(&format!("a{n}"), &["parser"]);
+            let rewritten = apply_links(&mut fresh, &store, LINK_THRESHOLD, &clock::utcnow());
+            for peer in rewritten {
+                let id = peer.get("id").and_then(Value::as_str).unwrap().to_string();
+                if let Some(slot) = store
+                    .iter_mut()
+                    .find(|s| s.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                {
+                    *slot = peer;
+                }
+            }
+            store.push(fresh);
+        }
+        let by_id: std::collections::BTreeMap<String, BTreeSet<String>> = store
+            .iter()
+            .map(|a| {
+                (
+                    a.get("id").and_then(Value::as_str).unwrap().to_string(),
+                    links_of(a),
+                )
+            })
+            .collect();
+        for (id, theirs) in &by_id {
+            for link in theirs {
+                assert!(
+                    by_id[link].contains(id),
+                    "{id} links {link} but not the other way"
+                );
+            }
+        }
+    }
+
+    /// A corpus too dense for the spread rule still gets a full neighbourhood.
+    #[test]
+    fn identical_atoms_still_fill_the_places() {
+        let mut subject = about("mine", &["parser"]);
+        let peers: Vec<Map<String, Value>> = (0..20)
+            .map(|n| about(&format!("same{n}"), &["parser"]))
+            .collect();
+        apply_links(&mut subject, &peers, LINK_THRESHOLD, &clock::utcnow());
+        assert_eq!(links(&subject).len(), LINK_MAX);
+    }
+
+    /// Ties settled by id alone collapse the graph onto whichever atoms sort
+    /// first: they win every tie, and then drop the newcomer that chose them.
+    #[test]
+    fn a_newcomer_to_a_saturated_corpus_still_has_neighbours() {
+        let mut store: Vec<Map<String, Value>> = Vec::new();
+        for n in 0..60 {
+            let mut fresh = about(&format!("a{n:03}"), &["parser"]);
+            let rewritten = apply_links(&mut fresh, &store, LINK_THRESHOLD, &clock::utcnow());
+            for peer in rewritten {
+                let id = peer.get("id").and_then(Value::as_str).unwrap().to_string();
+                if let Some(slot) = store
+                    .iter_mut()
+                    .find(|s| s.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                {
+                    *slot = peer;
+                }
+            }
+            store.push(fresh);
+        }
+        let isolated = store.iter().filter(|a| links_of(a).is_empty()).count();
+        assert_eq!(
+            isolated,
+            0,
+            "{isolated} of {} have no neighbour",
+            store.len()
+        );
+        let edges: usize = store.iter().map(|a| links_of(a).len()).sum();
+        assert!(edges > store.len() * 4, "only {edges} edges");
     }
 }
