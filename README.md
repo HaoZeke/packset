@@ -59,8 +59,8 @@ Whether the deed exists is a question the pack cannot ask. It checks the shape;
   needs no shared word at all. milli is a fourth when it is built. Every
   projection is optional and its absence is a supported state. Fusing
   measures better than any alone: see Retrieval below.
-- Search merge is a host voter panel. Default is Borda then MMR,
-  decay off. `PACKSET_FUSE`, `PACKSET_DIVERSIFY`, and
+- Search merge is a host voter panel. Default is CombMNZ then MMR,
+  decay off, and the default was measured: see Retrieval below. `PACKSET_FUSE`, `PACKSET_DIVERSIFY`, and
   `PACKSET_DECAY` select the sequence. Not a client header.
 - Tool dumps and fetched bodies are not atoms.
 
@@ -99,6 +99,55 @@ model should name which larger model.
 
 Every ballot is optional. A seat with no encoder gets the first three rows and
 loses 0.08 to 0.14 R@10, which is what the dense projection is worth.
+
+## Which voter fuses them
+
+The panel's default was argued and is now measured. Nine voters over the three
+ballots this crate ships, same questions, same corpus, read as sessions:
+
+| voter | hit@1 | nDCG@5 |
+|---|---|---|
+| CombMNZ | **0.638** | **0.722** |
+| CombSUM | 0.632 | 0.721 |
+| Borda | 0.620 | 0.712 |
+| Dowdall | 0.618 | 0.713 |
+| RRF | 0.613 | 0.708 |
+
+Score fusion beats rank fusion here, which is what the published system on this
+benchmark credits its own gain to. CombMNZ is the default.
+
+Sweep the shipped ballots, not the strongest pair available: RRF led a pair of
+two ballots by 2 points and trailed Borda on the three the seat actually fuses.
+A default chosen from the first would have been a claim about a retriever
+nobody runs.
+
+Ranked pairs is the one voter that says little here. It decides a pair by which
+majority prefers it, and two voters disagreeing is one against one, so few
+victories lock and the order falls back to the first ballot. It is for a panel
+of three or more.
+
+## What did not work
+
+Pseudo-relevance feedback, and the way it fails is the useful part.
+
+`Index::expand` implements RM3: estimate the rest of the query from the
+documents the first pass returned, keeping half the weight on the words
+actually asked for (Lavrenko and Croft, `10.1145/383952.383972`). Nothing is
+trained and nothing is stored.
+
+| corpus | BM25 | with RM3 |
+|---|---|---|
+| turns as documents, hit@1 | 0.589 | 0.451 |
+| sessions as documents, hit@1 | 0.607 | 0.604 |
+
+On dialogue turns it costs 14 points. On the same corpus indexed as sessions it
+costs nothing. A relevance model is a language model estimated from the top of
+the first pass, and a turn is ten to thirty tokens: ten of them is not enough
+text to estimate from, and with hit@1 near 0.29 most of what it estimates from
+is wrong. The model then reaches for more documents like the wrong ones.
+
+So it stays implemented, tested and off. It is a bad trade for short atoms,
+which is what a pack holds, and the measurement says why rather than that.
 
 Two things this does not say. It measures the scorer, not the system. Turns are
 loaded as atoms and nothing in packset extracts. So this is the ranking given a
