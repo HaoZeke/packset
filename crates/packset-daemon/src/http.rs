@@ -202,6 +202,21 @@ fn route(
                 Err(e) => Answer::err(400, e),
             },
         },
+        // The other direction: one accession, and the live atoms that cite it.
+        (Method::Get, "/v1/citers") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => match required(query, "accession") {
+                Err(a) => a,
+                Ok(accession) => match service.citers(&workspace, &accession) {
+                    Ok(found) => Answer::ok(json!({
+                        "workspace": workspace,
+                        "accession": accession,
+                        "atoms": found,
+                    })),
+                    Err(e) => Answer::err(400, e),
+                },
+            },
+        },
         (Method::Get, _) if path.starts_with("/v1/atoms/") => {
             let id = &path["/v1/atoms/".len()..];
             if id.is_empty() || id.contains('/') {

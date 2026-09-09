@@ -706,6 +706,45 @@ impl Service {
         Ok(seen.into_iter().map(ToString::to_string).collect())
     }
 
+    /// The live atoms that cite one deed accession.
+    ///
+    /// The other direction of [`Service::accessions`], and the pack's half of
+    /// the backwards walk: a tracker answers which issues cite a product, and
+    /// this answers which remembered claims do. Neither store opens the other,
+    /// so what composes them is a caller holding one accession.
+    ///
+    /// # Errors
+    ///
+    /// The store's.
+    pub fn citers(&self, workspace: &str, accession: &str) -> anyhow::Result<Vec<Value>> {
+        let wanted = accession.trim();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let atoms = self.store.live(workspace)?;
+        Ok(atoms
+            .iter()
+            .filter(|atom| {
+                atom.get("entities")
+                    .and_then(Value::as_array)
+                    .is_some_and(|entities| {
+                        entities
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .any(|entity| entity.trim() == wanted)
+                    })
+            })
+            .map(|atom| {
+                json!({
+                    "id": atom.get("id").cloned().unwrap_or(Value::Null),
+                    "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
+                    "text": atom.get("text").cloned().unwrap_or(Value::Null),
+                    "ts": atom.get("ts").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect())
+    }
+
     /// Seat home, atom counts by kind, pin, index and embedder.
     ///
     /// # Errors
@@ -1007,5 +1046,63 @@ mod tests {
         assert_eq!(status["workspace"], json!("w"));
         assert!(status["home"].is_string());
         assert!(status["last_write_ts"].is_string());
+    }
+
+    /// One accession, cited by one atom and not the other.
+    #[test]
+    fn only_the_atom_that_cites_an_accession_is_named() {
+        let (_dir, svc) = service();
+        let mut cites = atom("The overlay landed as a frozen deed.");
+        cites.insert(
+            "entities".into(),
+            json!(["deed-patch-overlay", "overlay"]),
+        );
+        let stored = svc.add(cites).unwrap();
+        let mut elsewhere = atom("The parser was rewritten.");
+        elsewhere.insert("entities".into(), json!(["parser"]));
+        svc.add(elsewhere).unwrap();
+
+        let found = svc.citers("w", "deed-patch-overlay").unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0]["id"], stored["id"]);
+    }
+
+    /// An accession nothing cites is an empty answer, not a missing one: that
+    /// is the whole point of asking.
+    #[test]
+    fn an_uncited_accession_names_nobody() {
+        let (_dir, svc) = service();
+        let mut cites = atom("The overlay landed as a frozen deed.");
+        cites.insert("entities".into(), json!(["deed-patch-overlay"]));
+        svc.add(cites).unwrap();
+        assert!(svc.citers("w", "deed-nothing-here").unwrap().is_empty());
+        assert!(svc.citers("w", "  ").unwrap().is_empty());
+    }
+
+    /// A prefix is not a citation. `deed-patch-overlay-v2` is a different
+    /// product, and naming it as a citer of the first would be a wrong answer
+    /// that looks right.
+    #[test]
+    fn a_longer_accession_is_not_a_citation_of_the_shorter_one() {
+        let (_dir, svc) = service();
+        let mut cites = atom("The second overlay landed.");
+        cites.insert("entities".into(), json!(["deed-patch-overlay-v2"]));
+        svc.add(cites).unwrap();
+        assert!(svc.citers("w", "deed-patch-overlay").unwrap().is_empty());
+    }
+
+    /// Both directions of the join, over one pack.
+    #[test]
+    fn what_a_pack_cites_and_who_cites_it_agree() {
+        let (_dir, svc) = service();
+        let mut cites = atom("The overlay landed as a frozen deed.");
+        cites.insert("entities".into(), json!(["deed-patch-overlay", "sha256:abc"]));
+        svc.add(cites).unwrap();
+
+        let listed = svc.accessions("w").unwrap();
+        assert_eq!(listed, vec!["deed-patch-overlay", "sha256:abc"]);
+        for accession in listed {
+            assert_eq!(svc.citers("w", &accession).unwrap().len(), 1, "{accession}");
+        }
     }
 }

@@ -54,6 +54,13 @@ jobs:
           bin/packset ensure
           bin/packset status
           bin/packset accessions ci
+          curl -fsS -X POST "http://127.0.0.1:8791/v1/atoms" \
+            -H 'Content-Type: application/json' \
+            -d '{"workspace":"ci","kind":"conclusion","text":"The lifecycle check passed.","entities":["deed-ci-smoke"]}' >/dev/null
+          test "$(bin/packset accessions ci)" = "deed-ci-smoke"
+          # Both directions of the join, over the pack that just answered.
+          bin/packset citers deed-ci-smoke | grep -q "The lifecycle check passed."
+          test -z "$(bin/packset citers deed-nothing-here)"
           test "$(bin/packset which)" = "$PWD/target/release/packsetd"
           bin/packset stop
           ! bin/packset status

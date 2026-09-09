@@ -37,7 +37,13 @@ free-form name and is untouched.
 packset accessions WORKSPACE           # every accession cited by a live atom
 packset accessions WORKSPACE | deedar evidence -   # the bytes are intact
 packset accessions WORKSPACE | deedar current -    # still the tip
+packset citers ACCESSION               # the live atoms citing one accession
 ```
+
+`accessions` and `citers` are the two directions of one join. A tracker answers
+which issues cite a product; `citers` answers which remembered claims do.
+Neither store opens the other, so what composes them is a caller holding one
+accession.
 
 Whether the deed exists is a question the pack cannot ask. It checks the shape;
 `deedar` answers the rest.

@@ -8,6 +8,7 @@
 //! packset ensure | start | stop | status | port | url | which
 //! packset pin [NAME]
 //! packset accessions [WORKSPACE]
+//! packset citers ACCESSION [WORKSPACE]
 //! ```
 //!
 //! Clients export `PACKSET_URL`; `INSIDE_MEMORY_URL` is an alias.
@@ -79,6 +80,7 @@ fn run() -> anyhow::Result<()> {
         }
         "pin" => pin(port, rest.first().map(String::as_str)),
         "accessions" => accessions(port, rest.first().map(String::as_str)),
+        "citers" => citers(port, rest.first().map(String::as_str), rest.get(1).map(String::as_str)),
         "-h" | "--help" | "help" => {
             println!("{}", usage());
             Ok(())
@@ -99,7 +101,8 @@ fn usage() -> String {
          status [WORKSPACE]     counts by kind, pin, index\n\
          port | url | which\n\
          pin [NAME]             read, or set, the pinned set\n\
-         accessions [WORKSPACE] deed accessions live atoms cite"
+         accessions [WORKSPACE] deed accessions live atoms cite\n\
+         citers ACCESSION [WS]  the live atoms citing one accession"
         .to_string()
 }
 
@@ -298,6 +301,26 @@ fn pin(port: u16, name: Option<&str>) -> anyhow::Result<()> {
 /// The line-per-accession shape is the point: `deedar evidence -` and `deedar
 /// current -` read a list on stdin, so a pack answers the staleness question
 /// the same way a tracker does.
+/// The live atoms citing one accession, one per line: id, then the claim.
+///
+/// The other direction of `accessions`, and the pack's half of the backwards
+/// walk. A tracker answers which issues cite a product; this answers which
+/// remembered claims do.
+fn citers(port: u16, accession: Option<&str>, given: Option<&str>) -> anyhow::Result<()> {
+    let accession =
+        accession.ok_or_else(|| anyhow::anyhow!("name an accession: packset citers ACCESSION"))?;
+    let workspace = workspace(given)?;
+    for atom in client(port).citers(&workspace, accession)? {
+        let id = atom.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
+        let text = atom
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        println!("{id}\t{text}");
+    }
+    Ok(())
+}
+
 fn accessions(port: u16, given: Option<&str>) -> anyhow::Result<()> {
     let workspace = workspace(given)?;
     for accession in client(port).accessions(&workspace)? {

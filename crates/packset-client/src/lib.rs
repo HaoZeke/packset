@@ -238,6 +238,31 @@ impl PacksetClient {
             .unwrap_or(serde_json::Value::Array(vec![]));
         Ok(serde_json::from_value(found)?)
     }
+    /// The live atoms in a workspace that cite one deed accession.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn citers(
+        &self,
+        workspace: &str,
+        accession: &str,
+    ) -> Result<Vec<serde_json::Value>, Error> {
+        let url = format!("{}/v1/citers", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .query("accession", accession)
+            .timeout(TIMEOUT)
+            .call()
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?;
+        let found = body
+            .get("atoms")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        Ok(serde_json::from_value(found)?)
+    }
+
     pub fn post_atom(&self, atom: &serde_json::Value) -> Result<serde_json::Value, Error> {
         let url = format!("{}/v1/atoms", self.base);
         let body: serde_json::Value = ureq::post(&url)
