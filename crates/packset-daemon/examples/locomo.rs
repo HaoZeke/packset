@@ -284,6 +284,12 @@ fn model_name() -> String {
 /// Rows of floats, length-prefixed, so a ragged set reads back as it was
 /// written and a truncated file fails the count check rather than the scoring.
 fn write_rows(path: &std::path::Path, rows: &[Vec<f32>]) {
+    // A run whose encoder died halfway has rows that are empty rather than
+    // wrong, and caching those would make the next run read a failure as an
+    // answer. An absent encoder is a supported state; a cached absence is not.
+    if rows.is_empty() || rows.iter().any(Vec::is_empty) {
+        return;
+    }
     let mut bytes: Vec<u8> = Vec::new();
     bytes.extend_from_slice(&(rows.len() as u32).to_le_bytes());
     for row in rows {
