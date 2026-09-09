@@ -119,8 +119,8 @@ impl Encoder {
         })
     }
 
-    /// One line in, one line of per-token vectors out.
-    fn encode_tokens(&mut self, text: &str) -> Option<Vec<Vec<f32>>> {
+    /// One line in, one line carrying both forms out.
+    fn encode_tokens(&mut self, text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>)> {
         let reply = self.ask(text)?;
         let parsed: Value = serde_json::from_str(reply.trim()).ok()?;
         let rows = parsed.get("t")?.as_array()?;
@@ -135,7 +135,17 @@ impl Encoder {
                 (!vector.is_empty()).then_some(vector)
             })
             .collect();
-        (!tokens.is_empty()).then_some(tokens)
+        let pooled: Vec<f32> = parsed
+            .get("v")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (!tokens.is_empty()).then_some((tokens, pooled))
     }
 
     /// Write one request and read its one-line reply.
@@ -228,14 +238,17 @@ fn late_slot() -> &'static Slot {
     LATE.get_or_init(|| Mutex::new(None))
 }
 
-/// Encode one text as a vector per token, for late interaction.
+/// Encode one text both ways from one pass: a vector per token, and the
+/// model's own pooled vector.
 ///
 /// A different binary mode rather than a model name, because the shape it
 /// returns is different: a caller that asked for one and got the other would
-/// score nonsense rather than fail. Nothing in the writer reads this; it exists
-/// so the retrieval benchmark can ask whether late interaction is the gap.
+/// score nonsense rather than fail. Both come back so a caller can compare the
+/// two scorings with the model held fixed. Nothing in the writer reads this; it
+/// exists so the retrieval benchmark can ask whether late interaction is the
+/// gap.
 #[must_use]
-pub fn encode_late(text: &str) -> Option<Vec<Vec<f32>>> {
+pub fn encode_late(text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>)> {
     if text.trim().is_empty() {
         return None;
     }
@@ -246,8 +259,8 @@ pub fn encode_late(text: &str) -> Option<Vec<Vec<f32>>> {
             *held = Encoder::start_late(&binary);
         }
         let running = held.as_mut()?;
-        if let Some(tokens) = running.encode_tokens(text) {
-            return Some(tokens);
+        if let Some(both) = running.encode_tokens(text) {
+            return Some(both);
         }
         *held = None;
         if attempt == 1 {

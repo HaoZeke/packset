@@ -44,16 +44,22 @@ struct Vector {
     v: Vec<f32>,
 }
 
-/// One thing encoded as a vector per token.
+/// One thing encoded both ways, from one pass.
 ///
 /// Late interaction scores a document by the best match each query token finds
 /// anywhere in it, so it needs the tokens kept apart rather than pooled. That
 /// is the whole difference, and it is also the whole cost: a short claim
 /// carries thirty vectors where the pooled form carries one.
+///
+/// The model returns its own pooled vector from the same forward pass, and it
+/// rides along so a caller can compare the two scorings with the model held
+/// fixed. Comparing this model's tokens against another model's pooling
+/// measures both differences at once and attributes them to one.
 #[derive(Serialize)]
 struct Tokens {
     id: String,
     t: Vec<Vec<f32>>,
+    v: Vec<f32>,
 }
 
 /// A model, and the instructions its family wants in front of a text.
@@ -194,10 +200,17 @@ fn late_interaction(query: bool) -> anyhow::Result<()> {
         } else {
             encoded.colbert.remove(0)
         };
+        // The pooled vector from the same forward pass, so a caller can compare
+        // the two scorings without changing the model underneath them.
+        let v = if encoded.dense.is_empty() {
+            Vec::new()
+        } else {
+            encoded.dense.remove(0)
+        };
         writeln!(
             out,
             "{}",
-            serde_json::to_string(&Tokens { id: item.id, t })?
+            serde_json::to_string(&Tokens { id: item.id, t, v })?
         )?;
         out.flush()?;
     }

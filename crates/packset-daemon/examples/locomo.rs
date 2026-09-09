@@ -192,6 +192,8 @@ const ARMS: &[&str] = &[
     "bm25+dense",
     "late",
     "bm25+late",
+    "m3 pooled",
+    "bm25+m3 pooled",
 ];
 
 /// How many conversations to score, when a machine cannot hold a whole run.
@@ -249,6 +251,43 @@ fn rank_late(ask: &Ask<'_>, query: &[Vec<f32>], documents: &[Vec<Vec<f32>>]) -> 
             continue;
         };
         let relevance = search::max_sim(query, tokens);
+        if relevance <= 0.0 {
+            continue;
+        }
+        hits.push(json!({
+            "field": "atom",
+            "id": atom.get("id").cloned().unwrap_or(Value::Null),
+            "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
+            "text": atom.get("text").cloned().unwrap_or(Value::Null),
+            "score": relevance,
+        }));
+    }
+    hits.sort_by(|a, b| {
+        b["score"]
+            .as_f64()
+            .unwrap_or(0.0)
+            .partial_cmp(&a["score"].as_f64().unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                a["id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["id"].as_str().unwrap_or(""))
+            })
+    });
+    hits.truncate(ask.limit);
+    hits
+}
+
+/// Rank by cosine against vectors held beside the atoms rather than inside
+/// them, which is what the per-token encoder's pooled output needs.
+fn rank_pooled(ask: &Ask<'_>, query: &[f32], documents: &[Vec<f32>]) -> Vec<Value> {
+    let mut hits: Vec<Value> = Vec::new();
+    for (ordinal, atom) in ask.atoms.iter().enumerate() {
+        let Some(vector) = documents.get(ordinal).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        let relevance = search::cosine(query, vector);
         if relevance <= 0.0 {
             continue;
         }
@@ -352,6 +391,10 @@ fn main() -> anyhow::Result<()> {
     }
     let mut late_questions: std::collections::HashMap<String, Vec<Vec<f32>>> =
         std::collections::HashMap::new();
+    // The same model's pooled output, so late interaction can be compared with
+    // the model held fixed rather than against a different one.
+    let mut m3_questions: std::collections::HashMap<String, Vec<f32>> =
+        std::collections::HashMap::new();
 
     for conversation in &mut corpus {
         turns += conversation.atoms.len();
@@ -438,17 +481,21 @@ fn main() -> anyhow::Result<()> {
         // thousand floats per token would not fit an atom's JSON without
         // making every other read pay for it.
         let mut late_atoms: Vec<Vec<Vec<f32>>> = Vec::new();
+        let mut m3_atoms: Vec<Vec<f32>> = Vec::new();
         if late {
             for atom in &conversation.atoms {
                 let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
-                late_atoms.push(packset_daemon::embed::encode_late(text).unwrap_or_default());
+                let (tokens, pooled) = packset_daemon::embed::encode_late(text).unwrap_or_default();
+                late_atoms.push(tokens);
+                m3_atoms.push(pooled);
             }
             for question in &conversation.questions {
                 if late_questions.contains_key(question.text.as_str()) {
                     continue;
                 }
-                if let Some(tokens) = packset_daemon::embed::encode_late(&question.text) {
+                if let Some((tokens, pooled)) = packset_daemon::embed::encode_late(&question.text) {
                     late_questions.insert(question.text.clone(), tokens);
+                    m3_questions.insert(question.text.clone(), pooled);
                 }
             }
         }
@@ -479,6 +526,10 @@ fn main() -> anyhow::Result<()> {
                 .get(question.text.as_str())
                 .map(|tokens| rank_late(&ask, tokens, &late_atoms))
                 .unwrap_or_default();
+            let m3_pooled = m3_questions
+                .get(question.text.as_str())
+                .map(|vector| rank_pooled(&ask, vector, &m3_atoms))
+                .unwrap_or_default();
 
             // Does the stored graph earn a place in an answer? Half the places
             // are the ranking's, and the rest go either to the ranking
@@ -504,9 +555,11 @@ fn main() -> anyhow::Result<()> {
                     "bm25" => hit_ids(&terms),
                     "dense" => hit_ids(&meaning),
                     "late" => hit_ids(&interaction),
+                    "m3 pooled" => hit_ids(&m3_pooled),
                     other => {
                         let ballots = match other {
                             "bm25+late" => vec![terms.clone(), interaction.clone()],
+                            "bm25+m3 pooled" => vec![terms.clone(), m3_pooled.clone()],
                             "bm25+dense" => vec![terms.clone(), meaning.clone()],
                             "lexical+bm25+dense" => {
                                 vec![lexical.clone(), terms.clone(), meaning.clone()]
