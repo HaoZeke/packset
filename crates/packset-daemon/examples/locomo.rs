@@ -781,7 +781,7 @@ fn main() -> anyhow::Result<()> {
     let mut sparse_questions: std::collections::HashMap<String, packset_daemon::embed::Sparse> =
         std::collections::HashMap::new();
 
-    for (index, conversation) in corpus.iter_mut().enumerate() {
+    for (nth, conversation) in corpus.iter_mut().enumerate() {
         turns += conversation.atoms.len();
         // The write path is what builds the graph, so the benchmark runs it
         // rather than a copy of it: `apply_links` is what bounds the peer side
@@ -849,10 +849,10 @@ fn main() -> anyhow::Result<()> {
             let held = cache_dir();
             let atom_file = held
                 .as_ref()
-                .map(|dir| dir.join(format!("{model}-atoms-{index}.vec")));
+                .map(|dir| dir.join(format!("{model}-atoms-{nth}.vec")));
             let question_file = held
                 .as_ref()
-                .map(|dir| dir.join(format!("{model}-questions-{index}.vec")));
+                .map(|dir| dir.join(format!("{model}-questions-{nth}.vec")));
 
             let cached = atom_file
                 .as_deref()
