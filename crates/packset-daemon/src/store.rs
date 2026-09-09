@@ -1,10 +1,10 @@
-//! Atoms in LMDB, in the layout the Python writer already uses.
+//! Atoms in LMDB.
 //!
-//! The key is `workspace\0id` and the value is the record as JSON. That is not
-//! an internal choice: an existing seat's `memory.lmdb` has to open here and
-//! read back identically, so the port is a swap rather than a migration. The
-//! NUL separator is what makes a workspace scan a prefix scan, since no
-//! workspace name can carry one.
+//! The key is `workspace\0id` and the value is the record as JSON. The layout
+//! is part of the contract rather than an internal choice: a seat's existing
+//! `memory.lmdb` opens here and reads back identically. The NUL separator is
+//! what makes a workspace scan a prefix scan, since no workspace name can
+//! carry one.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -17,7 +17,7 @@ use heed::{Database, Env, EnvFlags, EnvOpenOptions};
 use packset_core::record::{self, AtomError};
 use serde_json::{Map, Value};
 
-/// The map size the Python writer opens with. Growing it is compatible;
+/// The map size the environment opens with. Growing it is compatible;
 /// shrinking it below what is stored is not.
 pub const MAP_SIZE: usize = 256 * 1024 * 1024;
 

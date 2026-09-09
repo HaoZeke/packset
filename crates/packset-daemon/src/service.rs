@@ -651,6 +651,36 @@ impl Service {
         crate::proposals::list_open(&self.home, workspace)
     }
 
+    /// Every deed accession cited by a live atom in a workspace, sorted.
+    ///
+    /// The accession is the only identifier that crosses the tracker, the pack
+    /// and the deed store, so a pack has to be able to list its own citations
+    /// the way a tracker does. A product cited by one atom and by nothing else
+    /// is exactly the citation that goes stale unnoticed.
+    ///
+    /// # Errors
+    ///
+    /// The store's.
+    pub fn accessions(&self, workspace: &str) -> anyhow::Result<Vec<String>> {
+        let atoms = self.store.live(workspace)?;
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for atom in atoms.iter() {
+            let Some(entities) = atom.get("entities").and_then(Value::as_array) else {
+                continue;
+            };
+            for entity in entities {
+                let Some(text) = entity.as_str() else {
+                    continue;
+                };
+                let text = text.trim();
+                if record::is_accession(text) {
+                    seen.insert(text);
+                }
+            }
+        }
+        Ok(seen.into_iter().map(ToString::to_string).collect())
+    }
+
     /// Seat home, atom counts by kind, pin, index and embedder.
     ///
     /// # Errors

@@ -1,0 +1,20 @@
+[package]
+name = "packset-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Start, stop and inspect packsetd"
+
+[[bin]]
+name = "packset"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+libc = "0.2"
+packset-client = { path = "../packset-client" }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

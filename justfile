@@ -1,39 +1,14 @@
 root := justfile_directory()
 
-test-py:
-    .pixi/envs/default/bin/pytest -q scripts
-
-# Both writers against one store, in both directions. The port is a swap and
-# not a migration, which is a claim about the file on disk.
-interop:
-    cargo build -p packset-daemon --examples
-    cd scripts && ../.pixi/envs/default/bin/python interop_check.py ../target/debug/examples
-
-# The same, with the search projection present, so the milli path is the one
-# under test rather than the fallback.
-surface-milli: milli
-    cargo build -p packset-daemon
-    cd scripts && PACKSET_MILLI="$PWD/../target/release/packset-milli" \
-        ../.pixi/envs/default/bin/python surface_check.py ../target/debug/packsetd
+# Everything but the search projection, which needs its own toolchain.
+check:
+    cargo fmt --all --check
+    cargo clippy --locked --workspace --exclude packset-milli --all-targets -- -D warnings
+    cargo test --locked --workspace --exclude packset-milli --no-fail-fast
 
 # What a pack costs as it grows, and the shape of the graph inside it.
-bench:
-    cargo build --release -p packset-daemon
-    .pixi/envs/default/bin/python scripts/bench_pack.py target/release/packsetd
-
-# One request sequence against both writers, every status code and body
-# compared. A port is finished when a client cannot tell which one answered.
-surface:
-    cargo build -p packset-daemon
-    cd scripts && ../.pixi/envs/default/bin/python surface_check.py ../target/debug/packsetd
-
-# Regenerate the Python goldens the Rust port is checked against. Read the
-# diff: a change here is a change in what the daemon accepts.
-goldens:
-    cd scripts && ../.pixi/envs/default/bin/python gen_goldens.py
-
-lint:
-    .pixi/envs/default/bin/ruff check scripts
+bench sizes="":
+    cargo run --release -p packset-daemon --example bench -- {{sizes}}
 
 milli:
     #!/usr/bin/env bash

@@ -1401,6 +1401,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "packset-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "packset-client",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "packset-client"
 version = "0.1.0"
 dependencies = [

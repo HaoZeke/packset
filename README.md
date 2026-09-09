@@ -21,16 +21,10 @@ packset pin NAME        # scope retrieve and Remember
 Default writer URL is `http://127.0.0.1:8761`.
 
 ```
-packset-tui             # Textual DataTable (id, kind, text, ts)
-packset-tui --dump      # GET /v1/atoms as TSV
-packset-tui --bump ID   # POST /v1/atoms/update {workspace, id, fields:{}}
+packset status          # counts by kind, the pinned set, the index
+packset which           # the packsetd this seat would start
+packset stop
 ```
-
-The interactive app opens on identity, then on `global` (or another
-store with live atoms) when identity is empty. `b` bumps the selected
-row's `ts`. `w` picks another workspace (type a name or choose from
-`/v1/workspaces`). `[` / `]` cycle. Urgency is a column only when an
-atom carries that field.
 
 ## Citations
 
@@ -64,14 +58,17 @@ Whether the deed exists is a question the pack cannot ask. It checks the shape;
 | `packset-core` | atom schema, prose and readability, recall, search scoring, the named fuse/diversify panel, decay, extract filters |
 | `packset-daemon` | the writer: the LMDB store, the cards, and `/v1` |
 | `packset-client` | HTTP client |
+| `packset-cli` | `packset`: lifecycle and the `/v1` reads a shell runs |
 | `packset-milli` | inverted-index projection (build on the remote builder) |
 
-The running writer is `packset-daemon`. `scripts/packsetd.py` stays as
-the reference it is checked against: CI asks both the same requests in
-the same order and compares every status code and body, and runs both
-over one store, where a difference in the file on disk would show up.
-`packset which`
-says which one a seat would start. Clients never open the LMDB.
+One process owns `memory.lmdb`; clients never open it. `packset` finds the
+`packsetd` beside itself, so a checkout runs its own build rather than
+whichever one is on `PATH`, and `packset which` says which that is.
+
+`crates/packset-core/tests/goldens.json` fixes the accept and reject
+boundary: which records the writer stores, which it refuses, and the exact
+words it refuses them with. It is checked-in data rather than generated
+output, so a diff there is a change in what the daemon accepts.
 
 ## Clients
 

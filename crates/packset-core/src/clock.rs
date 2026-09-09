@@ -32,8 +32,8 @@ pub fn utcnow() -> String {
 
 /// Parse a stored timestamp back to milliseconds since the epoch.
 ///
-/// Accepts the `Z` form this module writes and the `+00:00` offset Python's
-/// `fromisoformat` produces, since both are already on disk.
+/// Accepts the `Z` form this module writes and the `+00:00` offset form,
+/// since both are already on disk.
 #[must_use]
 pub fn parse_millis(text: &str) -> Option<i64> {
     let raw = text.trim();
@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn a_known_instant_reads_the_way_python_writes_it() {
+    fn a_known_instant_reads_back_as_written() {
         assert_eq!(format_millis(1_767_225_600_000), "2026-01-01T00:00:00.000Z");
         assert_eq!(
             parse_millis("2026-01-01T00:00:00.000Z"),
@@ -131,8 +131,8 @@ mod tests {
 
     #[test]
     fn the_offset_form_already_on_disk_still_parses() {
-        // Python's fromisoformat round-trip writes +00:00, and the store has
-        // both spellings in it.
+        // Records on disk carry both spellings of the same instant, so a
+        // reader that took only one would silently drop half of them.
         assert_eq!(
             parse_millis("2026-01-01T00:00:00+00:00"),
             parse_millis("2026-01-01T00:00:00.000Z")

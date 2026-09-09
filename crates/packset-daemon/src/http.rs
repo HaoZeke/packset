@@ -188,6 +188,20 @@ fn route(
                 Err(e) => Answer::err(400, e),
             },
         },
+        // The deed accessions a workspace's live atoms cite, so `deedar
+        // evidence -` and `deedar current -` cover a pack the way they cover a
+        // tracker. Plain strings rather than atoms: the caller wants the join
+        // key, and asking for /v1/atoms to get it means shipping every body.
+        (Method::Get, "/v1/accessions") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => match service.accessions(&workspace) {
+                Ok(found) => Answer::ok(json!({
+                    "workspace": workspace,
+                    "accessions": found,
+                })),
+                Err(e) => Answer::err(400, e),
+            },
+        },
         (Method::Get, _) if path.starts_with("/v1/atoms/") => {
             let id = &path["/v1/atoms/".len()..];
             if id.is_empty() || id.contains('/') {

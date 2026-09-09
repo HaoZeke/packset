@@ -57,14 +57,40 @@ pub const KINDS: &[&str] = &[
 /// Whether the claim was stated or inferred.
 pub const LEVELS: &[&str] = &["explicit", "derived"];
 
-/// A string the way Python's `repr` writes it.
+/// Prefixes a deed accession can open with.
 ///
-/// The error messages cross the wire to clients that already read them, so
-/// quoting a set name or an entity differently would be a change in the API
-/// rather than in the prose. Python prefers single quotes and switches to
-/// double only when the value carries a single quote and no double.
+/// deedar mints `deed-<kind>-<slug>` and answers `get` for a `sha256:` of the
+/// canonical deed or of one product path. Those two forms are the whole
+/// vocabulary, and the tracker enforces the same pair, so an entity in neither
+/// is a topic word rather than a citation.
+const DEED_PREFIXES: &[&str] = &["deed-", "sha256:"];
+
+/// Whether an entity could name a deed.
+///
+/// The shape rather than the store: a pack cites deeds and never opens one, so
+/// this cannot ask whether the deed exists.
 #[must_use]
-pub fn py_repr(value: &str) -> String {
+pub fn is_accession(value: &str) -> bool {
+    let value = value.trim();
+    if value.contains(|c: char| c.is_whitespace() || c == ',') {
+        return false;
+    }
+    DEED_PREFIXES.iter().any(|prefix| {
+        value
+            .strip_prefix(*prefix)
+            .is_some_and(|rest| !rest.is_empty())
+    })
+}
+
+/// A string quoted the way the error messages quote one.
+///
+/// Single quotes, switching to double only when the value carries a single
+/// quote and no double, with a backslash escape when it carries both. The rule
+/// is arbitrary, and that is the reason to state it here: the strings cross the
+/// wire to clients that read them, so quoting a set name or an entity
+/// differently would be a change in the API rather than in the prose.
+#[must_use]
+pub fn quoted(value: &str) -> String {
     let has_single = value.contains('\'');
     let has_double = value.contains('"');
     let quote = if has_single && !has_double { '"' } else { '\'' };
@@ -192,15 +218,15 @@ fn refusal_message(value: &str, why: EntityRefusal) -> String {
                 .unwrap_or("");
             format!(
                 "{} is a bare {} and names no deed",
-                py_repr(value),
-                py_repr(prefix)
+                quoted(value),
+                quoted(prefix)
             )
         }
         EntityRefusal::Separator(bad) => {
             format!(
                 "{} carries {}, which would split the entity into two",
-                py_repr(value),
-                py_repr(&bad.to_string())
+                quoted(value),
+                quoted(&bad.to_string())
             )
         }
     }
@@ -653,12 +679,12 @@ mod tests {
     }
 
     #[test]
-    fn repr_prefers_single_quotes_the_way_python_does() {
-        assert_eq!(py_repr("plain"), "'plain'");
-        assert_eq!(py_repr("it's"), "\"it's\"");
-        assert_eq!(py_repr("say \"hi\""), "'say \"hi\"'");
-        assert_eq!(py_repr("both ' and \""), "'both \\' and \"'");
-        assert_eq!(py_repr("a\nb"), "'a\\nb'");
+    fn quoting_prefers_single_quotes() {
+        assert_eq!(quoted("plain"), "'plain'");
+        assert_eq!(quoted("it's"), "\"it's\"");
+        assert_eq!(quoted("say \"hi\""), "'say \"hi\"'");
+        assert_eq!(quoted("both ' and \""), "'both \\' and \"'");
+        assert_eq!(quoted("a\nb"), "'a\\nb'");
     }
 
     #[test]

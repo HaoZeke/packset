@@ -170,6 +170,74 @@ impl PacksetClient {
         Ok(serde_json::from_value(hits)?)
     }
 
+    /// Seat home, atom counts by kind, pin, index and embedder.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn status(&self, workspace: Option<&str>) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/status", self.base);
+        let mut req = ureq::get(&url).timeout(TIMEOUT);
+        if let Some(workspace) = workspace {
+            req = req.query("workspace", workspace);
+        }
+        Ok(req
+            .call()
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?)
+    }
+
+    /// The set a workspace is pinned to.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn pin(&self, workspace: &str) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/pin", self.base);
+        Ok(ureq::get(&url)
+            .query("workspace", workspace)
+            .timeout(TIMEOUT)
+            .call()
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?)
+    }
+
+    /// Pin a workspace to a set.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn set_pin(&self, workspace: &str, name: &str) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/pin", self.base);
+        Ok(ureq::put(&url)
+            .timeout(TIMEOUT)
+            .send_json(serde_json::json!({ "workspace": workspace, "name": name }))
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?)
+    }
+
+    /// The deed accessions a workspace's live atoms cite, sorted.
+    ///
+    /// The accession is the only identifier crossing the tracker, the pack and
+    /// the deed store, so this is what `deedar evidence -` reads.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn accessions(&self, workspace: &str) -> Result<Vec<String>, Error> {
+        let url = format!("{}/v1/accessions", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .timeout(TIMEOUT)
+            .call()
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?;
+        let found = body
+            .get("accessions")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        Ok(serde_json::from_value(found)?)
+    }
     pub fn post_atom(&self, atom: &serde_json::Value) -> Result<serde_json::Value, Error> {
         let url = format!("{}/v1/atoms", self.base);
         let body: serde_json::Value = ureq::post(&url)
