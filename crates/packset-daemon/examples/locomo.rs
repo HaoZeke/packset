@@ -404,6 +404,133 @@ fn rank_pooled(ask: &Ask<'_>, query: &[f32], documents: &[Vec<f32>]) -> Vec<Valu
     hits
 }
 
+/// The stored link graph, as positions rather than ids.
+///
+/// Built once per conversation because a restart walk touches every edge on
+/// every round, and rebuilding the adjacency per question would dominate what
+/// the walk itself costs.
+struct Graph {
+    ids: Vec<String>,
+    at: std::collections::HashMap<String, usize>,
+    edges: Vec<Vec<usize>>,
+}
+
+impl Graph {
+    fn of(atoms: &[Record]) -> Self {
+        // One pass, so a node's position in `ids` is its position in `edges`:
+        // an atom without an id would otherwise shift every edge after it.
+        let held: Vec<&Record> = atoms
+            .iter()
+            .filter(|atom| atom.get("id").and_then(Value::as_str).is_some())
+            .collect();
+        let ids: Vec<String> = held
+            .iter()
+            .filter_map(|atom| atom.get("id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
+        let at: std::collections::HashMap<String, usize> = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (id.clone(), index))
+            .collect();
+        let edges = held
+            .iter()
+            .map(|atom| {
+                atom.get("links")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter_map(|peer| at.get(peer).copied())
+                    .collect()
+            })
+            .collect();
+        Self { ids, at, edges }
+    }
+
+    /// Personalised PageRank from a seeded restart distribution.
+    ///
+    /// One hop is the weakest thing a graph can do for a query, and measuring
+    /// only that understates what a graph is worth. The retrieval work that
+    /// reports a gain from a memory graph runs a restart random walk over it,
+    /// which reaches a node no seed links to directly and weights it by how
+    /// many seeds reach it at all. Page, Brin, Motwani, Winograd, The PageRank
+    /// citation ranking, 1999; the seeded form as HippoRAG uses it,
+    /// DOI 10.48550/arXiv.2405.14831.
+    fn walk(&self, seeds: &[String], damping: f64, rounds: usize) -> Vec<(usize, f64)> {
+        let n = self.ids.len();
+        let mut restart = vec![0.0f64; n];
+        let mut mass = 0.0;
+        // Weighted by where the ranking put it, so the top seed pulls hardest.
+        for (place, id) in seeds.iter().enumerate() {
+            if let Some(index) = self.at.get(id) {
+                let weight = 1.0 / (place + 1) as f64;
+                restart[*index] += weight;
+                mass += weight;
+            }
+        }
+        if mass == 0.0 {
+            return Vec::new();
+        }
+        for value in &mut restart {
+            *value /= mass;
+        }
+        let mut rank = restart.clone();
+        let mut next = vec![0.0f64; n];
+        for _ in 0..rounds {
+            next.iter_mut().for_each(|value| *value = 0.0);
+            let mut dangling = 0.0;
+            for (node, peers) in self.edges.iter().enumerate() {
+                if peers.is_empty() {
+                    dangling += rank[node];
+                    continue;
+                }
+                let share = rank[node] / peers.len() as f64;
+                for peer in peers {
+                    next[*peer] += share;
+                }
+            }
+            for (index, value) in next.iter_mut().enumerate() {
+                // A node with no links returns its mass to the restart, which
+                // keeps the walk a distribution rather than leaking it.
+                *value = damping * (*value + dangling * restart[index])
+                    + (1.0 - damping) * restart[index];
+            }
+            std::mem::swap(&mut rank, &mut next);
+        }
+        let mut order: Vec<(usize, f64)> = rank.into_iter().enumerate().collect();
+        order.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        order
+    }
+
+    /// The ranking's own places kept, the rest filled by the walk.
+    fn expand(&self, ranked: &[String], limit: usize) -> Vec<String> {
+        let mut out: Vec<String> = ranked.to_vec();
+        let mut seen: BTreeSet<&str> = ranked.iter().map(String::as_str).collect();
+        for (index, score) in self.walk(ranked, WALK_DAMPING, WALK_ROUNDS) {
+            if out.len() >= limit {
+                break;
+            }
+            if score <= 0.0 {
+                break;
+            }
+            let id = &self.ids[index];
+            if seen.insert(id.as_str()) {
+                out.push(id.clone());
+            }
+        }
+        out
+    }
+}
+
+/// How much of the walk's mass stays on the graph rather than restarting.
+const WALK_DAMPING: f64 = 0.5;
+
+/// Rounds of the walk. The graph is bounded at eight neighbours a node, so the
+/// distribution settles well inside this.
+const WALK_ROUNDS: usize = 20;
+
 /// Follow each hit's stored links once, appending neighbours behind the hits.
 ///
 /// The link graph is built by the write path and read by nothing that answers a
@@ -494,6 +621,7 @@ fn main() -> anyhow::Result<()> {
     let mut room_voted: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
     let mut ranking = Tally::new();
     let mut hopped = Tally::new();
+    let mut walked = Tally::new();
     let mut turns = 0usize;
     let mut adversarial = 0usize;
     let mut linked = 0usize;
@@ -567,6 +695,7 @@ fn main() -> anyhow::Result<()> {
                 .max()
                 .unwrap_or(0),
         );
+        let graph = Graph::of(&conversation.atoms);
         let documents: Vec<Vec<String>> =
             conversation.atoms.iter().map(search::atom_tokens).collect();
         let index = Index::build(documents.iter().map(Vec::as_slice));
@@ -674,6 +803,7 @@ fn main() -> anyhow::Result<()> {
                 &one_hop(&shallow, &conversation.atoms, HOP_CUT),
                 &question.evidence,
             );
+            walked.add(&graph.expand(&shallow, HOP_CUT), &question.evidence);
 
             for (slot, arm) in ARMS.iter().enumerate() {
                 let ranked = match *arm {
@@ -839,6 +969,11 @@ fn main() -> anyhow::Result<()> {
         "  neighbours of the top  R@{HOP_CUT} {:.3}   hit@{HOP_CUT} {:.3}",
         hopped.recall[slot] / counted,
         hopped.hit[slot] as f64 / counted
+    );
+    println!(
+        "  a restart walk from it R@{HOP_CUT} {:.3}   hit@{HOP_CUT} {:.3}",
+        walked.recall[slot] / counted,
+        walked.hit[slot] as f64 / counted
     );
 
     let mut merged = Tally::new();
