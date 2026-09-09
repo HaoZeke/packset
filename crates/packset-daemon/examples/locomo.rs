@@ -752,6 +752,11 @@ fn main() -> anyhow::Result<()> {
     let mut voted_sessions: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
     let mut protocol: Vec<Tally> = PROTOCOLS.iter().map(|_| Tally::new()).collect();
     let mut room_voted: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
+    // The pair the seat actually ships, swept the same way, because a default
+    // argued from a pair the seat does not use is an argument about a
+    // different retriever.
+    let mut shipped_voted: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
+    let mut shipped_sessions: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
     let mut ranking = Tally::new();
     let mut hopped = Tally::new();
     let mut walked = Tally::new();
@@ -1044,6 +1049,21 @@ fn main() -> anyhow::Result<()> {
                 voted[slot].add(&ranked, &question.evidence);
                 voted_sessions[slot].add(&sessions_of(&ranked), &rooms);
             }
+            let shipped_pair = if meaning.is_empty() {
+                vec![lexical.clone(), terms.clone()]
+            } else {
+                vec![lexical.clone(), terms.clone(), meaning.clone()]
+            };
+            for (slot, panel) in panels.iter().enumerate() {
+                let ranked = hit_ids(&search::merge_ballots(
+                    &shipped_pair,
+                    ask.limit,
+                    panel,
+                    &now,
+                ));
+                shipped_voted[slot].add(&ranked, &question.evidence);
+                shipped_sessions[slot].add(&sessions_of(&ranked), &rooms);
+            }
 
             // The same question against a corpus of sessions, so what varies
             // between these arms is what a document is.
@@ -1133,6 +1153,22 @@ fn main() -> anyhow::Result<()> {
     println!("the same, by session:");
     println!();
     table(VOTERS, &voted_sessions);
+
+    println!();
+    println!(
+        "the ballots the seat ships ({}), fused every way, by turn:",
+        if encoder {
+            "lexical + bm25 + dense"
+        } else {
+            "lexical + bm25"
+        }
+    );
+    println!();
+    table(VOTERS, &shipped_voted);
+    println!();
+    println!("the same, by session:");
+    println!();
+    table(VOTERS, &shipped_sessions);
 
     println!();
     println!("a session as the document, against a session read off a turn");

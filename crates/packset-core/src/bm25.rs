@@ -225,12 +225,12 @@ impl Index {
                 *model.entry(term).or_insert(0.0) += share * f64::from(count) / length;
             }
         }
-        // Weighted by rarity, so a word every document carries is not what the
-        // asker left out.
-        let mut ranked: Vec<(&str, f64)> = model
-            .into_iter()
-            .map(|(term, probability)| (term, probability * self.idf(term)))
-            .collect();
+        // P(t | R) as it stands. Weighting it by rarity here would apply the
+        // rarity twice, since BM25 weights every term by its own idf when it
+        // scores: a rare word in one short feedback document would arrive
+        // carrying idf squared, which is how an expansion ends up ranked by
+        // whichever name happened to appear once.
+        let mut ranked: Vec<(&str, f64)> = model.into_iter().collect();
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
         ranked.truncate(terms);
         let total: f64 = ranked.iter().map(|(_, value)| *value).sum();
