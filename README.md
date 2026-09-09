@@ -81,13 +81,17 @@ Ten conversations, 5882 turns loaded as atoms, 1536 answerable questions:
 |---|---|---|
 | the pack's own scorer | 0.514 | 0.580 |
 | BM25 | 0.530 | 0.588 |
-| dense (bge-small-en-v1.5) | 0.585 | 0.656 |
 | the pack's scorer + BM25 | 0.547 | 0.611 |
-| all three | 0.619 | 0.690 |
-| BM25 + dense | **0.628** | **0.701** |
+| BM25 + dense, bge-small | 0.628 | 0.701 |
+| BM25 + dense, bge-large | **0.685** | **0.755** |
 
-Every ballot is optional. A seat with no encoder gets the first two rows and
-loses about 0.08 R@10, which is what the dense projection is worth.
+`PACKSET_EMBED_MODEL` picks the encoder. bge-small is the default because it is
+130 MB against 1.3 GB and encodes about three times faster, and it costs 0.06
+R@10. bge-base measures no better than bge-small, so the choice is small or
+large rather than a ladder.
+
+Every ballot is optional. A seat with no encoder gets the first three rows and
+loses 0.08 to 0.14 R@10, which is what the dense projection is worth.
 
 Two things this does not say. It measures the scorer, not the system. Turns are
 loaded as atoms and nothing in packset extracts. So this is the ranking given a
@@ -96,9 +100,11 @@ recall of labelled evidence with no model in the loop, so it is not the 92.5 and
 94.4 the memory papers report for end-to-end answers.
 
 Read a number against its unit. The table above ranks turns. The retrieval
-papers score a session by its best turn instead. Read that way, BM25 with dense
-reaches hit@1 0.612 and hit@10 0.951, against 0.752 hit@1 published for
-lexical fused with a dense retriever ten times the size of this one.
+papers score a session by its best turn instead. Read that way, BM25 with
+bge-large reaches hit@1 0.643 and hit@10 0.952, against 0.752 hit@1 published
+for lexical fused with a late-interaction dense retriever. Late interaction is a
+different retrieval architecture rather than a bigger model, and it is the
+remaining structural difference.
 
 The stored link graph does not help a query. Given twenty places, filling the
 last ten by following the neighbours of the first ten scores 0.562 R@20 against
