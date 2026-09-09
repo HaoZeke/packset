@@ -195,6 +195,7 @@ fn conversations(raw: &Value) -> Vec<Conversation> {
 const PROTOCOLS: &[&str] = &[
     "turn bm25",
     "session bm25",
+    "session bm25 rm3",
     "turn dense",
     "session bm25 + turn dense",
     "session bm25 + turn late",
@@ -204,10 +205,12 @@ const PROTOCOLS: &[&str] = &[
 const ARMS: &[&str] = &[
     "lexical",
     "bm25",
+    "bm25 rm3",
     "dense",
     "lexical+bm25 (shipped)",
     "lexical+bm25+dense",
     "bm25+dense",
+    "bm25 rm3+dense",
     "late",
     "bm25+late",
     "m3 pooled",
@@ -773,6 +776,7 @@ fn main() -> anyhow::Result<()> {
             };
             let lexical = search::search_linear(&ask);
             let terms = search::search_bm25(&ask, &index);
+            let fed = search::search_bm25_expanded(&ask, &index, &documents);
             let meaning = questions
                 .get(question.text.as_str())
                 .map(|vector| search::search_dense(&ask, vector))
@@ -809,6 +813,7 @@ fn main() -> anyhow::Result<()> {
                 let ranked = match *arm {
                     "lexical" => hit_ids(&lexical),
                     "bm25" => hit_ids(&terms),
+                    "bm25 rm3" => hit_ids(&fed),
                     "dense" => hit_ids(&meaning),
                     "late" => hit_ids(&interaction),
                     "m3 pooled" => hit_ids(&m3_pooled),
@@ -817,6 +822,7 @@ fn main() -> anyhow::Result<()> {
                             "bm25+late" => vec![terms.clone(), interaction.clone()],
                             "bm25+m3 pooled" => vec![terms.clone(), m3_pooled.clone()],
                             "bm25+dense" => vec![terms.clone(), meaning.clone()],
+                            "bm25 rm3+dense" => vec![fed.clone(), meaning.clone()],
                             "lexical+bm25+dense" => {
                                 vec![lexical.clone(), terms.clone(), meaning.clone()]
                             }
@@ -863,6 +869,7 @@ fn main() -> anyhow::Result<()> {
                 ..ask
             };
             let room_terms = search::search_bm25(&asking, &room_index);
+            let room_fed = search::search_bm25_expanded(&asking, &room_index, &room_documents);
             let by_turn = collapse(&terms);
             let by_meaning = collapse(&meaning);
             let by_late = collapse(&interaction);
@@ -870,6 +877,7 @@ fn main() -> anyhow::Result<()> {
                 let ranked = match *arm {
                     "turn bm25" => hit_ids(&by_turn),
                     "session bm25" => hit_ids(&room_terms),
+                    "session bm25 rm3" => hit_ids(&room_fed),
                     "turn dense" => hit_ids(&by_meaning),
                     "session bm25 + turn late" => hit_ids(&search::merge_ballots(
                         &[room_terms.clone(), by_late.clone()],

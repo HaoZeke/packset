@@ -24,7 +24,19 @@ use crate::tideman::ranked_pairs_merge;
 /// Half-life used when decay is on. Matches the host recency scale.
 const DECAY_HALF_LIFE_DAYS: f64 = 14.0;
 
-/// Fuse slot. Only implemented names parse.
+/// Fuse slot. Only implemented names parse, and each name runs the voter it
+/// names.
+///
+/// Two of these say nothing about two ballots. Schulze and ranked pairs decide
+/// a pair by which majority prefers it, and with two voters a disagreement is
+/// one against one, which is no majority. Every contested pair ties and the
+/// order falls back to the first ballot, so a panel of two scorers running
+/// Schulze is running its first scorer. Both are here for a panel of three or
+/// more, which is the arrangement they were designed for.
+///
+/// The two score fusions read the scores rather than the positions, so a
+/// caller that fuses lists whose scores are not comparable wants a rank voter.
+/// Min-max normalisation per list is what makes them comparable enough.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Fuse {

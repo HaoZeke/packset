@@ -141,6 +141,109 @@ impl Index {
         scored
     }
 
+    /// Score against a query whose terms carry weights.
+    ///
+    /// The unweighted form is this with every weight one, which is what a
+    /// query somebody typed is: each word asked for once, none of them worth
+    /// more than another. An expansion has to say how much less its guesses
+    /// count than the words actually asked for, so it needs the weights.
+    #[must_use]
+    pub fn score_weighted(&self, query: &[(String, f64)]) -> Vec<(usize, f64)> {
+        let mut totals: HashMap<u32, f64> = HashMap::new();
+        for (term, weight) in query {
+            if *weight <= 0.0 {
+                continue;
+            }
+            let Some(postings) = self.postings.get(term.as_str()) else {
+                continue;
+            };
+            for (ordinal, count) in postings {
+                *totals.entry(*ordinal).or_insert(0.0) +=
+                    weight * self.term_score(term, *ordinal as usize, *count);
+            }
+        }
+        let mut scored: Vec<(usize, f64)> = totals
+            .into_iter()
+            .map(|(ordinal, score)| (ordinal as usize, score))
+            .collect();
+        scored.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+        scored
+    }
+
+    /// A query expanded from the documents its own first pass returned.
+    ///
+    /// The question a person asks names a few of the words the answer uses. A
+    /// relevance model estimates the rest from what came back: terms frequent
+    /// in the top documents and rare in the corpus are what the asker meant and
+    /// did not say. Nothing is trained and nothing is stored, so a pack pays
+    /// one extra scoring pass and no model.
+    ///
+    /// `alpha` is how much of the final query stays the words asked for. The
+    /// original terms keep that share because feedback taken on trust is how
+    /// this drifts: the first pass is not a relevance judgement, and a wrong
+    /// top document expands into more of itself.
+    ///
+    /// Lavrenko, Croft, Relevance based language models, SIGIR 2001,
+    /// doi:10.1145/383952.383972. The interpolation with the original query is
+    /// RM3; Lv, Zhai, doi:10.1145/1645953.1646259 for why it is the estimate
+    /// worth using.
+    #[must_use]
+    pub fn expand(
+        &self,
+        query: &[String],
+        feedback: &[(&[String], f64)],
+        terms: usize,
+        alpha: f64,
+    ) -> Vec<(String, f64)> {
+        let mut weights: HashMap<String, f64> = HashMap::new();
+        // The words asked for, each worth its share of `alpha`.
+        if !query.is_empty() {
+            let each = alpha / query.len() as f64;
+            for term in query {
+                *weights.entry(term.clone()).or_insert(0.0) += each;
+            }
+        }
+        let mass: f64 = feedback.iter().map(|(_, score)| score.max(0.0)).sum();
+        if mass <= 0.0 || terms == 0 || alpha >= 1.0 {
+            let mut out: Vec<(String, f64)> = weights.into_iter().collect();
+            out.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            return out;
+        }
+        // P(t | R), summed over the feedback documents by how well each scored.
+        let mut model: HashMap<&str, f64> = HashMap::new();
+        for (tokens, score) in feedback {
+            if tokens.is_empty() || *score <= 0.0 {
+                continue;
+            }
+            let share = score / mass;
+            let length = tokens.len() as f64;
+            let mut counts: HashMap<&str, u32> = HashMap::new();
+            for term in *tokens {
+                *counts.entry(term.as_str()).or_insert(0) += 1;
+            }
+            for (term, count) in counts {
+                *model.entry(term).or_insert(0.0) += share * f64::from(count) / length;
+            }
+        }
+        // Weighted by rarity, so a word every document carries is not what the
+        // asker left out.
+        let mut ranked: Vec<(&str, f64)> = model
+            .into_iter()
+            .map(|(term, probability)| (term, probability * self.idf(term)))
+            .collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        ranked.truncate(terms);
+        let total: f64 = ranked.iter().map(|(_, value)| *value).sum();
+        if total > 0.0 {
+            for (term, value) in ranked {
+                *weights.entry(term.to_string()).or_insert(0.0) += (1.0 - alpha) * value / total;
+            }
+        }
+        let mut out: Vec<(String, f64)> = weights.into_iter().collect();
+        out.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        out
+    }
+
     /// Score a document that is not in the index, against this corpus.
     ///
     /// A card paragraph is written the same way an atom is and competes with
@@ -169,6 +272,34 @@ impl Index {
                     return 0.0;
                 }
                 self.idf(term) * (count * (K1 + 1.0)) / (K1 * norm).mul_add(1.0, count)
+            })
+            .sum()
+    }
+
+    /// The same, against a query whose terms carry weights.
+    #[must_use]
+    pub fn score_foreign_weighted(&self, query: &[(String, f64)], document: &[String]) -> f64 {
+        if document.is_empty() || self.is_empty() {
+            return 0.0;
+        }
+        let average = self.average_length();
+        let norm = if average > 0.0 {
+            B.mul_add(document.len() as f64 / average, 1.0 - B)
+        } else {
+            1.0
+        };
+        let mut counts: HashMap<&str, u32> = HashMap::new();
+        for term in document {
+            *counts.entry(term.as_str()).or_insert(0) += 1;
+        }
+        query
+            .iter()
+            .map(|(term, weight)| {
+                let count = f64::from(counts.get(term.as_str()).copied().unwrap_or(0));
+                if count == 0.0 || *weight <= 0.0 {
+                    return 0.0;
+                }
+                weight * self.idf(term) * (count * (K1 + 1.0)) / (K1 * norm).mul_add(1.0, count)
             })
             .sum()
     }
@@ -259,6 +390,95 @@ mod tests {
         assert!(index.is_empty());
         assert!(index.score(&doc("parser")).is_empty());
         assert_eq!(index.score_foreign(&doc("parser"), &doc("parser")), 0.0);
+    }
+
+    /// The point of the expansion: a word the asker did not say, taken from
+    /// what the first pass returned, reaches a document the question misses.
+    #[test]
+    fn an_expansion_reaches_what_the_question_did_not_say() {
+        let index = corpus(&[
+            "the parser reads a ripgrep header",
+            "the ripgrep overlay writes a header",
+            "the kubernetes operator reconciles a deployment",
+        ]);
+        let documents: Vec<Vec<String>> = [
+            "the parser reads a ripgrep header",
+            "the ripgrep overlay writes a header",
+            "the kubernetes operator reconciles a deployment",
+        ]
+        .iter()
+        .map(|text| doc(text))
+        .collect();
+        let query = doc("parser");
+        let first = index.score(&query);
+        // Only the atom carrying the word survives the first pass.
+        assert_eq!(first.len(), 1);
+        let feedback: Vec<(&[String], f64)> = first
+            .iter()
+            .map(|(ordinal, score)| (documents[*ordinal].as_slice(), *score))
+            .collect();
+        let expanded = index.expand(&query, &feedback, 10, 0.5);
+        assert!(
+            expanded.iter().any(|(term, _)| term == "ripgrep"),
+            "{expanded:?}"
+        );
+        let second = index.score_weighted(&expanded);
+        // The overlay shares no word with the question and is reached anyway.
+        assert!(
+            second.iter().any(|(ordinal, _)| *ordinal == 1),
+            "{second:?}"
+        );
+        // And the unrelated atom still is not.
+        assert!(
+            !second.iter().any(|(ordinal, _)| *ordinal == 2),
+            "{second:?}"
+        );
+    }
+
+    /// Feedback taken on trust is how this drifts, so the words asked for keep
+    /// their share whatever the first pass returned.
+    #[test]
+    fn the_words_asked_for_keep_their_share() {
+        let index = corpus(&["parser header", "overlay record"]);
+        let documents: Vec<Vec<String>> = ["parser header", "overlay record"]
+            .iter()
+            .map(|text| doc(text))
+            .collect();
+        let query = doc("parser");
+        let feedback: Vec<(&[String], f64)> = vec![(documents[1].as_slice(), 1.0)];
+        let expanded = index.expand(&query, &feedback, 10, 0.5);
+        let asked: f64 = expanded
+            .iter()
+            .filter(|(term, _)| term == "parser")
+            .map(|(_, weight)| *weight)
+            .sum();
+        assert!((asked - 0.5).abs() < 1e-9, "{expanded:?}");
+        let guessed: f64 = expanded
+            .iter()
+            .filter(|(term, _)| term != "parser")
+            .map(|(_, weight)| *weight)
+            .sum();
+        assert!((guessed - 0.5).abs() < 1e-9, "{expanded:?}");
+    }
+
+    /// With nothing to learn from, the expanded query is the query.
+    #[test]
+    fn no_feedback_leaves_the_query_alone() {
+        let index = corpus(&["parser header", "overlay record"]);
+        let query = doc("parser header");
+        let expanded = index.expand(&query, &[], 10, 0.5);
+        assert_eq!(expanded.len(), 2);
+        let plain = index.score(&query);
+        let weighted = index.score_weighted(&expanded);
+        assert_eq!(plain.len(), weighted.len());
+        // Same ordering, since every term was scaled by the same share.
+        let best = |scored: &[(usize, f64)]| {
+            scored
+                .iter()
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(ordinal, _)| *ordinal)
+        };
+        assert_eq!(best(&plain), best(&weighted));
     }
 
     /// A card is weighed against the atoms, and the same words score the same

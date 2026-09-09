@@ -345,24 +345,75 @@ pub fn atom_tokens(atom: &Record) -> Vec<String> {
 /// competes with a conclusion for the same place in the answer.
 #[must_use]
 pub fn search_bm25(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
+    let qtoks = tokens(ask.query);
+    // Each word asked for once, which is the unweighted query written as a
+    // weighted one so both paths score through the same code.
+    let weighted: Vec<(String, f64)> = qtoks.into_iter().map(|term| (term, 1.0)).collect();
+    bm25_hits(ask, index, &weighted)
+}
+
+/// How many of the first pass's hits the relevance model is estimated from.
+const RM3_DOCS: usize = 10;
+
+/// How many terms the model contributes.
+const RM3_TERMS: usize = 10;
+
+/// How much of the expanded query stays the words asked for.
+const RM3_ALPHA: f64 = 0.5;
+
+/// BM25 with the query expanded from its own first pass.
+///
+/// `documents` must be the tokenised corpus the index was built over, in that
+/// order, because the relevance model is estimated from the text of the
+/// documents the first pass returned rather than from the postings.
+///
+/// Two scoring passes instead of one, no model and nothing stored. See
+/// [`crate::bm25::Index::expand`] for what is being estimated and why the
+/// original query keeps a share of the weight.
+#[must_use]
+pub fn search_bm25_expanded(
+    ask: &Ask<'_>,
+    index: &crate::bm25::Index,
+    documents: &[Vec<String>],
+) -> Vec<Value> {
+    let qtoks = tokens(ask.query);
+    if qtoks.is_empty() || index.is_empty() {
+        return Vec::new();
+    }
+    let mut first = index.score(&qtoks);
+    first.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    first.truncate(RM3_DOCS);
+    let feedback: Vec<(&[String], f64)> = first
+        .iter()
+        .filter_map(|(ordinal, score)| {
+            documents
+                .get(*ordinal)
+                .map(|tokens| (tokens.as_slice(), *score))
+        })
+        .collect();
+    let expanded = index.expand(&qtoks, &feedback, RM3_TERMS, RM3_ALPHA);
+    bm25_hits(ask, index, &expanded)
+}
+
+/// The hits a weighted query scores, cards and atoms together.
+fn bm25_hits(ask: &Ask<'_>, index: &crate::bm25::Index, query: &[(String, f64)]) -> Vec<Value> {
     let Ask {
         user,
         memory,
         atoms,
-        query,
+        query: _,
         limit,
         set,
         now,
     } = *ask;
-    let qtoks = tokens(query);
-    if qtoks.is_empty() || index.is_empty() {
+    if query.is_empty() || index.is_empty() {
         return Vec::new();
     }
 
     let mut hits: Vec<Value> = Vec::new();
     for (field, text, bias) in [("user", user, 0.5), ("memory", memory, 0.25)] {
         for para in paragraphs(text) {
-            let relevance = index.score_foreign(&qtoks, &tokens(&para));
+            let relevance = index.score_foreign_weighted(query, &tokens(&para));
             if relevance == 0.0 {
                 continue;
             }
@@ -377,7 +428,7 @@ pub fn search_bm25(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
     }
 
     // Only the atoms carrying a query term, straight from the postings.
-    for (ordinal, relevance) in index.score(&qtoks) {
+    for (ordinal, relevance) in index.score_weighted(query) {
         let Some(atom) = atoms.get(ordinal) else {
             continue;
         };
