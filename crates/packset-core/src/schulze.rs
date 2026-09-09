@@ -1,8 +1,14 @@
 //! Schulze beatpath: pairwise counts, then strongest paths.
 //!
-//! d[i,j] is how many ballots rank i above j (top-k). i beats j
+//! `d[i,j]` is how many ballots rank i above j (top-k). i beats j
 //! when the strongest i->j path is stronger than j->i. Floyd-style
-//! widest paths. Ties break first-seen.
+//! widest paths.
+//!
+//! The linear order is by how many others a candidate beats that way,
+//! first-seen breaking a tie. Ordering by the pairwise comparison
+//! itself is not sound: the relation is transitive, but broken by
+//! first-seen it is not, and three candidates can tie pairwise in a
+//! pattern that sends a before b, b before c and c before a.
 //!
 //! Schulze, A new monotonic, clone-independent, reversal
 //! symmetric, and condorcet-consistent single-winner election

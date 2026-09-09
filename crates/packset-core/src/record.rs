@@ -561,7 +561,7 @@ fn ranked<'a>(
 /// The live peers this atom is most about, at most [`LINK_MAX`] of them.
 ///
 /// Similarity decides which and the id breaks a tie, so the same corpus gives
-/// the same neighbourhood on every machine. See [`diversified`] for why the
+/// the same neighbourhood on every machine. See `diversified` for why the
 /// most alike eight are not the answer.
 #[must_use]
 pub fn link_targets(

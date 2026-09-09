@@ -323,8 +323,11 @@ fn read_rows(path: &std::path::Path, expected: usize) -> Option<Vec<Vec<f32>>> {
         let width = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
         let raw = take(width * 4)?;
         rows.push(
-            raw.chunks_exact(4)
-                .filter_map(|four| four.try_into().ok().map(f32::from_le_bytes))
+            raw.as_chunks::<4>()
+                .0
+                .iter()
+                .copied()
+                .map(f32::from_le_bytes)
                 .collect(),
         );
     }

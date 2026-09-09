@@ -1,8 +1,8 @@
 //! Tideman ranked pairs: lock pairwise victories by margin.
 //!
-//! d[i,j] is how many ballots rank i above j (top-k). A victory
-//! is i over j when d[i,j] > d[j,i]. Sort by margin
-//! d[i,j] - d[j,i], then lock a victory if it does not create a
+//! `d[i,j]` is how many ballots rank i above j (top-k). A victory
+//! is i over j when `d[i,j] > d[j,i]`. Sort by margin
+//! `d[i,j] - d[j,i]`, then lock a victory if it does not create a
 //! cycle. The locked graph is a DAG; topological order is the
 //! ranking. Ties break first-seen.
 //!

@@ -1,7 +1,7 @@
 //! Copeland: pairwise wins minus losses.
 //!
-//! d[i,j] is how many ballots rank i above j (top-k). i beats j
-//! when d[i,j] > d[j,i]. Score is wins minus losses. No path
+//! `d[i,j]` is how many ballots rank i above j (top-k). i beats j
+//! when `d[i,j] > d[j,i]`. Score is wins minus losses. No path
 //! step. Ties break first-seen.
 //!
 //! Nurmi, Comparing Voting Systems, 1987.
