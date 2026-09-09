@@ -78,7 +78,12 @@ pub enum Decay {
 }
 
 /// Host sequence. Clients do not choose this.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Derived from each slot's own default rather than written out. A second copy
+/// of the defaults is a second place to change them, and the two disagreeing
+/// means `Panel::default()` and an unset environment name different panels
+/// while both call themselves the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Panel {
     pub fuse: Fuse,
     pub diversify: Diversify,
@@ -175,16 +180,6 @@ impl Decay {
         match self {
             Self::Off => "off",
             Self::On => "on",
-        }
-    }
-}
-
-impl Default for Panel {
-    fn default() -> Self {
-        Self {
-            fuse: Fuse::Borda,
-            diversify: Diversify::Mmr,
-            decay: Decay::Off,
         }
     }
 }
@@ -399,6 +394,17 @@ mod tests {
         // Nothing set is the default, and an empty value still fails closed.
         assert_eq!(Panel::from_env_vars(None, None, None).unwrap(), panel);
         assert!(Panel::from_env_vars(Some(""), None, None).is_err());
+        // The two ways of asking for the default have to name the same panel.
+        // They are separate constants, and separate constants drift.
+        assert_eq!(
+            Panel::named(
+                Fuse::default().as_str(),
+                Diversify::default().as_str(),
+                Decay::default().as_str()
+            )
+            .unwrap(),
+            panel
+        );
     }
 
     /// The default reads scores where Borda read positions, so a list whose
