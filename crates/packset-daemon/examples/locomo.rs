@@ -273,6 +273,7 @@ const ARMS: &[&str] = &[
 /// marginal relevance reorders the final ranking on every question, trading
 /// relevance for novelty at a fixed lambda. A default that costs recall would
 /// have been paid silently by every number in this file.
+///
 /// The decay slot is deliberately not swept beside this one. Its default is
 /// `off`, the passive setting, so an unmeasured default there costs nothing;
 /// the diversify default reorders every answer, which is what made leaving it
