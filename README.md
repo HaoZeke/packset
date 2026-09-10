@@ -198,6 +198,29 @@ majority prefers it, and two voters disagreeing is one against one, so few
 victories lock and the order falls back to the first ballot. It is for a panel
 of three or more.
 
+### Which diversifier
+
+The slot after the fuse reorders every answer, and it had never been measured.
+Over the strongest pair, fused by CombSUM:
+
+| diversify | hit@1 | nDCG@5 |
+|---|---|---|
+| `mmr` (shipped) | 0.732 | 0.809 |
+| `dpp` | 0.732 | 0.810 |
+| `none` | 0.732 | 0.810 |
+
+It changes nothing here, so the worry that prompted the sweep, a default
+quietly costing recall, was unfounded and the default stays.
+
+The rest of that result is what this benchmark cannot see. A diversifier is
+not for recall. It is for not spending four of five answers on one claim said
+four ways, and LoCoMo scores whether labelled evidence was retrieved, so the
+method has nothing here to suppress and nothing to be credited for. Reading
+the table as "diversity does not help" reads it past what it measures.
+
+`PACKSET_DIVERSIFY` picks between them; DPP is greedy MAP over a
+quality-diversity kernel (DOI 10.1561/2200000044).
+
 ## What did not work
 
 Pseudo-relevance feedback, and the way it fails is the useful part.
