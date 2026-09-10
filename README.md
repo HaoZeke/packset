@@ -86,6 +86,66 @@ Ten conversations, 5882 turns loaded as atoms, 1536 answerable questions:
 | BM25 + dense, bge-large | 0.685 | 0.755 |
 | BM25 + dense, e5-large-v2 | **0.705** | **0.781** |
 
+### Which formula
+
+BM25 is a 1994 baseline with two known defects, and treating it as the floor
+was the mistake. The lexical path takes a scorer:
+
+| scorer over passages | hit@1 | nDCG@5 |
+|---|---|---|
+| BM25, k1=1.2 b=0.75 | 0.660 | 0.751 |
+| **BM25+**, lower-bounded TF | **0.668** | **0.753** |
+| query likelihood, Dirichlet | 0.637 | 0.734 |
+| BM25+ and Dirichlet fused | 0.665 | 0.751 |
+
+BM25's length normalisation over-penalizes long documents: past a length a
+document containing a query term scores below one that does not, because the
+normalisation drives the occurrence toward zero while a non-occurrence sits at
+exactly zero. Lv and Zhai's fix (DOI 10.1145/2063576.2063584) holds every
+occurrence above a floor. It is the default, and it leads at every granularity
+measured: 0.635 hit@1 against 0.615 on turns, 0.638 against 0.633 on sessions,
+0.668 against 0.660 on passages.
+
+The largest gain is on turns, the shortest documents, which was not the
+prediction: the defect is a long-document one, so sessions should have gained
+most. Short documents gain from a different effect of the same constant. The
+floor is paid once per matching term, so it rewards a document matching more
+of the query, and that separates documents most when each carries few terms.
+
+Query likelihood with a Dirichlet prior (DOI 10.1145/984321.984322) is a
+different derivation and it loses here. Fusing it with BM25+ does not beat
+BM25+ alone, so a second lexical ballot is worth having only when it is a
+peer. Reported because it was run.
+
+### What a document is
+
+A conversation can be indexed at either extreme, and both were, with nothing
+between them:
+
+| protocol | hit@1 | nDCG@5 |
+|---|---|---|
+| turn ranking read as sessions | 0.615 | 0.716 |
+| session as one document | 0.633 | 0.735 |
+| **passage windows** | **0.660** | **0.751** |
+
+Passage-level evidence is the standard middle (Callan, DOI
+10.1007/978-1-4471-2099-5_31): overlapping windows of six turns at a stride of
+three, each session scored by its best window. A window of one turn is the
+turn protocol and a window of a whole session is the session protocol, so this
+is the method the two arms were the degenerate cases of.
+
+The window is set from what a passage is for, not searched over. Long enough
+to carry a question and its answer, short enough that length normalisation
+still bites, and overlapping so a match spanning a boundary is whole in the
+next window. Picking the size by which value scores best on these questions
+would be fitting.
+
+Every arm that collapses a ranking into sessions is retrieved deep enough for
+the collapse to fill the deepest cut-off. A session ranking read off twenty
+turns is not twenty sessions, because the top turns cluster in a handful of
+rooms; comparing that against a corpus of session documents measures the depth
+of the ranking as if it were the protocol.
+
 Stemming is on by default and `PACKSET_STEM=off` turns it back off. The
 default is measured on dialogue turns, and a pack is not dialogue turns: it
 holds short written claims where two atoms may differ deliberately in a way
@@ -174,11 +234,12 @@ single best turn, or index the session itself, so BM25 gets one long document
 and a question whose words are spread over several turns matches what no single
 turn matches.
 
-Indexing the session is worth 1.8 points of hit@1 and 5.7 of R@20 over reading
-sessions off a turn ranking, with no vectors and no model. A published BM25
-baseline several points above one measured here is more likely a different unit
-than a better implementation of the same formula, and `examples/locomo` reports
-both protocols side by side so the question is answerable rather than arguable.
+Indexing the session is worth 1.8 points of hit@1 over reading sessions off a
+turn ranking, with no vectors and no model, and passage windows are worth 4.5
+over the same baseline. A published BM25 baseline several points above one
+measured here is more likely a different unit than a better implementation of
+the same formula, and `examples/locomo` reports every protocol side by side so
+the question is answerable rather than arguable.
 
 ## Where this sits against the published numbers
 
@@ -189,8 +250,9 @@ The best arm measured here, against the best published on this benchmark:
 | what this shipped before | 0.549 | 0.660 |
 | session BM25, no stemming | 0.607 | 0.710 |
 | session BM25, stemmed | 0.633 | 0.735 |
-| session BM25 + dense, Borda | 0.703 | 0.789 |
-| session BM25 + dense, CombMNZ | **0.722** | **0.802** |
+| passage BM25+ | 0.668 | 0.753 |
+| session BM25 + dense, CombMNZ | 0.722 | 0.802 |
+| passage BM25+ + dense, CombSUM | **0.732** | **0.809** |
 | published, BM25 + e5-large-v2 | 0.752 | 0.829 |
 
 Same encoder family as the published system, same ten conversations, same 1536
@@ -206,6 +268,12 @@ measured 0.607, and the missing 0.033 turned out to be that nothing here
 stemmed. With suffix stripping the session BM25 baseline is 0.633, which is
 that gap closed rather than explained away, and the best arm moves from 0.716
 to 0.722 hit@1 and 0.794 to 0.802 nDCG@5.
+
+Two more standard components were missing after that one. The lexical scorer
+was plain BM25 where the floored variant is strictly better on long documents
+and measures better here on short ones too, and the benchmark indexed at two
+extremes with no passage in between. Both closed part of the residual: 0.722
+to 0.732 hit@1, 0.802 to 0.809 nDCG@5.
 
 So the residual is a difference in the BM25 side or in the sample, not in the
 fusion. The paper does not state which subset of LoCoMo it used and the family
