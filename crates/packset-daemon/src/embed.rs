@@ -405,6 +405,51 @@ mod tests {
         assert!(encode("   ", true).is_none());
     }
 
+    /// A question the first stage answered with nothing costs no model call
+    /// and is not an error.
+    ///
+    /// The two are different answers and the caller acts on them differently:
+    /// an empty ballot leaves the ranking alone, and `None` means there is no
+    /// reranker, which the arm reports rather than silently reordering by a
+    /// stage that did not run.
+    #[test]
+    fn nothing_to_rerank_is_an_empty_ballot_and_not_a_failure() {
+        assert_eq!(rerank("which search tool", &[]), Some(Vec::new()));
+        // An empty question is refused before any child is started, the same
+        // way an empty text is never sent to an encoder.
+        assert!(rerank("", &["a candidate".to_string()]).is_none());
+        assert!(rerank("   ", &["a candidate".to_string()]).is_none());
+    }
+
+    /// A reply that scores fewer candidates than were asked about is refused.
+    ///
+    /// Padding it would score the tail as zero, which reads as a candidate the
+    /// model rejected rather than one it never saw. The two are indistinguishable
+    /// downstream, which is what makes the short reply worth refusing here.
+    #[test]
+    fn a_short_reply_is_a_mismatch_rather_than_a_ranking() {
+        let Ok(mut child) = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+        else {
+            return;
+        };
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            return;
+        };
+        // `cat` echoes what it is given, so the reply carries the request's
+        // own fields and no `s` at all: a well-formed line that is not an
+        // answer.
+        let mut echoing = Encoder {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+        };
+        let candidates = vec!["one".to_string(), "two".to_string()];
+        assert!(echoing.rerank("a question", &candidates).is_none());
+    }
+
     #[test]
     fn a_child_that_exits_is_not_alive() {
         let Ok(mut child) = Command::new("true").stdout(Stdio::piped()).spawn() else {
