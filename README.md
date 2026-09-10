@@ -84,7 +84,7 @@ Ten conversations, 5882 turns loaded as atoms, 1536 answerable questions:
 | the pack's scorer + BM25 | 0.547 | 0.611 |
 | BM25 + dense, bge-small | 0.628 | 0.701 |
 | BM25 + dense, bge-large | 0.685 | 0.755 |
-| BM25 + dense, e5-large-v2 | **0.705** | **0.781** |
+| BM25 + dense, multilingual-e5-large | **0.705** | **0.781** |
 
 ### Which formula
 
@@ -161,7 +161,7 @@ R@10.
 
 Size is part of it and not all of it. bge-base measures no better than
 bge-small, so the small end is not a ladder; bge-large is worth 0.06 R@10 over
-bge-small. But e5-large-v2 is the same 335M parameters as bge-large and measures
+bge-small. But multilingual-e5-large is the same 335M parameters as bge-large and measures
 0.02 R@10 above it, which is a third of what the whole step up from small bought.
 Which family was trained how matters at the top end, so a seat naming a larger
 model should name which larger model.
@@ -279,8 +279,15 @@ The best arm measured here, against the best published on this benchmark:
 | passage BM25+ + dense, CombSUM | **0.732** | **0.809** |
 | published, BM25 + e5-large-v2 | 0.752 | 0.829 |
 
-Same encoder family as the published system, same ten conversations, same 1536
-questions, and every method here is training-free.
+Same ten conversations, same 1536 questions, and every method here is
+training-free. Not the same encoder: what `PACKSET_EMBED_MODEL=e5-large`
+loads is `multilingual-e5-large`, and the paper used the English `e5-large-v2`,
+which the model runtime does not carry. They are different models with
+different training data and the multilingual one scores lower on English
+retrieval. Every row above that says "dense" was measured with the multilingual
+one, and this table said "e5-large-v2" for it until that was checked. The
+English model is now loadable from files as `e5-large-v2` and the comparison
+against the paper is made with it below.
 
 The gain reproduces almost exactly. That paper reports +11.2 points over BM25
 alone, and fusing dense into session BM25 here is worth +8.9, of which CombMNZ
@@ -327,7 +334,7 @@ Late interaction has been tried at this scale now, and it loses.
 
 | session granularity, ten conversations | hit@1 | nDCG@5 |
 |---|---|---|
-| session BM25 + dense (e5-large-v2), CombMNZ | **0.716** | **0.794** |
+| session BM25 + dense (multilingual-e5-large), CombMNZ | **0.716** | **0.794** |
 | session BM25 + per-token (BGE-M3 int8), CombMNZ | 0.673 | 0.763 |
 | session BM25 + learned sparse (BGE-M3), Borda | 0.629 | 0.716 |
 
@@ -337,7 +344,7 @@ narrower claim the ablation actually supports: holding the model fixed, BGE-M3
 scored by its per-token vectors beats BGE-M3 scored by its pooled one, 0.559
 against 0.490. That says the scoring method is worth something. It does not say
 which arm wins when the models differ, and the distance from BGE-M3 int8 to
-e5-large-v2 is larger than the distance from cosine to max-sim.
+multilingual-e5-large is larger than the distance from cosine to max-sim.
 
 Reading a controlled comparison as a ranking is the same error as reading two
 model sizes as the shape of a curve, which this file also had to correct. The

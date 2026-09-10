@@ -140,6 +140,44 @@ impl Encoder {
         (scores.len() == candidates.len()).then_some(scores)
     }
 
+    fn start_sparse(binary: &Path) -> Option<Self> {
+        let mut child = Command::new(binary)
+            .arg("--sparse")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let stdin = child.stdin.take()?;
+        let stdout = BufReader::new(child.stdout.take()?);
+        Some(Self {
+            child,
+            stdin,
+            stdout,
+        })
+    }
+
+    /// One line in, the learned term weights out.
+    fn encode_sparse(&mut self, text: &str) -> Option<Sparse> {
+        let reply = self.ask(text)?;
+        let parsed: Value = serde_json::from_str(reply.trim()).ok()?;
+        let s = parsed.get("s")?;
+        let indices = s.get("i")?.as_array()?;
+        let weights = s.get("w")?.as_array()?;
+        if indices.len() != weights.len() {
+            return None;
+        }
+        let mut pairs: Sparse = indices
+            .iter()
+            .zip(weights)
+            .filter_map(|(i, w)| Some((i.as_u64()? as u32, w.as_f64()? as f32)))
+            .collect();
+        // Ascending by index, which is what lets two of them intersect in one
+        // pass; the model does not promise an order.
+        pairs.sort_unstable_by_key(|(index, _)| *index);
+        Some(pairs)
+    }
+
     fn start_late(binary: &Path) -> Option<Self> {
         let mut child = Command::new(binary)
             .arg("--late")
@@ -331,6 +369,43 @@ pub fn encode_late(text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>, Sparse)> {
         let running = held.as_mut()?;
         if let Some(both) = running.encode_tokens(text) {
             return Some(both);
+        }
+        *held = None;
+        if attempt == 1 {
+            return None;
+        }
+    }
+    None
+}
+
+/// The kept learned-sparse encoder, a fifth child.
+fn sparse_slot() -> &'static Slot {
+    static SPARSE: OnceLock<Slot> = OnceLock::new();
+    SPARSE.get_or_init(|| Mutex::new(None))
+}
+
+/// Learned term weights from a model trained to produce them.
+///
+/// BGE-M3's sparse head, which [`encode_late`] also returns, is a side output
+/// of a dense model and measured below BM25. SPLADE
+/// (doi:10.1145/3404835.3463098) is trained for the weights, with a
+/// regularizer that keeps them sparse enough for an inverted index. The two
+/// are both "learned sparse" and they are not the same measurement. Nothing in
+/// the writer reads this; it exists so the benchmark can ask the right one.
+#[must_use]
+pub fn encode_sparse(text: &str) -> Option<Sparse> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    let binary = binary()?;
+    let mut held = sparse_slot().lock().ok()?;
+    for attempt in 0..2 {
+        if held.as_mut().is_none_or(|running| !running.alive()) {
+            *held = Encoder::start_sparse(&binary);
+        }
+        let running = held.as_mut()?;
+        if let Some(weights) = running.encode_sparse(text) {
+            return Some(weights);
         }
         *held = None;
         if attempt == 1 {

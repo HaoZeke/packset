@@ -242,8 +242,12 @@ const PROTOCOLS: &[&str] = &[
     "session bm25 + turn dense",
     "passage bm25 + turn dense",
     "passage bm25+ + turn dense",
+    "passage dense",
+    "passage bm25+ + passage dense",
     "session bm25 + turn late",
     "session bm25 + turn m3 sparse",
+    "turn splade",
+    "passage bm25+ + turn splade",
     "passage bm25+ + turn dense, reranked",
 ];
 
@@ -506,6 +510,15 @@ fn late_wanted() -> bool {
 /// first stage embeds a corpus once and answers every question from what it
 /// stored; a cross-encoder runs a forward pass per candidate per question, so
 /// turning this on multiplies the run by the depth of the rerank.
+/// Whether the learned-sparse ballot from a model trained for it runs.
+///
+/// BGE-M3's sparse head rides along with the late arms and measured below
+/// BM25; that is a side output of a dense model, not the sparse model the
+/// literature means. This asks SPLADE++, which is.
+fn splade_wanted() -> bool {
+    std::env::var("PACKSET_LOCOMO_SPLADE").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
 fn rerank_wanted() -> bool {
     std::env::var("PACKSET_LOCOMO_RERANK").is_ok_and(|v| !v.is_empty() && v != "0")
 }
@@ -1113,6 +1126,12 @@ fn main() -> anyhow::Result<()> {
     let mut m3_questions: std::collections::HashMap<String, Vec<f32>> =
         std::collections::HashMap::new();
     // And the learned term weights, from that same pass.
+    let splade = encoder && splade_wanted();
+    if splade {
+        println!("learned sparse: on, SPLADE++ rather than a dense model's side output");
+    }
+    let mut splade_questions: std::collections::HashMap<String, packset_daemon::embed::Sparse> =
+        std::collections::HashMap::new();
     let mut sparse_questions: std::collections::HashMap<String, packset_daemon::embed::Sparse> =
         std::collections::HashMap::new();
 
@@ -1179,9 +1198,88 @@ fn main() -> anyhow::Result<()> {
         let room_index = Index::build(room_documents.iter().map(Vec::as_slice));
         // And once more with the passage as the document, which is the middle
         // the two above are the ends of.
-        let passage_corpus = passage_documents(&conversation.atoms);
+        let mut passage_corpus = passage_documents(&conversation.atoms);
         let passage_tokens: Vec<Vec<String>> =
             passage_corpus.iter().map(search::atom_tokens).collect();
+        // The passage protocol on the dense side too. The lexical arm gained
+        // from windows over turns; an encoder reading six turns has the
+        // context a single turn does not carry, and asking whether that gain
+        // is the protocol's or the scorer's needs both scorers on both units.
+        if encoder {
+            let model = model_name();
+            let file = cache_dir().map(|dir| dir.join(format!("{model}-windows-{nth}.vec")));
+            let cached = file
+                .as_deref()
+                .and_then(|path| read_rows(path, passage_corpus.len()));
+            let vectors = cached.unwrap_or_else(|| {
+                let fresh: Vec<Vec<f32>> = passage_corpus
+                    .iter()
+                    .map(|window| {
+                        let text = window
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        packset_daemon::embed::encode_document(text).unwrap_or_default()
+                    })
+                    .collect();
+                if let Some(path) = file.as_deref() {
+                    write_rows(path, &fresh);
+                }
+                fresh
+            });
+            for (window, vector) in passage_corpus.iter_mut().zip(vectors) {
+                if !vector.is_empty() {
+                    window.insert(
+                        "embedding".into(),
+                        Value::Array(vector.into_iter().map(|f| json!(f)).collect()),
+                    );
+                }
+            }
+        }
+        // SPLADE++ over turns, cached the way the other sparse weights are.
+        let mut splade_atoms: Vec<packset_daemon::embed::Sparse> = Vec::new();
+        if splade {
+            let file = cache_dir().map(|dir| dir.join(format!("splade-atoms-{nth}.vec")));
+            let count = conversation.atoms.len();
+            match file.as_deref().and_then(|p| read_rows(p, count)) {
+                Some(rows) => splade_atoms = rows.into_iter().map(unflatten_sparse).collect(),
+                None => {
+                    for atom in &conversation.atoms {
+                        let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
+                        splade_atoms
+                            .push(packset_daemon::embed::encode_sparse(text).unwrap_or_default());
+                    }
+                    if let Some(path) = file.as_deref() {
+                        let flat: Vec<Vec<f32>> = splade_atoms.iter().map(flatten_sparse).collect();
+                        write_rows(path, &flat);
+                    }
+                }
+            }
+            let qfile = cache_dir().map(|dir| dir.join(format!("splade-questions-{nth}.vec")));
+            let asked = match qfile
+                .as_deref()
+                .and_then(|p| read_rows(p, conversation.questions.len()))
+            {
+                Some(rows) => rows.into_iter().map(unflatten_sparse).collect::<Vec<_>>(),
+                None => {
+                    let fresh: Vec<packset_daemon::embed::Sparse> = conversation
+                        .questions
+                        .iter()
+                        .map(|q| packset_daemon::embed::encode_sparse(&q.text).unwrap_or_default())
+                        .collect();
+                    if let Some(path) = qfile.as_deref() {
+                        let flat: Vec<Vec<f32>> = fresh.iter().map(flatten_sparse).collect();
+                        write_rows(path, &flat);
+                    }
+                    fresh
+                }
+            };
+            for (question, weights) in conversation.questions.iter().zip(asked) {
+                if !weights.is_empty() {
+                    splade_questions.insert(question.text.clone(), weights);
+                }
+            }
+        }
         let passage_index = Index::build(passage_tokens.iter().map(Vec::as_slice));
 
         // One encode of the corpus and one of the questions, through the kept
@@ -1477,6 +1575,22 @@ fn main() -> anyhow::Result<()> {
                 hits
             };
             let passage_hits = passage_by(Scorer::Bm25);
+            // The dense scorer over the same windows, read the same way.
+            let passage_dense = {
+                let mut hits = questions
+                    .get(question.text.as_str())
+                    .map(|vector| collapse_windows(&search::search_dense(&passage_ask, vector)))
+                    .unwrap_or_default();
+                hits.truncate(ask.limit);
+                hits
+            };
+            // And the learned-sparse ballot that is actually a sparse model.
+            let by_splade = collapse(
+                &splade_questions
+                    .get(question.text.as_str())
+                    .map(|weights| rank_sparse(&deep_ask, weights, &splade_atoms))
+                    .unwrap_or_default(),
+            );
             // The two the literature says are better than the one above, on
             // the arm where the defect they fix is the arm's own shape.
             let passage_floored = passage_by(Scorer::Bm25Plus);
@@ -1539,6 +1653,30 @@ fn main() -> anyhow::Result<()> {
                         &shipped,
                         &now,
                     )),
+                    "passage dense" => hit_ids(&passage_dense),
+                    "passage bm25+ + passage dense" => hit_ids(&search::merge_ballots(
+                        &[passage_floored.clone(), passage_dense.clone()],
+                        ask.limit,
+                        &shipped,
+                        &now,
+                    )),
+                    "turn splade" => {
+                        if !splade {
+                            continue;
+                        }
+                        hit_ids(&by_splade)
+                    }
+                    "passage bm25+ + turn splade" => {
+                        if !splade {
+                            continue;
+                        }
+                        hit_ids(&search::merge_ballots(
+                            &[passage_floored.clone(), by_splade.clone()],
+                            ask.limit,
+                            &shipped,
+                            &now,
+                        ))
+                    }
                     "passage bm25+ + turn dense, reranked" => {
                         if !reranking {
                             continue;

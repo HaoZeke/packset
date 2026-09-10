@@ -26,8 +26,9 @@
 use std::io::{BufRead, Write};
 
 use fastembed::{
-    Bgem3Embedding, Bgem3InitOptions, Bgem3Model, EmbeddingModel, RerankInitOptions, RerankerModel,
-    TextEmbedding, TextInitOptions, TextRerank,
+    Bgem3Embedding, Bgem3InitOptions, Bgem3Model, EmbeddingModel, InitOptionsUserDefined, Pooling,
+    RerankInitOptions, RerankerModel, SparseInitOptions, SparseModel, SparseTextEmbedding,
+    TextEmbedding, TextInitOptions, TextRerank, TokenizerFiles, UserDefinedEmbeddingModel,
 };
 use serde::{Deserialize, Serialize};
 
@@ -103,9 +104,30 @@ struct Sparse {
 /// word on both sides. Using the wrong pair costs recall silently, which is
 /// why they live beside the name they belong to instead of being a default.
 struct Choice {
-    model: EmbeddingModel,
+    source: Source,
     query: &'static str,
     passage: &'static str,
+}
+
+/// Where a model's weights come from.
+///
+/// The runtime ships a list of models it knows how to fetch, and the list does
+/// not include everything a measurement has to be made against. The published
+/// system on the benchmark this seat is measured on used English e5-large-v2,
+/// which the runtime does not carry; it carries the multilingual e5-large,
+/// which is a different model with a different training set and lower scores
+/// on English retrieval. Comparing against the paper with the wrong one of the
+/// two is comparing against nothing, so the one the paper used is loaded from
+/// files a seat puts under its cache.
+enum Source {
+    Builtin(EmbeddingModel),
+    /// `<cache>/user/<dir>/` holding `onnx/model.onnx`, `tokenizer.json`,
+    /// `config.json`, `special_tokens_map.json` and `tokenizer_config.json`,
+    /// as a Hub repository lays them out.
+    Files {
+        dir: &'static str,
+        pooling: Pooling,
+    },
 }
 
 /// BGE's instruction, on the question only.
@@ -113,39 +135,108 @@ const BGE_QUERY: &str = "Represent this sentence for searching relevant passages
 
 /// The models this binary will load, by the name a seat writes.
 fn choose(name: &str) -> Option<Choice> {
-    let (model, query, passage) = match name {
-        "bge-small" | "" => (EmbeddingModel::BGESmallENV15, BGE_QUERY, ""),
-        "bge-base" => (EmbeddingModel::BGEBaseENV15, BGE_QUERY, ""),
-        "bge-large" => (EmbeddingModel::BGELargeENV15, BGE_QUERY, ""),
-        "e5-large" => (EmbeddingModel::MultilingualE5Large, "query: ", "passage: "),
-        "e5-base" => (EmbeddingModel::MultilingualE5Base, "query: ", "passage: "),
-        "gte-large" => (EmbeddingModel::GTELargeENV15, "", ""),
+    use Source::Builtin;
+    let (source, query, passage) = match name {
+        "bge-small" | "" => (Builtin(EmbeddingModel::BGESmallENV15), BGE_QUERY, ""),
+        "bge-base" => (Builtin(EmbeddingModel::BGEBaseENV15), BGE_QUERY, ""),
+        "bge-large" => (Builtin(EmbeddingModel::BGELargeENV15), BGE_QUERY, ""),
+        // Multilingual, and named so. The English model the published system
+        // used is `e5-large-v2` below; these two are not interchangeable and
+        // a table that says one while running the other is wrong.
+        "e5-large" | "multilingual-e5-large" => (
+            Builtin(EmbeddingModel::MultilingualE5Large),
+            "query: ",
+            "passage: ",
+        ),
+        "e5-base" => (
+            Builtin(EmbeddingModel::MultilingualE5Base),
+            "query: ",
+            "passage: ",
+        ),
+        "e5-large-v2" => (
+            Source::Files {
+                dir: "e5-large-v2",
+                pooling: Pooling::Mean,
+            },
+            "query: ",
+            "passage: ",
+        ),
+        "gte-large" => (Builtin(EmbeddingModel::GTELargeENV15), "", ""),
         "mxbai-large" => (
-            EmbeddingModel::MxbaiEmbedLargeV1,
+            Builtin(EmbeddingModel::MxbaiEmbedLargeV1),
             "Represent this sentence for searching relevant passages: ",
             "",
         ),
         _ => return None,
     };
     Some(Choice {
-        model,
+        source,
         query,
         passage,
     })
 }
 
 /// Every name [`choose`] answers to, for the error that lists them.
-const KNOWN: &str = "bge-small, bge-base, bge-large, e5-base, e5-large, gte-large, mxbai-large";
+const KNOWN: &str = "bge-small, bge-base, bge-large, e5-base, e5-large (multilingual), \
+                     e5-large-v2 (English, from files), gte-large, mxbai-large";
+
+/// Where a seat keeps weights, when it says.
+fn cache_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("PACKSET_EMBED_CACHE").map(std::path::PathBuf::from)
+}
+
+/// Load the model a choice names.
+fn load(choice: &Choice) -> anyhow::Result<TextEmbedding> {
+    match &choice.source {
+        Source::Builtin(model) => {
+            let mut options =
+                TextInitOptions::new(model.clone()).with_show_download_progress(false);
+            if let Some(dir) = cache_dir() {
+                options = options.with_cache_dir(dir);
+            }
+            Ok(TextEmbedding::try_new(options)?)
+        }
+        Source::Files { dir, pooling } => {
+            let root = cache_dir()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "a model from files needs PACKSET_EMBED_CACHE, so the files have a place \
+                         to be"
+                    )
+                })?
+                .join("user")
+                .join(dir);
+            let read = |name: &str| {
+                std::fs::read(root.join(name))
+                    .map_err(|e| anyhow::anyhow!("{name} under {}: {e}", root.display()))
+            };
+            let files = TokenizerFiles {
+                tokenizer_file: read("tokenizer.json")?,
+                config_file: read("config.json")?,
+                special_tokens_map_file: read("special_tokens_map.json")?,
+                tokenizer_config_file: read("tokenizer_config.json")?,
+            };
+            let model = UserDefinedEmbeddingModel::new(read("onnx/model.onnx")?, files)
+                .with_pooling(*pooling);
+            Ok(TextEmbedding::try_new_from_user_defined(
+                model,
+                InitOptionsUserDefined::default(),
+            )?)
+        }
+    }
+}
 
 fn main() -> anyhow::Result<()> {
     let mut query = false;
     let mut late = false;
     let mut rerank = false;
+    let mut sparse = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--query" | "-q" => query = true,
             "--late" => late = true,
             "--rerank" => rerank = true,
+            "--sparse" => sparse = true,
             "-V" | "--version" => {
                 println!("packset-embed {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
@@ -163,6 +254,9 @@ fn main() -> anyhow::Result<()> {
     if rerank {
         return cross_encode();
     }
+    if sparse {
+        return learned_sparse();
+    }
     if late {
         return late_interaction(query);
     }
@@ -171,11 +265,7 @@ fn main() -> anyhow::Result<()> {
     let choice = choose(name.trim())
         .ok_or_else(|| anyhow::anyhow!("unknown model `{name}`; known: {KNOWN}"))?;
     let prefix = if query { choice.query } else { choice.passage };
-    let mut options = TextInitOptions::new(choice.model).with_show_download_progress(false);
-    if let Some(dir) = std::env::var_os("PACKSET_EMBED_CACHE") {
-        options = options.with_cache_dir(std::path::PathBuf::from(dir));
-    }
-    let mut model = TextEmbedding::try_new(options)?;
+    let mut model = load(&choice)?;
 
     // A line in, a line out, flushed. Loading the model is the expensive part
     // and a caller that has to pay it per question cannot afford to ask, so
@@ -338,6 +428,52 @@ fn cross_encode() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Learned sparse weights from a model trained to produce them.
+///
+/// BGE-M3 hands back a sparse head from the same pass as its dense vector,
+/// and that head measured below BM25 here. It is not the sparse model the
+/// literature means. SPLADE (doi:10.1145/3404835.3463098, and the distilled
+/// hard-negative form at doi:10.1145/3477495.3531857) is trained for the
+/// weights themselves, with a regularizer that keeps them sparse enough to
+/// live in an inverted index. Measuring "learned sparse" against BM25 with a
+/// side output of a dense model is measuring the wrong thing, and this is the
+/// right one.
+///
+/// Same line shape as the sparse field the late path emits, so a caller reads
+/// both with one parser.
+fn learned_sparse() -> anyhow::Result<()> {
+    let mut options =
+        SparseInitOptions::new(SparseModel::SPLADEPPV1).with_show_download_progress(false);
+    if let Some(dir) = cache_dir() {
+        options = options.with_cache_dir(dir);
+    }
+    let mut model = SparseTextEmbedding::try_new(options)?;
+
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout().lock();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let item: Item = serde_json::from_str(&line)?;
+        let mut encoded = model.embed(&[item.text], None)?;
+        let s = encoded.pop().map_or_else(Sparse::default, |raw| Sparse {
+            i: raw.indices.iter().map(|index| *index as u32).collect(),
+            w: raw.values,
+        });
+        writeln!(
+            out,
+            "{}",
+            serde_json::to_string(
+                &serde_json::json!({ "id": item.id, "s": { "i": s.i, "w": s.w } })
+            )?
+        )?;
+        out.flush()?;
+    }
+    Ok(())
+}
+
 /// Every reranker [`cross_encode`] answers to, for the error that lists them.
 const RERANKERS: &str = "bge-reranker-base, bge-reranker-v2-m3, jina-turbo, jina-v2";
 
@@ -350,9 +486,12 @@ const USAGE: &str = "packset-embed: text in, vectors out\n\
         --rerank  a cross-encoder second stage: reads {\"id\",\"q\",\"d\":[..]}\n\
                   and writes {\"id\",\"s\":[..]}, one score a candidate in the\n\
                   order given\n\
+        --sparse  learned sparse weights (SPLADE++): writes {\"id\",\"s\":{\"i\",\"w\"}}\n\
     \n\
         PACKSET_EMBED_CACHE   where the weights live\n\
         PACKSET_EMBED_MODEL   bge-small (default), bge-base, bge-large,\n\
-                              e5-base, e5-large, gte-large, mxbai-large\n\
+                              e5-base, e5-large (multilingual), gte-large,\n\
+                              mxbai-large, or e5-large-v2 from files under\n\
+                              PACKSET_EMBED_CACHE/user/e5-large-v2/\n\
         PACKSET_RERANK_MODEL  bge-reranker-base (default), bge-reranker-v2-m3,\n\
                               jina-turbo, jina-v2";
