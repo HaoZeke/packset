@@ -268,11 +268,22 @@ const ARMS: &[&str] = &[
 
 /// The diversify slot's three settings, over the arm the table above leads on.
 ///
-/// The fuse slot's default was argued and then measured, and moved. The slot
-/// next to it was never measured at all, and it is not passive: maximal
-/// marginal relevance reorders the final ranking on every question, trading
-/// relevance for novelty at a fixed lambda. A default that costs recall would
-/// have been paid silently by every number in this file.
+/// The fuse slot's default was argued, then measured over nine voters, and
+/// moved. The slot beside it had never been measured at all, and it is not
+/// passive: maximal marginal relevance reorders the final ranking on every
+/// question, trading relevance for novelty at a fixed lambda.
+///
+/// Measured, it does nothing here. All three settings agree to three decimals
+/// on every cut-off, and the only difference anywhere is one point of nDCG@5
+/// against the shipped MMR. So the worry that motivated the sweep, a default
+/// silently costing recall, was unfounded, and the default stays.
+///
+/// The other half of that result is what this benchmark cannot see. A
+/// diversifier is not for recall; it is for not spending four of five answers
+/// on the same claim said four ways. LoCoMo scores whether labelled evidence
+/// was retrieved, so a method whose whole job is to suppress redundancy has
+/// nothing here to suppress and nothing to be credited for. Reading this table
+/// as "diversity does not help" would be reading it past what it measures.
 ///
 /// The decay slot is deliberately not swept beside this one. Its default is
 /// `off`, the passive setting, so an unmeasured default there costs nothing;
@@ -1669,9 +1680,9 @@ fn main() -> anyhow::Result<()> {
     table(VOTERS, &room_voted);
 
     println!();
-    println!("the same pair fused by combsum, diversified three ways. The fuse");
-    println!("slot was measured and moved; this one never was, and it reorders");
-    println!("every answer:");
+    println!("the same pair fused by combsum, diversified three ways. This slot");
+    println!("reorders every answer and had never been measured. It changes");
+    println!("nothing here, and this benchmark cannot see what it is for:");
     println!();
     table(DIVERSIFIERS, &diversified);
 
