@@ -86,6 +86,14 @@ Ten conversations, 5882 turns loaded as atoms, 1536 answerable questions:
 | BM25 + dense, bge-large | 0.685 | 0.755 |
 | BM25 + dense, e5-large-v2 | **0.705** | **0.781** |
 
+Stemming is on by default and `PACKSET_STEM=off` turns it back off. The
+default is measured on dialogue turns, and a pack is not dialogue turns: it
+holds short written claims where two atoms may differ deliberately in a way
+suffix stripping erases. What this benchmark establishes is that stemming helps
+a lexical retriever over conversation. Whether it helps over three hundred
+one-line claims is a different question this corpus cannot answer, which is why
+the switch exists rather than the change being silent.
+
 `PACKSET_EMBED_MODEL` picks the encoder. bge-small is the default because it is
 130 MB against 1.3 GB and encodes about three times faster, and it costs 0.08
 R@10.
@@ -179,28 +187,40 @@ The best arm measured here, against the best published on this benchmark:
 | | session hit@1 | nDCG@5 |
 |---|---|---|
 | what this shipped before | 0.549 | 0.660 |
-| session BM25 alone | 0.607 | 0.710 |
-| session BM25 + dense, Borda | 0.684 | 0.774 |
-| session BM25 + dense, CombMNZ | **0.716** | **0.794** |
+| session BM25, no stemming | 0.607 | 0.710 |
+| session BM25, stemmed | 0.633 | 0.735 |
+| session BM25 + dense, Borda | 0.703 | 0.789 |
+| session BM25 + dense, CombMNZ | **0.722** | **0.802** |
 | published, BM25 + e5-large-v2 | 0.752 | 0.829 |
 
 Same encoder family as the published system, same ten conversations, same 1536
 questions, and every method here is training-free.
 
 The gain reproduces almost exactly. That paper reports +11.2 points over BM25
-alone; fusing dense into session BM25 here is worth +10.9, and CombMNZ over
-Borda is 3.2 of those. What does not reproduce is the starting point: their
-BM25 baseline implies 0.640 against the 0.607 measured here, and 0.033 of
-baseline accounts for almost all of the 0.036 that remains.
+alone, and fusing dense into session BM25 here is worth +8.9, of which CombMNZ
+over Borda is 1.9.
+
+The starting point did not reproduce until the lexical path stopped skipping a
+standard component. Their +11.2 implies a BM25 baseline near 0.640; this
+measured 0.607, and the missing 0.033 turned out to be that nothing here
+stemmed. With suffix stripping the session BM25 baseline is 0.633, which is
+that gap closed rather than explained away, and the best arm moves from 0.716
+to 0.722 hit@1 and 0.794 to 0.802 nDCG@5.
 
 So the residual is a difference in the BM25 side or in the sample, not in the
 fusion. The paper does not state which subset of LoCoMo it used and the family
 runs to fifty dialogues where the public file holds ten, so that last part is
 not closable from here.
 
-That is a statement about what can be established, not an excuse, and it has a
-consequence worth being explicit about: no parameter in this crate has been
-moved to close it. Every arm reported was run because it answered a question
+What closed the part that was closable was a missing component rather than a
+setting: nothing here stemmed, and every serious implementation of this scorer
+does. That is the distinction this section rests on. Adding suffix stripping is
+a method the baseline was supposed to have; choosing among stemmers by which
+scores best on these questions would be fitting, and has not been done.
+
+The rest is a statement about what can be established, not an excuse, and it
+has a consequence worth being explicit about: no parameter in this crate has
+been moved to close it. Every arm reported was run because it answered a question
 about the retriever, and the two that were tried because they might have closed
 the gap, late interaction and pseudo-relevance feedback, are reported as losses.
 A number that might not be comparable is not a target, and the way it stops
