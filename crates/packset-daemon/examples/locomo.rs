@@ -493,6 +493,11 @@ const RERANK_DEPTH: usize = 20;
 
 /// Reorder the top of a ranking by what a cross-encoder makes of it.
 ///
+/// A different thing from the panel's own reranking, which diversifies a
+/// ranking it already has by maximal marginal relevance. That one drops
+/// redundancy; this one asks a model whether a candidate answers the question,
+/// which is the judgement no first-stage scorer is able to make.
+///
 /// Only the head is rescored and the tail keeps its first-stage order, which
 /// is what a second stage is: the first one decides what is worth reading and
 /// the second decides the order of those. The scores are the model's own, so

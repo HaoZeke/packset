@@ -348,6 +348,11 @@ fn rerank_slot() -> &'static Slot {
 
 /// Score every candidate against the question, reading the pair together.
 ///
+/// Not the panel's `rerank`, which is maximal marginal relevance over a
+/// ranking the panel already has and answers "which of these are redundant".
+/// This one asks a model "does this answer the question", which is the thing
+/// nothing in the first stage can be asked.
+///
 /// This is the second stage the first-stage scorers cannot be. Every other
 /// path here embeds a text without the question, so what it compares is two
 /// vectors made in ignorance of each other; a cross-encoder reads the pair in
