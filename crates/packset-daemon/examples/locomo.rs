@@ -275,6 +275,17 @@ const ARMS: &[&str] = &[
 /// have been paid silently by every number in this file.
 const DIVERSIFIERS: &[&str] = &["mmr", "dpp", "none"];
 
+/// The decay slot is not swept here, and that is a different case from the
+/// two above rather than an omission.
+///
+/// Its default is `off`, which is the passive setting: an unmeasured default
+/// that does nothing costs nothing. The diversify default is `mmr`, which
+/// reorders every answer, so leaving it unmeasured was leaving a cost
+/// unaccounted for. What decay would need is a corpus where recency predicts
+/// relevance, and a dialogue benchmark whose questions are drawn evenly over
+/// the whole conversation is not one.
+const _DECAY_IS_OFF_BY_DEFAULT: () = ();
+
 /// Every fusion the panel accepts, run over one pair of ballots.
 ///
 /// The published lexical-plus-dense system on this benchmark attributes its
