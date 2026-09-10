@@ -4,6 +4,7 @@
 //! `PACKSET_PORT` names. Stdio, because a seat runs this beside the agent.
 
 mod args;
+mod prompts;
 mod server;
 
 use rmcp::{transport::stdio, ServiceExt};

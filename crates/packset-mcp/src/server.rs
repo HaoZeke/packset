@@ -21,7 +21,7 @@
 use packset_client::PacksetClient;
 use rmcp::{
     handler::server::wrapper::Json, handler::server::wrapper::Parameters,
-    handler::server::ServerHandler, model::*, tool, tool_handler, tool_router,
+    handler::server::ServerHandler, model::*, prompt_handler, tool, tool_handler, tool_router,
     ErrorData as McpError,
 };
 use serde::Serialize;
@@ -226,9 +226,15 @@ impl PacksetServer {
 }
 
 #[tool_handler]
+#[prompt_handler(router = Self::prompt_router())]
 impl ServerHandler for PacksetServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .build(),
+        )
             .with_server_info(Implementation::new("packset", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "This reads a pack a local writer owns; it is not a store of its own. A \
