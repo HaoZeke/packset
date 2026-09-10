@@ -69,9 +69,23 @@ const MU: f64 = 2000.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Scorer {
     /// Okapi BM25, with no floor.
-    #[default]
     Bm25,
     /// BM25 with lower-bounded term frequency normalisation.
+    ///
+    /// The default, because it wins. On ten LoCoMo conversations it leads
+    /// plain BM25 at every granularity measured: 0.635 hit@1 against 0.615 on
+    /// turns, 0.638 against 0.633 on sessions, 0.668 against 0.660 on
+    /// passages.
+    ///
+    /// The largest gain is on turns, which are the shortest documents, and
+    /// that was not the prediction. The defect the floor fixes is a
+    /// long-document one, so the expectation was that a corpus of
+    /// concatenated sessions would gain most and single turns least. What
+    /// happens on short documents is a different effect of the same constant:
+    /// the floor is paid once per matching term, so it rewards a document that
+    /// matches more of the query, and that separates documents most when each
+    /// carries few terms to begin with.
+    #[default]
     Bm25Plus,
     /// Query likelihood with a Dirichlet prior.
     Dirichlet,

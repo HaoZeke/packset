@@ -1239,7 +1239,7 @@ fn main() -> anyhow::Result<()> {
                 ..ask
             };
             let lexical = search::search_linear(&ask);
-            let terms = search::search_bm25(&ask, &index);
+            let terms = search::search_bm25_plain(&ask, &index);
             let fed = search::search_bm25_expanded(&ask, &index, &documents);
             let meaning = questions
                 .get(question.text.as_str())
@@ -1356,7 +1356,7 @@ fn main() -> anyhow::Result<()> {
                 atoms: &session_corpus,
                 ..ask
             };
-            let room_terms = search::search_bm25(&asking, &room_index);
+            let room_terms = search::search_bm25_plain(&asking, &room_index);
             let room_fed = search::search_bm25_expanded(&asking, &room_index, &room_documents);
             // A window ranking is longer than a session ranking, because one
             // session contributes several windows and only its best survives
@@ -1388,7 +1388,7 @@ fn main() -> anyhow::Result<()> {
             // corpus of session documents, where twenty hits are twenty
             // sessions, measures the depth of the ranking as if it were the
             // protocol. Every arm that collapses gets the same budget.
-            let by_turn = collapse(&search::search_bm25(&deep_ask, &index));
+            let by_turn = collapse(&search::search_bm25_plain(&deep_ask, &index));
             // The same protocol with the floor under an occurrence, so the
             // scorer is compared at every granularity rather than only where
             // it was expected to help.

@@ -401,6 +401,13 @@ pub fn search_bm25(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
     search_lexical(ask, index, crate::bm25::Scorer::default())
 }
 
+/// Plain Okapi BM25, for a caller comparing against the formula rather than
+/// asking the best question the seat can answer.
+#[must_use]
+pub fn search_bm25_plain(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
+    search_lexical(ask, index, crate::bm25::Scorer::Bm25)
+}
+
 /// The same, in the scoring family the caller names.
 ///
 /// One lexical ballot is a formula, not an opinion. BM25, BM25+ and query
