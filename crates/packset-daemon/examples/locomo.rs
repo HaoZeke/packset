@@ -228,8 +228,10 @@ const PROTOCOLS: &[&str] = &[
     "turn bm25",
     "session bm25",
     "session bm25 rm3",
+    "passage bm25",
     "turn dense",
     "session bm25 + turn dense",
+    "passage bm25 + turn dense",
     "session bm25 + turn late",
     "session bm25 + turn m3 sparse",
 ];
@@ -484,6 +486,88 @@ fn sessions_of(ranked: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// How many turns a passage covers.
+///
+/// Set from what a passage is for rather than searched over: a window wants to
+/// be long enough to carry a question and the answer to it, which in dialogue
+/// is a few exchanges, and short enough that length normalisation still bites.
+/// Picking this by which value scores best on these questions would be fitting
+/// the benchmark rather than filling in a method.
+const WINDOW: usize = 6;
+
+/// How far one window starts after the last.
+///
+/// Half a window, so a match spanning a boundary is whole in the next one. A
+/// stride equal to the window would cut exactly the matches a passage exists
+/// to catch.
+const STRIDE: usize = 3;
+
+/// A conversation as overlapping windows of adjacent turns.
+///
+/// The two protocols already measured are the degenerate cases of this: a
+/// window of one turn is the turn ranking, and a window of a whole session is
+/// the session document. The middle is what the retrieval literature has meant
+/// by passage-level evidence since Callan
+/// (doi:10.1007/978-1-4471-2099-5_31): score a document by its best passage,
+/// because a match sitting in a few adjacent turns is diluted by the length of
+/// everything around it.
+///
+/// Each window carries the id of the session it came from, so a ranking over
+/// windows reads as a ranking over sessions by taking the first window each
+/// session appears in, which is that session's best.
+fn passage_documents(atoms: &[Record]) -> Vec<Record> {
+    // Grouped by session rather than by run of adjacent atoms, so a session
+    // whose turns are not contiguous still yields one series of windows and
+    // window ids stay unique.
+    let mut by_room: Vec<(String, Vec<&str>)> = Vec::new();
+    let mut where_room: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for atom in atoms {
+        let id = atom.get("id").and_then(Value::as_str).unwrap_or_default();
+        let room = session_of(id).to_string();
+        let line = atom.get("text").and_then(Value::as_str).unwrap_or_default();
+        match where_room.get(&room) {
+            Some(at) => by_room[*at].1.push(line),
+            None => {
+                where_room.insert(room.clone(), by_room.len());
+                by_room.push((room, vec![line]));
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (room, turns) in by_room {
+        let mut at = 0usize;
+        loop {
+            let end = (at + WINDOW).min(turns.len());
+            let text = turns[at..end].join("\n");
+            // The window's own id names the session and where it starts, so a
+            // hit can be read back to a session and the ones from a session
+            // stay distinct.
+            out.push(
+                json!({
+                    "id": format!("{room}#{at}"),
+                    "workspace": "locomo",
+                    "kind": "conclusion",
+                    "text": text,
+                })
+                .as_object()
+                .expect("object")
+                .clone(),
+            );
+            if end == turns.len() {
+                break;
+            }
+            at += STRIDE;
+        }
+    }
+    out
+}
+
+/// The session a window id names, which is everything before the `#`.
+fn room_of_window(id: &str) -> &str {
+    id.split_once('#').map_or(id, |(room, _)| room)
+}
+
 /// A conversation's sessions as one document each, in the order they happened.
 ///
 /// Concatenating a session's turns is a different document from any of them:
@@ -533,6 +617,28 @@ fn collapse(hits: &[Value]) -> Vec<Value> {
     for hit in hits {
         let id = hit.get("id").and_then(Value::as_str).unwrap_or_default();
         let room = session_of(id).to_string();
+        if !seen.insert(room.clone()) {
+            continue;
+        }
+        let mut copy = hit.clone();
+        copy["id"] = json!(room);
+        out.push(copy);
+    }
+    out
+}
+
+/// A window ranking read as a session ranking, best window first.
+///
+/// This is `collapse` over the other id shape, and it is the whole of what
+/// passage evidence does at the end: a session takes the place of its best
+/// passage, so a match sitting in a few adjacent turns is not averaged away by
+/// the length of the session around it.
+fn collapse_windows(hits: &[Value]) -> Vec<Value> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for hit in hits {
+        let id = hit.get("id").and_then(Value::as_str).unwrap_or_default();
+        let room = room_of_window(id).to_string();
         if !seen.insert(room.clone()) {
             continue;
         }
@@ -963,6 +1069,12 @@ fn main() -> anyhow::Result<()> {
         let room_documents: Vec<Vec<String>> =
             session_corpus.iter().map(search::atom_tokens).collect();
         let room_index = Index::build(room_documents.iter().map(Vec::as_slice));
+        // And once more with the passage as the document, which is the middle
+        // the two above are the ends of.
+        let passage_corpus = passage_documents(&conversation.atoms);
+        let passage_tokens: Vec<Vec<String>> =
+            passage_corpus.iter().map(search::atom_tokens).collect();
+        let passage_index = Index::build(passage_tokens.iter().map(Vec::as_slice));
 
         // One encode of the corpus and one of the questions, through the kept
         // child the daemon uses. Absent encoder means the dense arms are empty
@@ -1234,6 +1346,19 @@ fn main() -> anyhow::Result<()> {
             };
             let room_terms = search::search_bm25(&asking, &room_index);
             let room_fed = search::search_bm25_expanded(&asking, &room_index, &room_documents);
+            // A window ranking is longer than a session ranking, because one
+            // session contributes several windows and only its best survives
+            // the collapse. Retrieving the limit would leave fewer sessions
+            // than the other arms are asked for, so the ranking is taken deep
+            // enough that the collapse can still fill it.
+            let passage_ask = Ask {
+                atoms: &passage_corpus,
+                limit: ask.limit * WINDOW,
+                ..ask
+            };
+            let mut passage_hits =
+                collapse_windows(&search::search_bm25(&passage_ask, &passage_index));
+            passage_hits.truncate(ask.limit);
             let by_turn = collapse(&terms);
             let by_meaning = collapse(&meaning);
             let by_late = collapse(&interaction);
@@ -1243,7 +1368,14 @@ fn main() -> anyhow::Result<()> {
                     "turn bm25" => hit_ids(&by_turn),
                     "session bm25" => hit_ids(&room_terms),
                     "session bm25 rm3" => hit_ids(&room_fed),
+                    "passage bm25" => hit_ids(&passage_hits),
                     "turn dense" => hit_ids(&by_meaning),
+                    "passage bm25 + turn dense" => hit_ids(&search::merge_ballots(
+                        &[passage_hits.clone(), by_meaning.clone()],
+                        ask.limit,
+                        &shipped,
+                        &now,
+                    )),
                     "session bm25 + turn late" => hit_ids(&search::merge_ballots(
                         &[room_terms.clone(), by_late.clone()],
                         ask.limit,
