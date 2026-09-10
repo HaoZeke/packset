@@ -273,18 +273,13 @@ const ARMS: &[&str] = &[
 /// marginal relevance reorders the final ranking on every question, trading
 /// relevance for novelty at a fixed lambda. A default that costs recall would
 /// have been paid silently by every number in this file.
+/// The decay slot is deliberately not swept beside this one. Its default is
+/// `off`, the passive setting, so an unmeasured default there costs nothing;
+/// the diversify default reorders every answer, which is what made leaving it
+/// unmeasured a cost nobody had accounted for. Measuring decay would need a
+/// corpus where recency predicts relevance, and a dialogue benchmark whose
+/// questions are drawn evenly over the conversation is not one.
 const DIVERSIFIERS: &[&str] = &["mmr", "dpp", "none"];
-
-/// The decay slot is not swept here, and that is a different case from the
-/// two above rather than an omission.
-///
-/// Its default is `off`, which is the passive setting: an unmeasured default
-/// that does nothing costs nothing. The diversify default is `mmr`, which
-/// reorders every answer, so leaving it unmeasured was leaving a cost
-/// unaccounted for. What decay would need is a corpus where recency predicts
-/// relevance, and a dialogue benchmark whose questions are drawn evenly over
-/// the whole conversation is not one.
-const _DECAY_IS_OFF_BY_DEFAULT: () = ();
 
 /// Every fusion the panel accepts, run over one pair of ballots.
 ///
