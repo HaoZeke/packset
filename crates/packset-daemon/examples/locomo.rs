@@ -38,7 +38,7 @@
 
 use std::collections::BTreeSet;
 
-use packset_core::bm25::Index;
+use packset_core::bm25::{Index, Scorer};
 use packset_core::panel::Panel;
 use packset_core::search::{self, Ask, Record};
 use serde_json::{json, Value};
@@ -229,9 +229,13 @@ const PROTOCOLS: &[&str] = &[
     "session bm25",
     "session bm25 rm3",
     "passage bm25",
+    "passage bm25+",
+    "passage dirichlet",
+    "passage bm25+ & dirichlet",
     "turn dense",
     "session bm25 + turn dense",
     "passage bm25 + turn dense",
+    "passage bm25+ + turn dense",
     "session bm25 + turn late",
     "session bm25 + turn m3 sparse",
 ];
@@ -1359,9 +1363,20 @@ fn main() -> anyhow::Result<()> {
                 atoms: &passage_corpus,
                 ..deep_ask
             };
-            let mut passage_hits =
-                collapse_windows(&search::search_bm25(&passage_ask, &passage_index));
-            passage_hits.truncate(ask.limit);
+            let passage_by = |scorer| {
+                let mut hits = collapse_windows(&search::search_lexical(
+                    &passage_ask,
+                    &passage_index,
+                    scorer,
+                ));
+                hits.truncate(ask.limit);
+                hits
+            };
+            let passage_hits = passage_by(Scorer::Bm25);
+            // The two the literature says are better than the one above, on
+            // the arm where the defect they fix is the arm's own shape.
+            let passage_floored = passage_by(Scorer::Bm25Plus);
+            let passage_likely = passage_by(Scorer::Dirichlet);
             // Read as sessions, from a ranking taken deep enough that the
             // collapse can still fill the deepest cut-off.
             //
@@ -1396,6 +1411,22 @@ fn main() -> anyhow::Result<()> {
                     "session bm25" => hit_ids(&room_terms),
                     "session bm25 rm3" => hit_ids(&room_fed),
                     "passage bm25" => hit_ids(&passage_hits),
+                    "passage bm25+" => hit_ids(&passage_floored),
+                    "passage dirichlet" => hit_ids(&passage_likely),
+                    // Two lexical ballots, which the panel has never had: one
+                    // formula is not a lexical opinion.
+                    "passage bm25+ & dirichlet" => hit_ids(&search::merge_ballots(
+                        &[passage_floored.clone(), passage_likely.clone()],
+                        ask.limit,
+                        &shipped,
+                        &now,
+                    )),
+                    "passage bm25+ + turn dense" => hit_ids(&search::merge_ballots(
+                        &[passage_floored.clone(), by_meaning.clone()],
+                        ask.limit,
+                        &shipped,
+                        &now,
+                    )),
                     "turn dense" => hit_ids(&by_meaning),
                     "passage bm25 + turn dense" => hit_ids(&search::merge_ballots(
                         &[passage_hits.clone(), by_meaning.clone()],

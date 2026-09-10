@@ -25,6 +25,82 @@ const K1: f64 = 1.2;
 /// How much length normalisation applies. 0 is none, 1 is full.
 const B: f64 = 0.75;
 
+/// The floor an occurrence is worth, past which length cannot push it.
+///
+/// BM25's length normalisation has a defect that shows up on long documents:
+/// past a length, one occurrence of a query term contributes so little that
+/// the document scores below one that does not contain the term at all. The
+/// normalisation is dividing the term's contribution toward zero while the
+/// non-occurrence sits at exactly zero, so a document is punished for being
+/// long more than it is rewarded for being relevant.
+///
+/// Lv and Zhai's fix is one constant: hold every occurrence above a floor, so
+/// containing a term always beats not containing it however long the document
+/// is. The value is theirs (doi:10.1145/2063576.2063584).
+const DELTA: f64 = 1.0;
+
+/// The Dirichlet prior for the query-likelihood scorer, in tokens.
+///
+/// This is the weight given to the collection when estimating a document's
+/// language model, read as a count of pseudo-tokens drawn from the corpus. A
+/// document shorter than this is smoothed mostly toward the collection and a
+/// much longer one mostly toward itself, which is where the length behaviour
+/// comes from: nothing normalises by length here, the prior stops mattering
+/// as a document gets long enough to speak for itself.
+///
+/// Zhai and Lafferty (doi:10.1145/984321.984322) report this range as the one
+/// that holds across collections. Set from the paper rather than fitted here,
+/// because a constant tuned on the questions being reported is a constant that
+/// has read them.
+const MU: f64 = 2000.0;
+
+/// Which scoring family a query is answered by.
+///
+/// Three derivations of the same quantity, not three settings of one. BM25 is
+/// the probabilistic model with saturation and length normalisation; BM25+ is
+/// that with a floor under an occurrence; query likelihood with Dirichlet
+/// smoothing is a different derivation entirely, where a document is a
+/// language model and the score is how likely it was to have produced the
+/// query.
+///
+/// They are here together because they disagree, and disagreeing scorers are
+/// what a fusion panel is for. One lexical ballot is not a lexical opinion,
+/// it is a formula.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scorer {
+    /// Okapi BM25, with no floor.
+    #[default]
+    Bm25,
+    /// BM25 with lower-bounded term frequency normalisation.
+    Bm25Plus,
+    /// Query likelihood with a Dirichlet prior.
+    Dirichlet,
+}
+
+impl Scorer {
+    /// The name this scorer is asked for by, on a command line or in an
+    /// environment variable.
+    #[must_use]
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Bm25 => "bm25",
+            Self::Bm25Plus => "bm25+",
+            Self::Dirichlet => "dirichlet",
+        }
+    }
+
+    /// Read one from a name, or nothing when the name is not a scorer.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "bm25" | "okapi" => Some(Self::Bm25),
+            "bm25+" | "bm25plus" => Some(Self::Bm25Plus),
+            "dirichlet" | "ql" | "lm" => Some(Self::Dirichlet),
+            _ => None,
+        }
+    }
+}
+
 /// Where one term appears: the document, and how often in it.
 type Posting = (u32, u32);
 
@@ -34,6 +110,13 @@ pub struct Index {
     postings: HashMap<String, Vec<Posting>>,
     lengths: Vec<u32>,
     total_length: u64,
+    /// How often each term occurs in the corpus, counting repeats.
+    ///
+    /// Document frequency answers how many documents carry a term, which is
+    /// what tells you how much it narrows things down. It does not tell you
+    /// how likely the corpus was to say the word, and that is the quantity a
+    /// language model smooths toward.
+    occurrences: HashMap<String, u64>,
 }
 
 impl Index {
@@ -61,6 +144,7 @@ impl Index {
                     .entry(term.to_string())
                     .or_default()
                     .push((ordinal, count));
+                *index.occurrences.entry(term.to_string()).or_insert(0) += u64::from(count);
             }
         }
         index
@@ -111,10 +195,48 @@ impl Index {
         B.mul_add(length / average, 1.0 - B)
     }
 
+    /// How likely the corpus was to say a term, over all its occurrences.
+    fn background(&self, term: &str) -> f64 {
+        if self.total_length == 0 {
+            return 0.0;
+        }
+        self.occurrences.get(term).copied().unwrap_or(0) as f64 / self.total_length as f64
+    }
+
     /// One term's contribution to one document.
     fn term_score(&self, term: &str, ordinal: usize, count: u32) -> f64 {
+        self.term_score_by(Scorer::Bm25, term, ordinal, count)
+    }
+
+    /// One term's contribution, in the family the caller named.
+    fn term_score_by(&self, scorer: Scorer, term: &str, ordinal: usize, count: u32) -> f64 {
         let count = f64::from(count);
-        self.idf(term) * (count * (K1 + 1.0)) / (K1 * self.norm(ordinal)).mul_add(1.0, count)
+        match scorer {
+            Scorer::Bm25 => {
+                self.idf(term) * (count * (K1 + 1.0))
+                    / (K1 * self.norm(ordinal)).mul_add(1.0, count)
+            }
+            // The floor sits inside the idf weighting rather than outside it,
+            // so a term nothing narrows down does not get a free point for
+            // appearing.
+            Scorer::Bm25Plus => {
+                self.idf(term)
+                    * ((count * (K1 + 1.0)) / (K1 * self.norm(ordinal)).mul_add(1.0, count) + DELTA)
+            }
+            // Lucene and Anserini both decompose the query likelihood per
+            // matching term this way, which is what lets the postings answer
+            // it: the prior's share of the score rides along with each term
+            // rather than being a constant over the whole query that only a
+            // full scan could apply.
+            Scorer::Dirichlet => {
+                let background = self.background(term);
+                if background <= 0.0 {
+                    return 0.0;
+                }
+                let length = f64::from(self.lengths.get(ordinal).copied().unwrap_or(0));
+                (count / (MU * background)).ln_1p() + (MU / (length + MU)).ln()
+            }
+        }
     }
 
     /// Every document carrying at least one query term, with its score.
@@ -149,6 +271,17 @@ impl Index {
     /// count than the words actually asked for, so it needs the weights.
     #[must_use]
     pub fn score_weighted(&self, query: &[(String, f64)]) -> Vec<(usize, f64)> {
+        self.score_weighted_by(Scorer::default(), query)
+    }
+
+    /// Score a weighted query in the family the caller named.
+    ///
+    /// The scorer is a parameter rather than a build-time choice because the
+    /// index is the same either way: postings, lengths and occurrences are
+    /// what all three read, and which formula runs over them is a question
+    /// asked per query.
+    #[must_use]
+    pub fn score_weighted_by(&self, scorer: Scorer, query: &[(String, f64)]) -> Vec<(usize, f64)> {
         let mut totals: HashMap<u32, f64> = HashMap::new();
         for (term, weight) in query {
             if *weight <= 0.0 {
@@ -159,7 +292,7 @@ impl Index {
             };
             for (ordinal, count) in postings {
                 *totals.entry(*ordinal).or_insert(0.0) +=
-                    weight * self.term_score(term, *ordinal as usize, *count);
+                    weight * self.term_score_by(scorer, term, *ordinal as usize, *count);
             }
         }
         let mut scored: Vec<(usize, f64)> = totals
@@ -279,12 +412,29 @@ impl Index {
     /// The same, against a query whose terms carry weights.
     #[must_use]
     pub fn score_foreign_weighted(&self, query: &[(String, f64)], document: &[String]) -> f64 {
+        self.score_foreign_weighted_by(Scorer::default(), query, document)
+    }
+
+    /// A text outside the corpus, scored in the family the caller named.
+    ///
+    /// The seat and workspace cards are ranked beside the atoms in one list,
+    /// so they have to be scored by the same formula. A hit list mixing two
+    /// scoring families is one where the comparison between two of its rows is
+    /// meaningless, and nothing downstream can tell which two.
+    #[must_use]
+    pub fn score_foreign_weighted_by(
+        &self,
+        scorer: Scorer,
+        query: &[(String, f64)],
+        document: &[String],
+    ) -> f64 {
         if document.is_empty() || self.is_empty() {
             return 0.0;
         }
         let average = self.average_length();
+        let length = document.len() as f64;
         let norm = if average > 0.0 {
-            B.mul_add(document.len() as f64 / average, 1.0 - B)
+            B.mul_add(length / average, 1.0 - B)
         } else {
             1.0
         };
@@ -299,9 +449,133 @@ impl Index {
                 if count == 0.0 || *weight <= 0.0 {
                     return 0.0;
                 }
-                weight * self.idf(term) * (count * (K1 + 1.0)) / (K1 * norm).mul_add(1.0, count)
+                let saturated = (count * (K1 + 1.0)) / (K1 * norm).mul_add(1.0, count);
+                weight
+                    * match scorer {
+                        Scorer::Bm25 => self.idf(term) * saturated,
+                        Scorer::Bm25Plus => self.idf(term) * (saturated + DELTA),
+                        Scorer::Dirichlet => {
+                            let background = self.background(term);
+                            if background <= 0.0 {
+                                return 0.0;
+                            }
+                            (count / (MU * background)).ln_1p() + (MU / (length + MU)).ln()
+                        }
+                    }
             })
             .sum()
+    }
+}
+
+#[cfg(test)]
+mod scorers {
+    use super::*;
+
+    fn words(text: &str) -> Vec<String> {
+        text.split_whitespace().map(str::to_string).collect()
+    }
+
+    /// The defect BM25+ exists to fix, on a corpus that shows it.
+    ///
+    /// A long document containing the query term against a short one that does
+    /// not. BM25's normalisation drives the long document's single occurrence
+    /// toward zero while the document with no occurrence sits at exactly zero,
+    /// so past a length the relevant document loses to the irrelevant one.
+    /// This is not a contrived corpus: a session document is the concatenation
+    /// of dozens of turns and it is what the benchmark's leading arms index.
+    #[test]
+    fn a_long_document_stops_being_punished_for_its_length() {
+        let filler = "alpha beta gamma delta epsilon zeta eta theta ".repeat(400);
+        let long = words(&format!("{filler} lease"));
+        let mut corpus: Vec<Vec<String>> = vec![long];
+        // Enough short documents that the average length is short and the long
+        // one is far above it, which is where the normalisation bites.
+        for n in 0..200 {
+            corpus.push(words(&format!("alpha beta gamma note {n}")));
+        }
+        let index = Index::build(corpus.iter().map(Vec::as_slice));
+
+        let query = vec![("lease".to_string(), 1.0)];
+        let plain = index.score_weighted_by(Scorer::Bm25, &query);
+        let floored = index.score_weighted_by(Scorer::Bm25Plus, &query);
+
+        // Only the long document carries the term at all, so both find it.
+        assert_eq!(plain.len(), 1);
+        assert_eq!(floored.len(), 1);
+
+        // What changed is how much carrying it is worth. Under BM25 the length
+        // has eaten nearly all of it.
+        let (_, thin) = plain[0];
+        let (_, held) = floored[0];
+        assert!(held > thin, "the floor took a point away: {held} vs {thin}");
+        assert!(
+            thin < 0.25 * index.idf("lease"),
+            "this corpus does not show the defect: {thin}"
+        );
+        // The floor is worth a whole occurrence's idf, which is what puts the
+        // document back above one that does not contain the term.
+        assert!(
+            held > index.idf("lease"),
+            "the floor did not restore the occurrence: {held}"
+        );
+    }
+
+    /// Query likelihood ranks by a different quantity, and says so by
+    /// disagreeing with BM25 rather than by reproducing it.
+    #[test]
+    fn the_language_model_is_a_different_opinion() {
+        let corpus: Vec<Vec<String>> = vec![
+            words("lease lease lease renew renew"),
+            words("lease renew claim generation fence token holder quiet reclaim node"),
+            words("claim generation fence token"),
+        ];
+        let index = Index::build(corpus.iter().map(Vec::as_slice));
+        let query = vec![("lease".to_string(), 1.0), ("renew".to_string(), 1.0)];
+
+        let best = |scored: Vec<(usize, f64)>| -> usize {
+            scored
+                .into_iter()
+                .max_by(|a, b| a.1.partial_cmp(&b.1).expect("finite"))
+                .expect("a hit")
+                .0
+        };
+        // Both put the document that is about the query first; they are
+        // scorers, not opposites.
+        assert_eq!(best(index.score_weighted_by(Scorer::Bm25, &query)), 0);
+        assert_eq!(best(index.score_weighted_by(Scorer::Dirichlet, &query)), 0);
+
+        // And they do not agree about the numbers, which is the whole reason
+        // to fuse them rather than pick one.
+        let by_bm25 = index.score_weighted_by(Scorer::Bm25, &query);
+        let by_lm = index.score_weighted_by(Scorer::Dirichlet, &query);
+        assert_eq!(by_bm25.len(), by_lm.len());
+        assert!(
+            by_bm25
+                .iter()
+                .zip(&by_lm)
+                .any(|((_, one), (_, two))| (one - two).abs() > 1e-9),
+            "two derivations returned the same numbers"
+        );
+    }
+
+    /// A name that is not a scorer is refused rather than falling back to one,
+    /// because a run reporting the wrong formula under the right label is a
+    /// result nobody can catch.
+    #[test]
+    fn a_scorer_is_named_or_refused() {
+        for (name, want) in [
+            ("bm25", Scorer::Bm25),
+            ("BM25+", Scorer::Bm25Plus),
+            (" dirichlet ", Scorer::Dirichlet),
+            ("ql", Scorer::Dirichlet),
+        ] {
+            assert_eq!(Scorer::parse(name), Some(want), "{name}");
+        }
+        assert_eq!(Scorer::parse("tf-idf"), None);
+        assert_eq!(Scorer::parse(""), None);
+        for scorer in [Scorer::Bm25, Scorer::Bm25Plus, Scorer::Dirichlet] {
+            assert_eq!(Scorer::parse(scorer.token()), Some(scorer));
+        }
     }
 }
 

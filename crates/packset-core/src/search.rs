@@ -398,11 +398,26 @@ pub fn atom_tokens(atom: &Record) -> Vec<String> {
 /// competes with a conclusion for the same place in the answer.
 #[must_use]
 pub fn search_bm25(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
+    search_lexical(ask, index, crate::bm25::Scorer::default())
+}
+
+/// The same, in the scoring family the caller names.
+///
+/// One lexical ballot is a formula, not an opinion. BM25, BM25+ and query
+/// likelihood disagree about different questions, which is the reason the
+/// panel exists, and the panel had never been given two lexical ballots to
+/// fuse because there had only ever been one lexical scorer.
+#[must_use]
+pub fn search_lexical(
+    ask: &Ask<'_>,
+    index: &crate::bm25::Index,
+    scorer: crate::bm25::Scorer,
+) -> Vec<Value> {
     let qtoks = tokens(ask.query);
     // Each word asked for once, which is the unweighted query written as a
     // weighted one so both paths score through the same code.
     let weighted: Vec<(String, f64)> = qtoks.into_iter().map(|term| (term, 1.0)).collect();
-    bm25_hits(ask, index, &weighted)
+    bm25_hits(ask, index, &weighted, scorer)
 }
 
 /// How many of the first pass's hits the relevance model is estimated from.
@@ -445,11 +460,16 @@ pub fn search_bm25_expanded(
         })
         .collect();
     let expanded = index.expand(&qtoks, &feedback, RM3_TERMS, RM3_ALPHA);
-    bm25_hits(ask, index, &expanded)
+    bm25_hits(ask, index, &expanded, crate::bm25::Scorer::default())
 }
 
 /// The hits a weighted query scores, cards and atoms together.
-fn bm25_hits(ask: &Ask<'_>, index: &crate::bm25::Index, query: &[(String, f64)]) -> Vec<Value> {
+fn bm25_hits(
+    ask: &Ask<'_>,
+    index: &crate::bm25::Index,
+    query: &[(String, f64)],
+    scorer: crate::bm25::Scorer,
+) -> Vec<Value> {
     let Ask {
         user,
         memory,
@@ -466,7 +486,7 @@ fn bm25_hits(ask: &Ask<'_>, index: &crate::bm25::Index, query: &[(String, f64)])
     let mut hits: Vec<Value> = Vec::new();
     for (field, text, bias) in [("user", user, 0.5), ("memory", memory, 0.25)] {
         for para in paragraphs(text) {
-            let relevance = index.score_foreign_weighted(query, &tokens(&para));
+            let relevance = index.score_foreign_weighted_by(scorer, query, &tokens(&para));
             if relevance == 0.0 {
                 continue;
             }
@@ -481,7 +501,7 @@ fn bm25_hits(ask: &Ask<'_>, index: &crate::bm25::Index, query: &[(String, f64)])
     }
 
     // Only the atoms carrying a query term, straight from the postings.
-    for (ordinal, relevance) in index.score_weighted(query) {
+    for (ordinal, relevance) in index.score_weighted_by(scorer, query) {
         let Some(atom) = atoms.get(ordinal) else {
             continue;
         };
