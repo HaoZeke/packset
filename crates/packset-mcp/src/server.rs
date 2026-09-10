@@ -235,15 +235,15 @@ impl ServerHandler for PacksetServer {
                 .enable_prompts()
                 .build(),
         )
-            .with_server_info(Implementation::new("packset", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "This reads a pack a local writer owns; it is not a store of its own. A \
+        .with_server_info(Implementation::new("packset", env!("CARGO_PKG_VERSION")))
+        .with_instructions(
+            "This reads a pack a local writer owns; it is not a store of its own. A \
                  failure here usually means the writer is not running, which is not an \
                  empty pack: ask whether the pack is up before concluding the seat knows \
                  nothing. The accession verbs are the join. What the seat remembers is in \
                  the atoms, what the work produced is in the deed store, and the accession \
                  is the only identifier that crosses.",
-            )
+        )
     }
 }
 

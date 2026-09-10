@@ -29,7 +29,7 @@ fn asked(text: String) -> Vec<PromptMessage> {
     vec![PromptMessage::new_text(Role::User, text)]
 }
 
-#[prompt_router(vis = pub(crate))]
+#[prompt_router(vis = "pub(crate)")]
 impl PacksetServer {
     /// Ask what the seat remembers about something, and follow it back to what
     /// the remembered claims stand on.
