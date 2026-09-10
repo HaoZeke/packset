@@ -238,6 +238,29 @@ impl PacksetClient {
             .unwrap_or(serde_json::Value::Array(vec![]));
         Ok(serde_json::from_value(found)?)
     }
+    /// Every live atom in a workspace.
+    ///
+    /// The bodies, not the join keys: this is what a handover carries when
+    /// somebody is given what the seat learned rather than only what it cites.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn atoms(&self, workspace: &str) -> Result<Vec<serde_json::Value>, Error> {
+        let url = format!("{}/v1/atoms", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .timeout(TIMEOUT)
+            .call()
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?;
+        let found = body
+            .get("atoms")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        Ok(serde_json::from_value(found)?)
+    }
+
     /// The live atoms in a workspace that cite one deed accession.
     ///
     /// # Errors

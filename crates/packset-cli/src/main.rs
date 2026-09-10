@@ -80,6 +80,7 @@ fn run() -> anyhow::Result<()> {
         }
         "pin" => pin(port, rest.first().map(String::as_str)),
         "accessions" => accessions(port, rest.first().map(String::as_str)),
+        "export" => export(port, rest),
         "citers" => citers(
             port,
             rest.first().map(String::as_str),
@@ -110,7 +111,8 @@ fn usage() -> String {
          port | url | which\n\
          pin [NAME]             read, or set, the pinned set\n\
          accessions [WORKSPACE] deed accessions live atoms cite\n\
-         citers ACCESSION [WS]  the live atoms citing one accession"
+         citers ACCESSION [WS]  the live atoms citing one accession\n\
+         export --into DIR [WS] atoms to a satchel; cited accessions to stdout"
         .to_string()
 }
 
@@ -328,6 +330,60 @@ fn citers(port: u16, accession: Option<&str>, given: Option<&str>) -> anyhow::Re
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
         println!("{id}\t{text}");
+    }
+    Ok(())
+}
+
+/// Write a workspace's live atoms into a satchel, and name what they cite.
+///
+/// What a seat learned is the third thing a handover carries, beside the work
+/// and what the work produced. The atoms go in as one JSON object a line,
+/// which is what every other export in this stack is, and the accessions they
+/// cite go to stdout so a deed store can be handed them on a pipe:
+///
+///   packset export --into bag/data/atoms | deedar export --into bag/data/deeds -
+///
+/// Two streams because they have two destinations. Writing the accessions into
+/// the satchel would make this the thing that decides what a satchel needs,
+/// and that is the tracker's call: the pack only knows what its own atoms
+/// mention.
+fn export(port: u16, args: &[String]) -> anyhow::Result<()> {
+    let mut into: Option<std::path::PathBuf> = None;
+    let mut given: Option<String> = None;
+    let mut at = 0;
+    while at < args.len() {
+        match args[at].as_str() {
+            "--into" => {
+                at += 1;
+                into =
+                    Some(std::path::PathBuf::from(args.get(at).ok_or_else(|| {
+                        anyhow::anyhow!("--into needs a directory")
+                    })?));
+            }
+            other => given = Some(other.to_string()),
+        }
+        at += 1;
+    }
+    let into = into.ok_or_else(|| anyhow::anyhow!("export needs --into DIR"))?;
+    let workspace = workspace(given.as_deref())?;
+    let held = client(port);
+    let atoms = held.atoms(&workspace)?;
+    // The accessions come from the endpoint that already answers this, rather
+    // than from a copy of the rule for what an accession looks like. Two
+    // places deciding that is two places to change it.
+    let cited = held.accessions(&workspace)?;
+
+    std::fs::create_dir_all(&into)?;
+    let mut lines = String::new();
+    for atom in &atoms {
+        lines.push_str(&serde_json::to_string(atom)?);
+        lines.push('\n');
+    }
+    let path = into.join(format!("{workspace}.jsonl"));
+    std::fs::write(&path, lines)?;
+    eprintln!("{} atoms to {}", atoms.len(), path.display());
+    for accession in cited {
+        println!("{accession}");
     }
     Ok(())
 }
