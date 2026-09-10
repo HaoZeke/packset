@@ -266,6 +266,15 @@ const ARMS: &[&str] = &[
     "m3 sparse+late",
 ];
 
+/// The diversify slot's three settings, over the arm the table above leads on.
+///
+/// The fuse slot's default was argued and then measured, and moved. The slot
+/// next to it was never measured at all, and it is not passive: maximal
+/// marginal relevance reorders the final ranking on every question, trading
+/// relevance for novelty at a fixed lambda. A default that costs recall would
+/// have been paid silently by every number in this file.
+const DIVERSIFIERS: &[&str] = &["mmr", "dpp", "none"];
+
 /// Every fusion the panel accepts, run over one pair of ballots.
 ///
 /// The published lexical-plus-dense system on this benchmark attributes its
@@ -1035,6 +1044,11 @@ fn main() -> anyhow::Result<()> {
     let mut voted: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
     let mut voted_sessions: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
     let mut protocol: Vec<Tally> = PROTOCOLS.iter().map(|_| Tally::new()).collect();
+    let diversifiers: Vec<Panel> = DIVERSIFIERS
+        .iter()
+        .map(|name| Panel::named("combsum", name, "off"))
+        .collect::<Result<_, _>>()?;
+    let mut diversified: Vec<Tally> = DIVERSIFIERS.iter().map(|_| Tally::new()).collect();
     let mut room_voted: Vec<Tally> = VOTERS.iter().map(|_| Tally::new()).collect();
     // The pair the seat actually ships, swept the same way, because a default
     // argued from a pair the seat does not use is an argument about a
@@ -1562,6 +1576,12 @@ fn main() -> anyhow::Result<()> {
                 let ranked = hit_ids(&search::merge_ballots(&room_pair, ask.limit, panel, &now));
                 room_voted[slot].add(&ranked, &rooms);
             }
+            // And the slot beside the fuse, on the same pair, fused the way
+            // the table above says is strongest.
+            for (slot, panel) in diversifiers.iter().enumerate() {
+                let ranked = hit_ids(&search::merge_ballots(&room_pair, ask.limit, panel, &now));
+                diversified[slot].add(&ranked, &rooms);
+            }
         }
     }
 
@@ -1640,6 +1660,13 @@ fn main() -> anyhow::Result<()> {
     );
     println!();
     table(VOTERS, &room_voted);
+
+    println!();
+    println!("the same pair fused by combsum, diversified three ways. The fuse");
+    println!("slot was measured and moved; this one never was, and it reorders");
+    println!("every answer:");
+    println!();
+    table(DIVERSIFIERS, &diversified);
 
     let slot = CUTOFFS.iter().position(|cut| *cut == HOP_CUT).expect("cut");
     let counted = ranking.asked.max(1) as f64;
