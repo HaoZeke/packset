@@ -196,19 +196,45 @@ baseline accounts for almost all of the 0.036 that remains.
 So the residual is a difference in the BM25 side or in the sample, not in the
 fusion. The paper does not state which subset of LoCoMo it used and the family
 runs to fifty dialogues where the public file holds ten, so that last part is
-not closable from here and is not worth tuning against.
+not closable from here.
+
+That is a statement about what can be established, not an excuse, and it has a
+consequence worth being explicit about: no parameter in this crate has been
+moved to close it. Every arm reported was run because it answered a question
+about the retriever, and the two that were tried because they might have closed
+the gap, late interaction and pseudo-relevance feedback, are reported as losses.
+A number that might not be comparable is not a target, and the way it stops
+being one is by refusing to aim at it.
 
 Of the distance that did close, from 0.203 to 0.036, three of four causes were
 defects rather than missing capability. Score fusion parsed and never ran. A
 relevance model weighted rarity twice. A voter could stop the process. The
 fourth was a unit: "session granularity" naming two protocols.
 
-What has not been tried at this scale is late interaction on the session
-protocol, which led on a three-conversation subset. It needs one vector per
-token rather than one per atom.
+Late interaction has been tried at this scale now, and it loses.
 
-Late interaction is the difference, and it is the scoring rather than the model.
-One model scored both ways, BGE-M3 over three of the conversations:
+| session granularity, ten conversations | hit@1 | nDCG@5 |
+|---|---|---|
+| session BM25 + dense (e5-large-v2), CombMNZ | **0.716** | **0.794** |
+| session BM25 + per-token (BGE-M3 int8), CombMNZ | 0.673 | 0.763 |
+| session BM25 + learned sparse (BGE-M3), Borda | 0.629 | 0.716 |
+
+On three of the ten conversations late interaction had won, so the subset
+misled, and the prediction drawn from it was wrong. What survives is the
+narrower claim the ablation actually supports: holding the model fixed, BGE-M3
+scored by its per-token vectors beats BGE-M3 scored by its pooled one, 0.559
+against 0.490. That says the scoring method is worth something. It does not say
+which arm wins when the models differ, and the distance from BGE-M3 int8 to
+e5-large-v2 is larger than the distance from cosine to max-sim.
+
+Reading a controlled comparison as a ranking is the same error as reading two
+model sizes as the shape of a curve, which this file also had to correct. The
+learned sparse weights lose to BM25 as well, 0.553 against 0.589, so the third
+representation that arrives free with the pass does not pay either.
+
+What that ablation does establish, and all it establishes, is that the scoring
+method is worth something with the model held fixed. One model scored both ways,
+BGE-M3 over three of the conversations:
 
 | arm | R@10 | session hit@1 |
 |---|---|---|
@@ -222,13 +248,19 @@ best match each query token finds anywhere in it beats pooling those tokens into
 one vector, by 0.087 R@10 and 0.065 session hit@1 alone, and by 0.052 session
 hit@1 once BM25 is fused in.
 
+That is a statement about the method and not a ranking of the arms, which is the
+distinction the table above cost. A better model pooled beats a worse model per
+token, and at ten conversations e5-large-v2 pooled does exactly that.
+
 Size is not hiding in there either: BGE-M3's pooled output at 568M parameters is
 *worse* here than bge-small's at 33M, 0.562 R@10 against 0.641.
 
 `packset-embed --late` and `search::max_sim` implement it, and nothing in the
 writer reads them. A vector per token is thirty vectors where the pooled form is
-one, so an atom's `embedding` would grow accordingly, and whether a pack can
-afford that depends on how large a pack is.
+one, so an atom's `embedding` would grow accordingly, and on this evidence the
+storage would buy nothing: the pooled vector of a better model already scores
+higher. What would settle it is the same scoring over a model the size of the
+one that wins, which is not on offer here.
 
 The stored link graph does not help a query. Given twenty places, filling the
 last ten by following the neighbours of the first ten scores 0.562 R@20 against
