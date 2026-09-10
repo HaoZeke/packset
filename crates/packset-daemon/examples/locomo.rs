@@ -1399,11 +1399,14 @@ fn main() -> anyhow::Result<()> {
             }
             // And the fusion question again, on the pair this table says is
             // strongest, because the published gain is credited to the fusion
-            // rather than to either retriever.
+            // rather than to either retriever. The lexical half is the passage
+            // ranking: the protocol table above is what says which lexical
+            // ballot to fuse, and answering the fusion question on a weaker one
+            // would credit the fusion with a gap the retriever already closed.
             let room_pair = if by_late.is_empty() {
-                vec![room_terms.clone(), by_meaning.clone()]
+                vec![passage_hits.clone(), by_meaning.clone()]
             } else {
-                vec![room_terms.clone(), by_late.clone()]
+                vec![passage_hits.clone(), by_late.clone()]
             };
             for (slot, panel) in panels.iter().enumerate() {
                 let ranked = hit_ids(&search::merge_ballots(&room_pair, ask.limit, panel, &now));
@@ -1472,9 +1475,9 @@ fn main() -> anyhow::Result<()> {
     println!(
         "{}, fused every way the panel knows:",
         if late {
-            "session bm25 + turn late"
+            "passage bm25 + turn late"
         } else {
-            "session bm25 + turn dense"
+            "passage bm25 + turn dense"
         }
     );
     println!();
