@@ -27,16 +27,18 @@ const B: f64 = 0.75;
 
 /// The floor an occurrence is worth, past which length cannot push it.
 ///
-/// BM25's length normalisation has a defect that shows up on long documents:
-/// past a length, one occurrence of a query term contributes so little that
-/// the document scores below one that does not contain the term at all. The
-/// normalisation is dividing the term's contribution toward zero while the
-/// non-occurrence sits at exactly zero, so a document is punished for being
-/// long more than it is rewarded for being relevant.
+/// BM25's length normalisation has a defect that shows up on long documents.
+/// The contribution of one occurrence is divided by the document's length, so
+/// past a length it approaches zero, which is exactly what a non-occurrence is
+/// worth. Containing the term stops being distinguishable from not containing
+/// it, and the gap between a long relevant document and a short irrelevant one
+/// closes from the wrong side.
 ///
-/// Lv and Zhai's fix is one constant: hold every occurrence above a floor, so
-/// containing a term always beats not containing it however long the document
-/// is. The value is theirs (doi:10.1145/2063576.2063584).
+/// Lv and Zhai state this as a constraint the scorer should satisfy and does
+/// not: an occurrence has to be worth some fixed amount more than an absence,
+/// whatever the length. Their fix is one constant holding every occurrence
+/// above a floor, and the value is theirs
+/// (doi:10.1145/2063576.2063584).
 const DELTA: f64 = 1.0;
 
 /// The Dirichlet prior for the query-likelihood scorer, in tokens.
@@ -491,12 +493,12 @@ mod scorers {
 
     /// The defect BM25+ exists to fix, on a corpus that shows it.
     ///
-    /// A long document containing the query term against a short one that does
-    /// not. BM25's normalisation drives the long document's single occurrence
-    /// toward zero while the document with no occurrence sits at exactly zero,
-    /// so past a length the relevant document loses to the irrelevant one.
-    /// This is not a contrived corpus: a session document is the concatenation
-    /// of dozens of turns and it is what the benchmark's leading arms index.
+    /// A long document containing the query term, in a corpus of short ones
+    /// that do not. BM25 drives its single occurrence toward zero, which is
+    /// what an absence is worth, so containing the term stops distinguishing
+    /// it. This is not a contrived corpus: a session document is the
+    /// concatenation of dozens of turns and it is what the benchmark's leading
+    /// arms index.
     #[test]
     fn a_long_document_stops_being_punished_for_its_length() {
         let filler = "alpha beta gamma delta epsilon zeta eta theta ".repeat(400);
@@ -518,7 +520,8 @@ mod scorers {
         assert_eq!(floored.len(), 1);
 
         // What changed is how much carrying it is worth. Under BM25 the length
-        // has eaten nearly all of it.
+        // has eaten nearly all of it, leaving a score that says almost the
+        // same thing as not carrying the term.
         let (_, thin) = plain[0];
         let (_, held) = floored[0];
         assert!(held > thin, "the floor took a point away: {held} vs {thin}");

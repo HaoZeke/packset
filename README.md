@@ -98,10 +98,11 @@ was the mistake. The lexical path takes a scorer:
 | query likelihood, Dirichlet | 0.637 | 0.734 |
 | BM25+ and Dirichlet fused | 0.665 | 0.751 |
 
-BM25's length normalisation over-penalizes long documents: past a length a
-document containing a query term scores below one that does not, because the
-normalisation drives the occurrence toward zero while a non-occurrence sits at
-exactly zero. Lv and Zhai's fix (DOI 10.1145/2063576.2063584) holds every
+BM25's length normalisation over-penalizes long documents. One occurrence's
+contribution is divided by the length, so past a length it approaches zero,
+which is what an absence is worth: containing the term stops distinguishing
+the document. Lv and Zhai state this as a constraint the scorer should satisfy
+and does not, and their fix (DOI 10.1145/2063576.2063584) holds every
 occurrence above a floor. It is the default, and it leads at every granularity
 measured: 0.635 hit@1 against 0.615 on turns, 0.638 against 0.633 on sessions,
 0.668 against 0.660 on passages.
