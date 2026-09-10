@@ -81,7 +81,8 @@ mod tests {
     #[tokio::test]
     async fn every_prompt_renders_from_what_it_declares() {
         let declared = PacksetServer::prompt_router().list_all();
-        let names: Vec<&str> = declared.iter().map(|p| p.name.as_str()).collect();
+        let mut names: Vec<&str> = declared.iter().map(|p| p.name.as_str()).collect();
+        names.sort_unstable();
         assert_eq!(names, ["what_does_the_seat_know"]);
         for prompt in &declared {
             assert!(

@@ -226,7 +226,9 @@ fn conversations(raw: &Value) -> Vec<Conversation> {
 /// formula, and this table is what says which.
 const PROTOCOLS: &[&str] = &[
     "turn bm25",
+    "turn bm25+",
     "session bm25",
+    "session bm25+",
     "session bm25 rm3",
     "passage bm25",
     "passage bm25+",
@@ -1387,6 +1389,12 @@ fn main() -> anyhow::Result<()> {
             // sessions, measures the depth of the ranking as if it were the
             // protocol. Every arm that collapses gets the same budget.
             let by_turn = collapse(&search::search_bm25(&deep_ask, &index));
+            // The same protocol with the floor under an occurrence, so the
+            // scorer is compared at every granularity rather than only where
+            // it was expected to help.
+            let by_turn_floored =
+                collapse(&search::search_lexical(&deep_ask, &index, Scorer::Bm25Plus));
+            let room_floored = search::search_lexical(&asking, &room_index, Scorer::Bm25Plus);
             let by_meaning = collapse(
                 &questions
                     .get(question.text.as_str())
@@ -1408,7 +1416,9 @@ fn main() -> anyhow::Result<()> {
             for (slot, arm) in PROTOCOLS.iter().enumerate() {
                 let ranked = match *arm {
                     "turn bm25" => hit_ids(&by_turn),
+                    "turn bm25+" => hit_ids(&by_turn_floored),
                     "session bm25" => hit_ids(&room_terms),
+                    "session bm25+" => hit_ids(&room_floored),
                     "session bm25 rm3" => hit_ids(&room_fed),
                     "passage bm25" => hit_ids(&passage_hits),
                     "passage bm25+" => hit_ids(&passage_floored),
@@ -1462,9 +1472,9 @@ fn main() -> anyhow::Result<()> {
             // ballot to fuse, and answering the fusion question on a weaker one
             // would credit the fusion with a gap the retriever already closed.
             let room_pair = if by_late.is_empty() {
-                vec![passage_hits.clone(), by_meaning.clone()]
+                vec![passage_floored.clone(), by_meaning.clone()]
             } else {
-                vec![passage_hits.clone(), by_late.clone()]
+                vec![passage_floored.clone(), by_late.clone()]
             };
             for (slot, panel) in panels.iter().enumerate() {
                 let ranked = hit_ids(&search::merge_ballots(&room_pair, ask.limit, panel, &now));
@@ -1533,9 +1543,9 @@ fn main() -> anyhow::Result<()> {
     println!(
         "{}, fused every way the panel knows:",
         if late {
-            "passage bm25 + turn late"
+            "passage bm25+ + turn late"
         } else {
-            "passage bm25 + turn dense"
+            "passage bm25+ + turn dense"
         }
     );
     println!();
