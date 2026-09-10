@@ -102,6 +102,44 @@ impl Encoder {
         })
     }
 
+    fn start_rerank(binary: &Path) -> Option<Self> {
+        let mut child = Command::new(binary)
+            .arg("--rerank")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let stdin = child.stdin.take()?;
+        let stdout = BufReader::new(child.stdout.take()?);
+        Some(Self {
+            child,
+            stdin,
+            stdout,
+        })
+    }
+
+    /// One question against many candidates, one score each.
+    ///
+    /// The whole pairing goes in one line because the model reads the question
+    /// and a candidate together; sending a candidate at a time would be a
+    /// round trip a candidate for no gain, and the batch is what lets the
+    /// child pack them into one forward pass.
+    fn rerank(&mut self, question: &str, candidates: &[String]) -> Option<Vec<f32>> {
+        let asked = serde_json::json!({ "id": "q", "q": question, "d": candidates });
+        let reply = self.ask_json(&asked.to_string())?;
+        let parsed: Value = serde_json::from_str(reply.trim()).ok()?;
+        let scores: Vec<f32> = parsed
+            .get("s")?
+            .as_array()?
+            .iter()
+            .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+            .collect();
+        // A short answer is a mismatch between what was asked and what came
+        // back, and padding it would silently score the tail as zero.
+        (scores.len() == candidates.len()).then_some(scores)
+    }
+
     fn start_late(binary: &Path) -> Option<Self> {
         let mut child = Command::new(binary)
             .arg("--late")
@@ -173,6 +211,11 @@ impl Encoder {
     /// Write one request and read its one-line reply.
     fn ask(&mut self, text: &str) -> Option<String> {
         let line = json!({ "id": "0", "text": text });
+        self.ask_json(&line.to_string())
+    }
+
+    /// One line written, one line read back.
+    fn ask_json(&mut self, line: &str) -> Option<String> {
         writeln!(self.stdin, "{line}").ok()?;
         self.stdin.flush().ok()?;
         let mut reply = String::new();
@@ -288,6 +331,55 @@ pub fn encode_late(text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>, Sparse)> {
         let running = held.as_mut()?;
         if let Some(both) = running.encode_tokens(text) {
             return Some(both);
+        }
+        *held = None;
+        if attempt == 1 {
+            return None;
+        }
+    }
+    None
+}
+
+/// The kept cross-encoder, a fourth child.
+fn rerank_slot() -> &'static Slot {
+    static RERANK: OnceLock<Slot> = OnceLock::new();
+    RERANK.get_or_init(|| Mutex::new(None))
+}
+
+/// Score every candidate against the question, reading the pair together.
+///
+/// This is the second stage the first-stage scorers cannot be. Every other
+/// path here embeds a text without the question, so what it compares is two
+/// vectors made in ignorance of each other; a cross-encoder reads the pair in
+/// one forward pass and can answer whether this text answers this question
+/// rather than whether the two are about the same subject
+/// (doi:10.48550/arXiv.1901.04085).
+///
+/// The cost is the reason it is a stage and not a scorer. A bi-encoder embeds
+/// a corpus once and answers every question from the stored vectors; this runs
+/// a forward pass per candidate per question, so it is run over the top of a
+/// ranking that has already thrown most of the corpus away.
+///
+/// Scores come back in the caller's order, unsorted, because what the panel
+/// wants is a ballot rather than a decision.
+#[must_use]
+pub fn rerank(question: &str, candidates: &[String]) -> Option<Vec<f32>> {
+    if question.trim().is_empty() {
+        return None;
+    }
+    // Nothing to score is not a failure, and it must not cost a model call.
+    if candidates.is_empty() {
+        return Some(Vec::new());
+    }
+    let binary = binary()?;
+    let mut held = rerank_slot().lock().ok()?;
+    for attempt in 0..2 {
+        if held.as_mut().is_none_or(|running| !running.alive()) {
+            *held = Encoder::start_rerank(&binary);
+        }
+        let running = held.as_mut()?;
+        if let Some(scores) = running.rerank(question, candidates) {
+            return Some(scores);
         }
         *held = None;
         if attempt == 1 {
