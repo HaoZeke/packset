@@ -28,6 +28,57 @@ pub type Record = Map<String, Value>;
 
 /// Lowercase tokens with the stopwords dropped.
 #[must_use]
+/// Whether the lexical path folds a word to its stem.
+///
+/// On by default, because a lexical retriever that does not stem is one that
+/// misses a question asking about a wedding on a text that says weddings, and
+/// every serious implementation of this scorer stems. `PACKSET_STEM=off` turns
+/// it back off for a corpus where the trade goes the other way.
+///
+/// It is a trade. Stemming buys recall by conflating forms, and a pack holds
+/// short written claims where two atoms may differ deliberately in a way a
+/// stemmer erases. The default is measured rather than assumed; see the
+/// retrieval section of the README for which way it went and on what.
+fn stemming() -> bool {
+    !matches!(
+        std::env::var("PACKSET_STEM")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "off" | "0" | "no" | "false"
+    )
+}
+
+/// The stemmer, built once. Snowball's English, which is Porter's suffix
+/// stripping as its author later revised it (doi:10.1108/eb046814).
+fn stemmer() -> &'static rust_stemmers::Stemmer {
+    static ENGLISH: std::sync::OnceLock<rust_stemmers::Stemmer> = std::sync::OnceLock::new();
+    ENGLISH.get_or_init(|| rust_stemmers::Stemmer::create(rust_stemmers::Algorithm::English))
+}
+
+/// Fold one token to the form the index and the query agree on.
+///
+/// Applied to both sides or neither: a stemmed index searched with unstemmed
+/// terms matches less than no stemming at all, which is the way this is
+/// usually got wrong.
+#[must_use]
+pub fn fold(token: &str) -> String {
+    if !stemming() {
+        return token.to_string();
+    }
+    // A token carrying a digit or a hyphen is an identifier, a version or an
+    // accession rather than a word, and suffix stripping on one of those turns
+    // two distinct names into one.
+    if token
+        .bytes()
+        .any(|b| b.is_ascii_digit() || b == b'-' || b == b'_')
+    {
+        return token.to_string();
+    }
+    stemmer().stem(token).into_owned()
+}
+
 pub fn tokens(text: &str) -> Vec<String> {
     let lower = text.to_ascii_lowercase();
     let bytes = lower.as_bytes();
@@ -43,8 +94,10 @@ pub fn tokens(text: &str) -> Vec<String> {
                 i += 1;
             }
             let token = &lower[start..i];
+            // Stopwords are dropped before folding, because the list is of
+            // words as written and a stemmer would not leave them matching it.
             if !STOP.contains(&token) {
-                out.push(token.to_string());
+                out.push(fold(token));
             }
         } else {
             i += 1;
@@ -674,6 +727,46 @@ mod tests {
     /// A hit with a key and a score, for the fusion tests.
     fn scored(id: &str, score: f64) -> Value {
         json!({ "field": "atom", "id": id, "text": id, "score": score })
+    }
+
+    /// A question about a wedding finds a text that says weddings, which is
+    /// the whole reason a lexical retriever stems.
+    #[test]
+    fn a_question_finds_the_other_form_of_the_word() {
+        let asked = tokens("what did she say about the wedding");
+        let said = tokens("we talked about weddings and rings");
+        assert!(
+            asked.iter().any(|t| said.contains(t)),
+            "{asked:?} shares nothing with {said:?}"
+        );
+    }
+
+    /// Both sides fold or neither. A stemmed index searched with unstemmed
+    /// terms matches less than no stemming at all, and that is the usual way
+    /// this is got wrong.
+    #[test]
+    fn the_index_and_the_query_fold_the_same_way() {
+        let index = atom_tokens(
+            json!({ "text": "the parser reads manifests", "kind": "conclusion" })
+                .as_object()
+                .expect("object"),
+        );
+        for term in tokens("which manifest does the parser read") {
+            if term == "manifest" || term == "parser" || term == "read" {
+                assert!(index.contains(&term), "{term} is not in {index:?}");
+            }
+        }
+    }
+
+    /// A stemmer is for words. An accession, a version or an identifier is a
+    /// name, and stripping a suffix off one merges two distinct things.
+    #[test]
+    fn a_name_is_not_stemmed() {
+        for name in ["deed-patch-notes", "sha256:abc", "v0_9_3", "utf8"] {
+            for token in tokens(name) {
+                assert_eq!(fold(&token), token, "{name} was folded through {token}");
+            }
+        }
     }
 
     /// Only the terms both sides carry count, and the pass depends on both
