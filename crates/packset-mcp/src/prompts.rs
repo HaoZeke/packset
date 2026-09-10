@@ -41,7 +41,7 @@ impl PacksetServer {
         let question = args.question;
         if question.trim().is_empty() {
             return Err(McpError::invalid_params(
-                "a question with no words in it ranks the pack by nothing".into(),
+                "a question with no words in it ranks the pack by nothing",
                 None,
             ));
         }
