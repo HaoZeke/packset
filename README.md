@@ -221,6 +221,27 @@ the table as "diversity does not help" reads it past what it measures.
 `PACKSET_DIVERSIFY` picks between them; DPP is greedy MAP over a
 quality-diversity kernel (DOI 10.1561/2200000044).
 
+### A second stage
+
+Every arm above is first-stage retrieval. A cross-encoder that reads the
+question and a candidate together is the standard second stage (monoBERT, DOI
+10.48550/arXiv.1901.04085), and `packset-embed --rerank` runs one.
+`PACKSET_LOCOMO_RERANK=1` reorders the top 20 of the fused list with it:
+
+| over passage BM25+ + dense, Borda | hit@1 | hit@5 | nDCG@5 |
+|---|---|---|---|
+| first stage | 0.711 | 0.922 | 0.794 |
+| reranked, bge-reranker-base | 0.730 | 0.913 | 0.797 |
+| first stage, CombSUM instead of Borda | **0.732** | **0.933** | **0.809** |
+
+It is worth 1.9 points of hit@1 over the list it reorders and costs hit@5 and
+hit@10, which is a reranker promoting one answer and pushing others below the
+cut. Against the free change, it loses: score-level fusion with no model
+reaches the same hit@1 and beats it everywhere else. The run took three hours
+of CPU at eight cores for 1536 questions, a forward pass per candidate per
+question. The stage is in the binary and off by default, and it is not what
+the residual to the published number is made of.
+
 ## What did not work
 
 Pseudo-relevance feedback, and the way it fails is the useful part.
