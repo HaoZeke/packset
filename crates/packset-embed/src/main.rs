@@ -217,7 +217,7 @@ fn load(choice: &Choice) -> anyhow::Result<TextEmbedding> {
                 tokenizer_config_file: read("tokenizer_config.json")?,
             };
             let model = UserDefinedEmbeddingModel::new(read("onnx/model.onnx")?, files)
-                .with_pooling(*pooling);
+                .with_pooling(pooling.clone());
             Ok(TextEmbedding::try_new_from_user_defined(
                 model,
                 InitOptionsUserDefined::default(),
