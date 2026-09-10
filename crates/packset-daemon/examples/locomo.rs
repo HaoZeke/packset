@@ -318,6 +318,87 @@ fn write_rows(path: &std::path::Path, rows: &[Vec<f32>]) {
     }
 }
 
+/// The same, one level deeper: a group of rows per item.
+///
+/// Late interaction is a vector per token, so an atom is a group and the
+/// corpus is a list of groups. Written with both counts so a truncated file
+/// fails its count check rather than scoring against half an atom.
+fn write_groups(path: &std::path::Path, groups: &[Vec<Vec<f32>>]) {
+    if groups.is_empty() || groups.iter().any(Vec::is_empty) {
+        return;
+    }
+    let mut bytes: Vec<u8> = Vec::new();
+    bytes.extend_from_slice(&(groups.len() as u32).to_le_bytes());
+    for group in groups {
+        bytes.extend_from_slice(&(group.len() as u32).to_le_bytes());
+        for row in group {
+            bytes.extend_from_slice(&(row.len() as u32).to_le_bytes());
+            for value in row {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
+    let temporary = path.with_extension("part");
+    if std::fs::write(&temporary, &bytes).is_ok() {
+        let _ = std::fs::rename(&temporary, path);
+    }
+}
+
+fn read_groups(path: &std::path::Path, expected: usize) -> Option<Vec<Vec<Vec<f32>>>> {
+    let bytes = std::fs::read(path).ok()?;
+    let mut at = 0usize;
+    let mut take = |width: usize| -> Option<&[u8]> {
+        let slice = bytes.get(at..at + width)?;
+        at += width;
+        Some(slice)
+    };
+    let count = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+    if count != expected {
+        return None;
+    }
+    let mut groups = Vec::with_capacity(count);
+    for _ in 0..count {
+        let tokens = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+        let mut group = Vec::with_capacity(tokens);
+        for _ in 0..tokens {
+            let width = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+            let raw = take(width * 4)?;
+            group.push(
+                raw.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .copied()
+                    .map(f32::from_le_bytes)
+                    .collect(),
+            );
+        }
+        groups.push(group);
+    }
+    Some(groups)
+}
+
+/// Learned term weights as one row: index, weight, index, weight.
+///
+/// An index is an integer and a weight is not, and both fit a f32 exactly at
+/// the sizes a vocabulary reaches, so the pair travels in the format the other
+/// two already use rather than earning a third one.
+fn flatten_sparse(sparse: &packset_daemon::embed::Sparse) -> Vec<f32> {
+    let mut out = Vec::with_capacity(sparse.len() * 2);
+    for (index, weight) in sparse {
+        out.push(*index as f32);
+        out.push(*weight);
+    }
+    out
+}
+
+fn unflatten_sparse(row: Vec<f32>) -> packset_daemon::embed::Sparse {
+    row.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| (pair[0] as u32, pair[1]))
+        .collect()
+}
+
 fn read_rows(path: &std::path::Path, expected: usize) -> Option<Vec<Vec<f32>>> {
     let bytes = std::fs::read(path).ok()?;
     let mut at = 0usize;
@@ -954,13 +1035,54 @@ fn main() -> anyhow::Result<()> {
         let mut m3_atoms: Vec<Vec<f32>> = Vec::new();
         let mut sparse_atoms: Vec<packset_daemon::embed::Sparse> = Vec::new();
         if late {
-            for atom in &conversation.atoms {
-                let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
-                let (tokens, pooled, weights) =
-                    packset_daemon::embed::encode_late(text).unwrap_or_default();
-                late_atoms.push(tokens);
-                m3_atoms.push(pooled);
-                sparse_atoms.push(weights);
+            // Cached like the pooled vectors, and for a stronger reason: the
+            // per-token encode is what made a ten-conversation run take longer
+            // than this builder lets a job live, so the arm was never measured
+            // at that size. Three files because the three forms come out of
+            // one pass and a caller wants them together.
+            let held = cache_dir();
+            let (tokens_file, pooled_file, sparse_file) = match held.as_ref() {
+                Some(dir) => (
+                    Some(dir.join(format!("m3-tokens-{nth}.vec"))),
+                    Some(dir.join(format!("m3-pooled-{nth}.vec"))),
+                    Some(dir.join(format!("m3-sparse-{nth}.vec"))),
+                ),
+                None => (None, None, None),
+            };
+            let count = conversation.atoms.len();
+            let cached = tokens_file
+                .as_deref()
+                .and_then(|path| read_groups(path, count))
+                .zip(pooled_file.as_deref().and_then(|p| read_rows(p, count)))
+                .zip(sparse_file.as_deref().and_then(|p| read_rows(p, count)));
+            match cached {
+                Some(((tokens, pooled), weights)) => {
+                    late_atoms = tokens;
+                    m3_atoms = pooled;
+                    // Sparse round-trips as pairs flattened into one row, so
+                    // it rides the same format the others use.
+                    sparse_atoms = weights.into_iter().map(unflatten_sparse).collect();
+                }
+                None => {
+                    for atom in &conversation.atoms {
+                        let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
+                        let (tokens, pooled, weights) =
+                            packset_daemon::embed::encode_late(text).unwrap_or_default();
+                        late_atoms.push(tokens);
+                        m3_atoms.push(pooled);
+                        sparse_atoms.push(weights);
+                    }
+                    if let Some(path) = tokens_file.as_deref() {
+                        write_groups(path, &late_atoms);
+                    }
+                    if let Some(path) = pooled_file.as_deref() {
+                        write_rows(path, &m3_atoms);
+                    }
+                    if let Some(path) = sparse_file.as_deref() {
+                        let flat: Vec<Vec<f32>> = sparse_atoms.iter().map(flatten_sparse).collect();
+                        write_rows(path, &flat);
+                    }
+                }
             }
             for question in &conversation.questions {
                 if late_questions.contains_key(question.text.as_str()) {
