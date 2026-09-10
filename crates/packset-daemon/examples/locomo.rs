@@ -1580,7 +1580,15 @@ fn main() -> anyhow::Result<()> {
 
     println!();
     println!("the same rankings read as sessions, which is the unit the");
-    println!("retrieval papers on this benchmark score:");
+    println!("retrieval papers on this benchmark score.");
+    println!();
+    println!(
+        "read off the arms above, so off a ranking cut at {} turns: the top",
+        CUTOFFS[CUTOFFS.len() - 1]
+    );
+    println!("turns cluster in a few rooms, so these arms answer with fewer");
+    println!("sessions than they were asked for. Not comparable with the protocol");
+    println!("table below, which gives every collapsing arm the depth to fill:");
     println!();
     table(ARMS, &by_session);
 
