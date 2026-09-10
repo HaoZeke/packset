@@ -297,7 +297,8 @@ The best arm measured here, against the best published on this benchmark:
 | session BM25, stemmed | 0.633 | 0.735 |
 | passage BM25+ | 0.668 | 0.753 |
 | session BM25 + dense, CombMNZ | 0.722 | 0.802 |
-| passage BM25+ + dense, CombSUM | **0.732** | **0.809** |
+| passage BM25+ + dense (multilingual-e5-large), CombSUM | 0.732 | 0.809 |
+| passage BM25+ + dense (e5-large-v2), CombSUM | **0.736** | **0.812** |
 | published, BM25 + e5-large-v2 | 0.752 | 0.829 |
 
 Same ten conversations, same 1536 questions, and every method here is
@@ -307,8 +308,52 @@ which the model runtime does not carry. They are different models with
 different training data and the multilingual one scores lower on English
 retrieval. Every row above that says "dense" was measured with the multilingual
 one, and this table said "e5-large-v2" for it until that was checked. The
-English model is now loadable from files as `e5-large-v2` and the comparison
-against the paper is made with it below.
+English model is now loadable from files as `e5-large-v2`, and with it the
+best arm is 0.736 hit@1 and 0.812 nDCG@5: the encoder accounted for 0.004 of
+the residual, not the residual. The remaining 0.016 hit@1 is the sample or
+the BM25 side, as the section below says.
+
+### Which encoder, and whether it has to be dense
+
+Three more encoders were in the binary and never measured, and the learned
+sparse verdict had been drawn from BGE-M3's side output rather than from a
+sparse model. On ten conversations, turn level, alone:
+
+| ballot | hit@1 | nDCG@5 |
+|---|---|---|
+| BM25+ | 0.635 | 0.733 |
+| **SPLADE++**, learned sparse (`--sparse`) | **0.637** | **0.742** |
+| dense, e5-large-v2 | 0.667 | 0.765 |
+| dense, multilingual-e5-large | 0.653 | 0.753 |
+| dense, mxbai-embed-large-v1 | 0.562 | 0.689 |
+| dense, gte-large-en-v1.5 | 0.477 | 0.607 |
+| BGE-M3 sparse head | 0.553 | |
+
+And as the second ballot beside passage BM25+, Borda:
+
+| pair | hit@1 | nDCG@5 |
+|---|---|---|
+| + dense, e5-large-v2 | 0.711 | 0.794 |
+| + **SPLADE++** | **0.714** | 0.787 |
+| + passage dense, e5-large-v2 | 0.709 | 0.791 |
+
+Two things follow. The learned-sparse verdict was wrong about the method and
+right about the model: SPLADE++ (DOI 10.1145/3404835.3463098) is a peer of
+BM25+ on its own and matches a 335M dense encoder as a fusion partner, from a
+110M model whose output lives in an inverted index with no vector store. That
+is the cheaper answer for a seat, and it is what a pack without a dense
+projection should run.
+
+And the passage protocol is a lexical gain, not a dense one: embedding the six
+turn windows scores no better than embedding turns, and fusing passage dense
+loses to fusing turn dense. The encoder already reads a turn as a whole; the
+window helps a scorer that counts words.
+
+gte-large and mxbai-large lose by a distance the leaderboards do not predict.
+The runtime's gte-large is a fixed-shape ONNX export of a model whose
+reference needs custom code and an 8192 context, so whether that row measures
+the model or the export is not settled here; mxbai carries the query
+instruction its card asks for. Reported as measured, since both were run.
 
 The gain reproduces almost exactly. That paper reports +11.2 points over BM25
 alone, and fusing dense into session BM25 here is worth +8.9, of which CombMNZ

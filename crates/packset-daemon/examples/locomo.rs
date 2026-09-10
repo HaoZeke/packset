@@ -1039,6 +1039,12 @@ fn table(names: &[&str], tallies: &[Tally]) {
     println!("{}", "-".repeat(32 + CUTOFFS.len() * 20));
     for (slot, name) in names.iter().enumerate() {
         let tally = &tallies[slot];
+        // An arm that was switched off was asked nothing, and a row of zeros
+        // reads as a method that found nothing rather than one that did not
+        // run.
+        if tally.asked == 0 {
+            continue;
+        }
         let counted = tally.asked.max(1) as f64;
         print!("{name:<22}");
         for value in &tally.recall {
