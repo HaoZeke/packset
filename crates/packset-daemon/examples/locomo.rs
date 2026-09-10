@@ -1226,6 +1226,12 @@ fn main() -> anyhow::Result<()> {
                 set: None,
                 now: &now,
             };
+            // The depth every arm that collapses a ranking into sessions is
+            // given, so what the protocol table compares is protocols.
+            let deep_ask = Ask {
+                limit: ask.limit * WINDOW,
+                ..ask
+            };
             let lexical = search::search_linear(&ask);
             let terms = search::search_bm25(&ask, &index);
             let fed = search::search_bm25_expanded(&ask, &index, &documents);
@@ -1348,21 +1354,42 @@ fn main() -> anyhow::Result<()> {
             let room_fed = search::search_bm25_expanded(&asking, &room_index, &room_documents);
             // A window ranking is longer than a session ranking, because one
             // session contributes several windows and only its best survives
-            // the collapse. Retrieving the limit would leave fewer sessions
-            // than the other arms are asked for, so the ranking is taken deep
-            // enough that the collapse can still fill it.
+            // the collapse.
             let passage_ask = Ask {
                 atoms: &passage_corpus,
-                limit: ask.limit * WINDOW,
-                ..ask
+                ..deep_ask
             };
             let mut passage_hits =
                 collapse_windows(&search::search_bm25(&passage_ask, &passage_index));
             passage_hits.truncate(ask.limit);
-            let by_turn = collapse(&terms);
-            let by_meaning = collapse(&meaning);
-            let by_late = collapse(&interaction);
-            let by_sparse = collapse(&m3_sparse);
+            // Read as sessions, from a ranking taken deep enough that the
+            // collapse can still fill the deepest cut-off.
+            //
+            // A session ranking read off twenty turns is not twenty sessions:
+            // the top turns cluster in a handful of rooms, so the arm is asked
+            // for twenty and answers with fewer. Comparing that against a
+            // corpus of session documents, where twenty hits are twenty
+            // sessions, measures the depth of the ranking as if it were the
+            // protocol. Every arm that collapses gets the same budget.
+            let by_turn = collapse(&search::search_bm25(&deep_ask, &index));
+            let by_meaning = collapse(
+                &questions
+                    .get(question.text.as_str())
+                    .map(|vector| search::search_dense(&deep_ask, vector))
+                    .unwrap_or_default(),
+            );
+            let by_late = collapse(
+                &late_questions
+                    .get(question.text.as_str())
+                    .map(|tokens| rank_late(&deep_ask, tokens, &late_atoms))
+                    .unwrap_or_default(),
+            );
+            let by_sparse = collapse(
+                &sparse_questions
+                    .get(question.text.as_str())
+                    .map(|weights| rank_sparse(&deep_ask, weights, &sparse_atoms))
+                    .unwrap_or_default(),
+            );
             for (slot, arm) in PROTOCOLS.iter().enumerate() {
                 let ranked = match *arm {
                     "turn bm25" => hit_ids(&by_turn),
