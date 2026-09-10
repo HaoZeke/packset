@@ -26,7 +26,8 @@
 use std::io::{BufRead, Write};
 
 use fastembed::{
-    Bgem3Embedding, Bgem3InitOptions, Bgem3Model, EmbeddingModel, TextEmbedding, TextInitOptions,
+    Bgem3Embedding, Bgem3InitOptions, Bgem3Model, EmbeddingModel, RerankInitOptions, RerankerModel,
+    TextEmbedding, TextInitOptions, TextRerank,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +43,28 @@ struct Item {
 struct Vector {
     id: String,
     v: Vec<f32>,
+}
+
+/// A question and the candidates to put it against.
+#[derive(Deserialize)]
+struct Pairing {
+    id: String,
+    /// What was asked.
+    q: String,
+    /// The candidate texts, in the order the first stage returned them.
+    d: Vec<String>,
+}
+
+/// What the cross-encoder made of them.
+///
+/// Scores in the caller's order rather than a reordered list, so the caller
+/// keeps the mapping from candidate to atom it already had. Reordering here
+/// would hand back a permutation of texts and make the caller match strings
+/// back to ids.
+#[derive(Serialize)]
+struct Scored {
+    id: String,
+    s: Vec<f32>,
 }
 
 /// One thing encoded both ways, from one pass.
@@ -117,10 +140,12 @@ const KNOWN: &str = "bge-small, bge-base, bge-large, e5-base, e5-large, gte-larg
 fn main() -> anyhow::Result<()> {
     let mut query = false;
     let mut late = false;
+    let mut rerank = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--query" | "-q" => query = true,
             "--late" => late = true,
+            "--rerank" => rerank = true,
             "-V" | "--version" => {
                 println!("packset-embed {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
@@ -135,6 +160,9 @@ fn main() -> anyhow::Result<()> {
 
     // Named so a seat can put the weights where its policy allows, and so a
     // build machine and a run machine can share one copy.
+    if rerank {
+        return cross_encode();
+    }
     if late {
         return late_interaction(query);
     }
@@ -245,13 +273,86 @@ fn late_interaction(query: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The cross-encoder that reads a question and a candidate together.
+///
+/// Every other path here is a bi-encoder: a text is embedded once, without the
+/// question, and the score is a geometry between two vectors made in ignorance
+/// of each other. That is what makes a first stage cheap, and it is also its
+/// ceiling. A cross-encoder reads the pair in one forward pass, so it can
+/// answer whether this text answers this question rather than whether the two
+/// are about the same subject.
+///
+/// The cost is the other half of the trade and it is not small: a bi-encoder
+/// embeds a corpus once and answers every question from the stored vectors,
+/// where this runs a forward pass per candidate per question. That is why it
+/// is a second stage over the top of a ranking rather than a scorer over a
+/// pack, and why a seat that turns it on is buying accuracy with latency.
+///
+/// Nogueira and Cho (doi:10.48550/arXiv.1901.04085) is the result this is;
+/// monoT5 (doi:10.18653/v1/2020.findings-emnlp.63) is the same structure with
+/// a sequence-to-sequence model.
+fn cross_encode() -> anyhow::Result<()> {
+    let name = std::env::var("PACKSET_RERANK_MODEL").unwrap_or_default();
+    let model = match name.trim() {
+        "bge-reranker-base" | "" => RerankerModel::BGERerankerBase,
+        "bge-reranker-v2-m3" => RerankerModel::BGERerankerV2M3,
+        "jina-turbo" => RerankerModel::JINARerankerV1TurboEn,
+        "jina-v2" => RerankerModel::JINARerankerV2BaseMultiligual,
+        other => anyhow::bail!("unknown reranker `{other}`; known: {RERANKERS}"),
+    };
+    let mut options = RerankInitOptions::new(model).with_show_download_progress(false);
+    if let Some(dir) = std::env::var_os("PACKSET_EMBED_CACHE") {
+        options = options.with_cache_dir(std::path::PathBuf::from(dir));
+    }
+    let mut reranker = TextRerank::try_new(options)?;
+
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout().lock();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let pairing: Pairing = serde_json::from_str(&line)?;
+        // An empty candidate list is a question the first stage answered with
+        // nothing, which is not an error and must not cost a model call.
+        let mut scores = vec![0.0f32; pairing.d.len()];
+        if !pairing.d.is_empty() {
+            let texts: Vec<&str> = pairing.d.iter().map(String::as_str).collect();
+            for result in reranker.rerank(pairing.q.as_str(), &texts, false, None)? {
+                if let Some(slot) = scores.get_mut(result.index) {
+                    *slot = result.score;
+                }
+            }
+        }
+        writeln!(
+            out,
+            "{}",
+            serde_json::to_string(&Scored {
+                id: pairing.id,
+                s: scores
+            })?
+        )?;
+        out.flush()?;
+    }
+    Ok(())
+}
+
+/// Every reranker [`cross_encode`] answers to, for the error that lists them.
+const RERANKERS: &str = "bge-reranker-base, bge-reranker-v2-m3, jina-turbo, jina-v2";
+
 const USAGE: &str = "packset-embed: text in, vectors out\n\
     \n\
     reads JSON lines {\"id\",\"text\"} and writes {\"id\",\"v\"}\n\
     \n\
         --query   encode as a question rather than a document\n\
         --late    a vector per token, for late interaction (BGE-M3)\n\
+        --rerank  a cross-encoder second stage: reads {\"id\",\"q\",\"d\":[..]}\n\
+                  and writes {\"id\",\"s\":[..]}, one score a candidate in the\n\
+                  order given\n\
     \n\
         PACKSET_EMBED_CACHE   where the weights live\n\
         PACKSET_EMBED_MODEL   bge-small (default), bge-base, bge-large,\n\
-                              e5-base, e5-large, gte-large, mxbai-large";
+                              e5-base, e5-large, gte-large, mxbai-large\n\
+        PACKSET_RERANK_MODEL  bge-reranker-base (default), bge-reranker-v2-m3,\n\
+                              jina-turbo, jina-v2";
