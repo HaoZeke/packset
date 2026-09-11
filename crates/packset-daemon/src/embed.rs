@@ -415,6 +415,37 @@ pub fn encode_sparse(text: &str) -> Option<Sparse> {
     None
 }
 
+/// How deep the second stage reads.
+///
+/// Reranking the whole first-stage ranking would cost the whole ranking, and
+/// the point of a two-stage system is that the second one reads few. Twenty is
+/// the deepest cut-off the LoCoMo arm scores, so every rank that table reports
+/// is inside the window and nothing below it can be promoted into view.
+pub const RERANK_DEPTH: usize = 20;
+
+/// Whether the seat asked the second stage to run on every search.
+///
+/// Off by default. The stage is a forward pass per candidate per question,
+/// measured on LoCoMo at three hours of CPU at eight cores for 1536 questions
+/// over the top [`RERANK_DEPTH`]. `PACKSET_RERANK=1` turns it on; a request
+/// can also set `?rerank=1` without changing the host default.
+#[must_use]
+pub fn wanted() -> bool {
+    std::env::var("PACKSET_RERANK")
+        .ok()
+        .is_some_and(|v| flag_on(&v))
+}
+
+/// The spellings that turn the second stage on.
+///
+/// Empty, unset, and the usual words for no are off. Anything else is on,
+/// matching the LoCoMo knob so a seat that already sets `1` or `on` gets
+/// the same stage live that it measured.
+fn flag_on(raw: &str) -> bool {
+    let v = raw.trim().to_ascii_lowercase();
+    !v.is_empty() && !matches!(v.as_str(), "0" | "off" | "no" | "false")
+}
+
 /// The kept cross-encoder, a fourth child.
 fn rerank_slot() -> &'static Slot {
     static RERANK: OnceLock<Slot> = OnceLock::new();
@@ -469,9 +500,74 @@ pub fn rerank(question: &str, candidates: &[String]) -> Option<Vec<f32>> {
     None
 }
 
+/// Reorder the top of a ranking by what a cross-encoder makes of it.
+///
+/// The same stage the LoCoMo arm measures, and the same one `/v1/search`
+/// runs when asked. Only the head is rescored and the tail keeps its
+/// first-stage order. `None` when the reranker is absent or broken; the
+/// caller keeps the ranking it had. An empty ranking is `Some` of that
+/// ranking: nothing to score is not a failure.
+#[must_use]
+pub fn rerank_hits(question: &str, hits: &[Value]) -> Option<Vec<Value>> {
+    if hits.is_empty() {
+        return Some(Vec::new());
+    }
+    let depth = RERANK_DEPTH.min(hits.len());
+    let candidates: Vec<String> = hits[..depth]
+        .iter()
+        .map(|hit| {
+            hit.get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    let scores = rerank(question, &candidates)?;
+    Some(apply_scores(hits, &scores))
+}
+
+/// Apply model scores to the head of a ranking, leaving the tail alone.
+fn apply_scores(hits: &[Value], scores: &[f32]) -> Vec<Value> {
+    let depth = scores.len().min(hits.len());
+    let mut head: Vec<(f32, Value)> = scores[..depth]
+        .iter()
+        .copied()
+        .zip(hits[..depth].iter().cloned())
+        .collect();
+    // Descending by the model's score, and stable on ties so the first stage
+    // breaks them rather than a sort order nobody chose.
+    head.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut out: Vec<Value> = head.into_iter().map(|(_, hit)| hit).collect();
+    out.extend_from_slice(&hits[depth..]);
+    out
+}
+
+impl Drop for Encoder {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+pub fn reset_for_test() {
+    for slot in [
+        slot(true),
+        slot(false),
+        rerank_slot(),
+        late_slot(),
+        sparse_slot(),
+    ] {
+        if let Ok(mut held) = slot.lock() {
+            *held = None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_path_that_is_not_a_program_is_not_an_encoder() {
@@ -495,10 +591,43 @@ mod tests {
     #[test]
     fn nothing_to_rerank_is_an_empty_ballot_and_not_a_failure() {
         assert_eq!(rerank("which search tool", &[]), Some(Vec::new()));
+        assert_eq!(rerank_hits("which search tool", &[]), Some(Vec::new()));
         // An empty question is refused before any child is started, the same
         // way an empty text is never sent to an encoder.
         assert!(rerank("", &["a candidate".to_string()]).is_none());
         assert!(rerank("   ", &["a candidate".to_string()]).is_none());
+    }
+
+    /// Off unless the host names a truthy value. The empty string and the
+    /// usual spellings of no are the default, because the stage is not free.
+    #[test]
+    fn the_second_stage_is_off_unless_the_host_asks() {
+        for off in ["", "0", "off", "no", "false", "OFF", "  off  "] {
+            assert!(!flag_on(off), "{off}");
+        }
+        for on in ["1", "on", "true", "yes", "ON"] {
+            assert!(flag_on(on), "{on}");
+        }
+    }
+
+    /// The model decides the head and the first stage keeps the tail.
+    #[test]
+    fn the_second_stage_reorders_only_the_head() {
+        let hits = vec![
+            json!({"id": "a", "text": "first"}),
+            json!({"id": "b", "text": "second"}),
+            json!({"id": "c", "text": "third"}),
+        ];
+        let out = apply_scores(&hits, &[0.1, 0.9]);
+        assert_eq!(out[0]["id"], json!("b"));
+        assert_eq!(out[1]["id"], json!("a"));
+        assert_eq!(out[2]["id"], json!("c"));
+        // A tie keeps the first-stage order.
+        let tied = apply_scores(&hits, &[0.5, 0.5, 0.5]);
+        assert_eq!(
+            tied.iter().map(|h| h["id"].clone()).collect::<Vec<_>>(),
+            vec![json!("a"), json!("b"), json!("c")]
+        );
     }
 
     /// A reply that scores fewer candidates than were asked about is refused.

@@ -239,8 +239,10 @@ hit@10, which is a reranker promoting one answer and pushing others below the
 cut. Against the free change, it loses: score-level fusion with no model
 reaches the same hit@1 and beats it everywhere else. The run took three hours
 of CPU at eight cores for 1536 questions, a forward pass per candidate per
-question. The stage is in the binary and off by default, and it is not what
-the residual to the published number is made of.
+question. The same stage is on `/v1/search`, off by default: `PACKSET_RERANK=1`
+on the writer, or `?rerank=1` on one request, reorders the top 20 of the fused
+list the way the table measured. The locomo cost is why it stays off. It is
+not what the residual to the published number is made of.
 
 ## What did not work
 

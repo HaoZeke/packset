@@ -31,7 +31,9 @@
 //! Four knobs, all off by default and all about what a run costs:
 //! `PACKSET_LOCOMO_RERANK` adds the cross-encoder second stage, which is the
 //! one arm here that is not free: it runs a forward pass per candidate per
-//! question where every other arm answers from what it stored.
+//! question where every other arm answers from what it stored. The same
+//! stage is on `/v1/search` via `PACKSET_RERANK` or `?rerank=1`, also off
+//! by default. The report prints what the stage cost when it ran.
 //!
 //! `PACKSET_LOCOMO_LATE` adds the per-token arms, `PACKSET_LOCOMO_WALK` adds
 //! the restart walk over the link graph, `PACKSET_LOCOMO_CONVERSATIONS` scores
@@ -523,52 +525,14 @@ fn rerank_wanted() -> bool {
     std::env::var("PACKSET_LOCOMO_RERANK").is_ok_and(|v| !v.is_empty() && v != "0")
 }
 
-/// How deep the second stage reads.
+/// Reorder the top of a ranking by the same stage `/v1/search` runs.
 ///
-/// Reranking the whole first-stage ranking would cost the whole ranking, and
-/// the point of a two-stage system is that the second one reads few. Twenty is
-/// the deepest cut-off reported, so every rank this table scores is inside the
-/// window and nothing below it can be promoted into view.
-const RERANK_DEPTH: usize = 20;
-
-/// Reorder the top of a ranking by what a cross-encoder makes of it.
-///
-/// A different thing from the panel's own reranking, which diversifies a
-/// ranking it already has by maximal marginal relevance. That one drops
-/// redundancy; this one asks a model whether a candidate answers the question,
-/// which is the judgement no first-stage scorer is able to make.
-///
-/// Only the head is rescored and the tail keeps its first-stage order, which
-/// is what a second stage is: the first one decides what is worth reading and
-/// the second decides the order of those. The scores are the model's own, so
-/// they are not comparable with the first stage's and nothing tries to fuse
-/// the two here; the arm is the reranked order, against the order it came in.
-fn reranked(question: &str, hits: &[Value]) -> Vec<Value> {
-    let depth = RERANK_DEPTH.min(hits.len());
-    let candidates: Vec<String> = hits[..depth]
-        .iter()
-        .map(|hit| {
-            hit.get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string()
-        })
-        .collect();
-    // An absent or broken reranker leaves the ranking exactly as it was, the
-    // same way an absent encoder leaves the dense arms empty. A stage that
-    // silently reordered by nothing would be worse than one that is off.
-    let Some(scores) = packset_daemon::embed::rerank(question, &candidates) else {
-        return hits.to_vec();
-    };
-    let mut head: Vec<(f32, Value)> = scores
-        .into_iter()
-        .zip(hits[..depth].iter().cloned())
-        .collect();
-    // Descending by the model's score, and stable on ties so the first stage
-    // breaks them rather than a sort order nobody chose.
-    head.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let mut out: Vec<Value> = head.into_iter().map(|(_, hit)| hit).collect();
-    out.extend_from_slice(&hits[depth..]);
+/// Timed so the report can say what the stage cost, not only what it scored.
+/// An absent or broken reranker leaves the ranking exactly as it was.
+fn reranked(question: &str, hits: &[Value], spent: &mut std::time::Duration) -> Vec<Value> {
+    let start = std::time::Instant::now();
+    let out = packset_daemon::embed::rerank_hits(question, hits).unwrap_or_else(|| hits.to_vec());
+    *spent += start.elapsed();
     out
 }
 
@@ -1120,9 +1084,11 @@ fn main() -> anyhow::Result<()> {
         println!("late interaction: on, one vector per token");
     }
     let reranking = encoder && rerank_wanted();
+    let mut rerank_spent = std::time::Duration::ZERO;
     if reranking {
         println!(
-            "second stage: on, a cross-encoder over the top {RERANK_DEPTH},              which is a forward pass a candidate a question"
+            "second stage: on, a cross-encoder over the top {}, which is a forward pass a candidate a question",
+            packset_daemon::embed::RERANK_DEPTH
         );
     }
     let mut late_questions: std::collections::HashMap<String, Vec<Vec<f32>>> =
@@ -1693,7 +1659,7 @@ fn main() -> anyhow::Result<()> {
                             &shipped,
                             &now,
                         );
-                        hit_ids(&reranked(&question.text, &first))
+                        hit_ids(&reranked(&question.text, &first, &mut rerank_spent))
                     }
                     "turn dense" => hit_ids(&by_meaning),
                     "passage bm25 + turn dense" => hit_ids(&search::merge_ballots(
@@ -1757,6 +1723,13 @@ fn main() -> anyhow::Result<()> {
         "link graph: {linked} edges, {:.1} per turn, widest {widest}",
         linked as f64 / turns.max(1) as f64
     );
+    if reranking {
+        println!(
+            "second stage: {:.1}s wall for {asked} questions, depth {}, a forward pass a candidate",
+            rerank_spent.as_secs_f64(),
+            packset_daemon::embed::RERANK_DEPTH
+        );
+    }
     println!();
     table(ARMS, &totals);
 

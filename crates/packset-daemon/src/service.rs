@@ -557,6 +557,10 @@ impl Service {
     /// partial answer: a wrong answer that looks complete is worse than a
     /// slower one that is right.
     ///
+    /// `rerank` is the measured cross-encoder second stage. Off unless the
+    /// caller asked: the stage is a forward pass a candidate, and the
+    /// default first-stage ranking is what a seat already gets.
+    ///
     /// # Errors
     ///
     /// [`AtomError`] for a bad set name, else the store's.
@@ -567,6 +571,7 @@ impl Service {
         limit: usize,
         set: Option<&str>,
         panel: &packset_core::Panel,
+        rerank: bool,
     ) -> anyhow::Result<Value> {
         let named = match set {
             Some(raw) => Some(
@@ -594,7 +599,10 @@ impl Service {
         let now = clock::utcnow();
 
         if packset_core::search::tokens(query).is_empty() {
-            return Ok(json!({"hits": [], "engine": "linear"}));
+            // Nothing to score, so the second stage does not run. Reporting
+            // it as off rather than as a stage that ran over an empty list
+            // keeps a client from thinking a model was asked.
+            return Ok(json!({"hits": [], "engine": "linear", "rerank": "off"}));
         }
 
         let dir = self.home.milli_dir();
@@ -610,12 +618,19 @@ impl Service {
         // down and normalises for length. The panel is what turns the two
         // rankings into one, and two lists agreeing about a hit is a vote for
         // it rather than a duplicate.
+        // When the second stage will read the head, the first stage has to
+        // return at least that many, or nothing below `limit` can be promoted.
+        let first_limit = if rerank {
+            limit.max(crate::embed::RERANK_DEPTH)
+        } else {
+            limit
+        };
         let ask = packset_core::search::Ask {
             user: &user,
             memory: &memory,
             atoms: &atoms,
             query,
-            limit,
+            limit: first_limit,
             set: scope,
             now: &now,
         };
@@ -627,7 +642,7 @@ impl Service {
             .map(|vector| packset_core::search::search_dense(&ask, &vector))
             .filter(|hits| !hits.is_empty());
 
-        let projected = crate::milli::search(corpus, query, limit, &dir, scope);
+        let projected = crate::milli::search(corpus, query, first_limit, &dir, scope);
         let (mut ranked, engine) = match projected {
             Some(atom_hits) => {
                 // Prose always comes from the pack, so the index copy of a card
@@ -639,7 +654,7 @@ impl Service {
                 let mut ballots = vec![prose, atom_hits, ranked_terms];
                 ballots.extend(ranked_meaning);
                 (
-                    packset_core::search::merge_ballots(&ballots, limit, panel, &now),
+                    packset_core::search::merge_ballots(&ballots, first_limit, panel, &now),
                     "milli",
                 )
             }
@@ -649,16 +664,31 @@ impl Service {
                 ballots.extend(ranked_meaning);
                 let engine = if ballots.len() > 2 { "dense" } else { "linear" };
                 (
-                    packset_core::search::merge_ballots(&ballots, limit, panel, &now),
+                    packset_core::search::merge_ballots(&ballots, first_limit, panel, &now),
                     engine,
                 )
             }
         };
+        // The same stage the LoCoMo arm measures. Off unless asked. An absent
+        // or broken reranker leaves the first-stage order, the same way an
+        // absent encoder leaves the dense ballot out.
+        let stage = if rerank {
+            match crate::embed::rerank_hits(query, &ranked) {
+                Some(reordered) => {
+                    ranked = reordered;
+                    "cross-encoder"
+                }
+                None => "absent",
+            }
+        } else {
+            "off"
+        };
+        ranked.truncate(limit);
         let due = packset_core::search::due_hits(&atoms, scope, &now);
         if !due.is_empty() {
             ranked = packset_core::search::front_due(due, ranked, limit);
         }
-        Ok(json!({"hits": ranked, "engine": engine}))
+        Ok(json!({"hits": ranked, "engine": engine, "rerank": stage}))
     }
 
     /// Mine one archived day into proposals.
@@ -873,6 +903,14 @@ impl Service {
                 "binary": crate::embed::binary().map(|path| path.display().to_string()),
                 "available": embed_enabled() && crate::embed::binary().is_some(),
             },
+            // The measured second stage. Off is the default because it is
+            // not free: LoCoMo paid three hours of CPU at eight cores for
+            // 1536 questions over the top 20.
+            "rerank": {
+                "enabled": crate::embed::wanted(),
+                "available": crate::embed::binary().is_some(),
+                "depth": crate::embed::RERANK_DEPTH,
+            },
             // Which voters are running, because the panel is host
             // configuration a client cannot see and a wrong one changes every
             // answer without changing any of them into an error.
@@ -1050,9 +1088,7 @@ mod tests {
         );
         let supersedes = neu["supersedes"].as_array().expect("supersedes");
         assert!(
-            supersedes
-                .iter()
-                .any(|v| v.as_str() == old["id"].as_str()),
+            supersedes.iter().any(|v| v.as_str() == old["id"].as_str()),
             "{neu:?}"
         );
     }
@@ -1166,6 +1202,11 @@ mod tests {
         // saying nothing and reading as current.
         assert!(!status["commit"].as_str().unwrap_or_default().is_empty());
         assert_eq!(status["panel"]["diversify"], json!("none"));
+        // The second stage is off unless the host asked. Depth is the window
+        // the LoCoMo arm measured, so a seat comparing live search to that
+        // table is comparing the same cut.
+        assert_eq!(status["rerank"]["enabled"], json!(false));
+        assert_eq!(status["rerank"]["depth"], json!(20));
         assert_eq!(status["tombstone"], json!(1));
         assert_eq!(status["live_by_kind"]["preference"], json!(1));
         assert_eq!(status["workspace"], json!("w"));
@@ -1229,5 +1270,160 @@ mod tests {
         for accession in listed {
             assert_eq!(svc.citers("w", &accession).unwrap().len(), 1, "{accession}");
         }
+    }
+
+    /// The seat search path does not run the measured second stage unless
+    /// it is asked. The default is the first-stage ranking a pack already
+    /// returns.
+    #[test]
+    fn search_leaves_the_cross_encoder_off() {
+        let (_dir, svc) = service();
+        svc.add(atom("Reviews open with a check.")).unwrap();
+        let panel = packset_core::Panel::default();
+        let found = svc.search("w", "reviews", 8, None, &panel, false).unwrap();
+        assert_eq!(found["rerank"], json!("off"), "{found}");
+        assert_eq!(found["hits"].as_array().map(Vec::len), Some(1));
+        let empty = svc.search("w", "", 8, None, &panel, true).unwrap();
+        assert_eq!(empty["rerank"], json!("off"), "{empty}");
+        assert!(empty["hits"].as_array().unwrap().is_empty());
+    }
+
+    /// A requested stage with no working reranker leaves the first-stage
+    /// order and says so. Silently reordering by nothing would be worse
+    /// than leaving the stage off.
+    #[test]
+    fn a_requested_rerank_without_an_encoder_leaves_the_ranking() {
+        let (_dir, svc) = service();
+        svc.add(atom("Reviews open with a check.")).unwrap();
+        svc.add(atom("Prefer ripgrep for search.")).unwrap();
+        let panel = packset_core::Panel::default();
+        // Point at a program that is not a reranker, so PATH cannot supply
+        // a real packset-embed and turn this into a model call.
+        let _guard = EMBED.lock().unwrap_or_else(|e| e.into_inner());
+        crate::embed::reset_for_test();
+        let stub = broken_reranker();
+        let old = std::env::var_os("PACKSET_EMBED");
+        // Safety: EMBED is held, so no other test mutates this variable.
+        unsafe { std::env::set_var("PACKSET_EMBED", &stub.path) };
+        let off = svc
+            .search("w", "reviews search", 8, None, &panel, false)
+            .unwrap();
+        let on = svc
+            .search("w", "reviews search", 8, None, &panel, true)
+            .unwrap();
+        unsafe {
+            match old {
+                Some(value) => std::env::set_var("PACKSET_EMBED", value),
+                None => std::env::remove_var("PACKSET_EMBED"),
+            }
+        }
+        crate::embed::reset_for_test();
+        drop(_guard);
+        assert_eq!(on["rerank"], json!("absent"), "{on}");
+        assert_eq!(off["rerank"], json!("off"));
+        // Recency is a function of now, so two searches a moment apart
+        // disagree in the last digits of the score. The order is the
+        // ranking, and that is what a missing stage must not change.
+        let ids = |found: &Value| {
+            found["hits"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|hit| hit["id"].clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&on), ids(&off), "{on} vs {off}");
+    }
+
+    /// A working child that implements the same protocol as
+    /// `packset-embed --rerank` reorders the first-stage list.
+    #[test]
+    fn a_stub_cross_encoder_reorders_the_first_stage() {
+        let (_dir, svc) = service();
+        svc.add(atom("Reviews open with a check.")).unwrap();
+        svc.add(atom("Prefer ripgrep for search.")).unwrap();
+        let panel = packset_core::Panel::default();
+        let _guard = EMBED.lock().unwrap_or_else(|e| e.into_inner());
+        crate::embed::reset_for_test();
+        let stub = scoring_reranker();
+        let old = std::env::var_os("PACKSET_EMBED");
+        // Safety: EMBED is held, so no other test mutates this variable.
+        unsafe { std::env::set_var("PACKSET_EMBED", &stub.path) };
+        let off = svc
+            .search("w", "reviews search", 8, None, &panel, false)
+            .unwrap();
+        let on = svc
+            .search("w", "reviews search", 8, None, &panel, true)
+            .unwrap();
+        unsafe {
+            match old {
+                Some(value) => std::env::set_var("PACKSET_EMBED", value),
+                None => std::env::remove_var("PACKSET_EMBED"),
+            }
+        }
+        crate::embed::reset_for_test();
+        drop(_guard);
+        assert_eq!(on["rerank"], json!("cross-encoder"), "{on}");
+        let off_ids: Vec<_> = off["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["id"].clone())
+            .collect();
+        let on_ids: Vec<_> = on["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["id"].clone())
+            .collect();
+        assert_eq!(off_ids.len(), 2, "{off}");
+        assert_eq!(on_ids.len(), 2, "{on}");
+        // The stub scores the last candidate highest, so the first-stage
+        // tail becomes the head.
+        assert_eq!(on_ids[0], off_ids[1], "{on} vs {off}");
+        assert_eq!(on_ids[1], off_ids[0], "{on} vs {off}");
+    }
+
+    static EMBED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct StubEmbed {
+        path: std::path::PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    fn broken_reranker() -> StubEmbed {
+        write_stub(
+            r#"#!/bin/sh
+exit 1
+"#,
+        )
+    }
+
+    fn scoring_reranker() -> StubEmbed {
+        write_stub(
+            r#"#!/usr/bin/env python3
+import json, sys
+if "--rerank" not in sys.argv:
+    sys.exit(1)
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    n = len(req.get("d") or [])
+    print(json.dumps({"id": req.get("id", "q"), "s": [float(i) for i in range(n)]}), flush=True)
+"#,
+        )
+    }
+
+    fn write_stub(body: &str) -> StubEmbed {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("packset-embed");
+        std::fs::write(&path, body).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&path).unwrap().permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&path, perm).unwrap();
+        StubEmbed { path, _dir: dir }
     }
 }

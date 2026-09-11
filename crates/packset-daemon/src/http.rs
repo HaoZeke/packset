@@ -296,7 +296,18 @@ fn route(
                 };
                 let q = query.get("q").cloned().unwrap_or_default();
                 let set = query.get("set").filter(|s| !s.is_empty());
-                answer(service.search(&workspace, &q, limit, set.map(String::as_str), panel))
+                // Query wins when present so one request can opt in without
+                // changing the host default. Absent, PACKSET_RERANK decides.
+                // Off unless one of those asked.
+                let rerank = search_rerank(query.get("rerank").map(String::as_str));
+                answer(service.search(
+                    &workspace,
+                    &q,
+                    limit,
+                    set.map(String::as_str),
+                    panel,
+                    rerank,
+                ))
             }
         },
         (Method::Get, "/v1/recall") => match required(query, "workspace") {
@@ -546,6 +557,17 @@ fn truthy(raw: Option<&str>) -> bool {
     matches!(raw, Some("1" | "true" | "yes"))
 }
 
+/// Whether this search runs the measured cross-encoder stage.
+///
+/// A query value decides for this request. No query falls back to the host
+/// `PACKSET_RERANK` default, which is itself off.
+fn search_rerank(query: Option<&str>) -> bool {
+    match query {
+        Some(raw) => truthy(Some(raw)),
+        None => crate::embed::wanted(),
+    }
+}
+
 fn read_json(request: &mut Request) -> Result<Map<String, Value>, String> {
     let mut raw = String::new();
     request
@@ -659,6 +681,18 @@ mod tests {
         assert!(!truthy(Some("on")));
         assert!(!truthy(Some("")));
         assert!(!truthy(None));
+    }
+
+    /// A request that names `rerank` decides for itself. The host default
+    /// is only read when the query is silent, so this check stays off the
+    /// process env.
+    #[test]
+    fn a_search_rerank_query_is_off_unless_asked() {
+        assert!(search_rerank(Some("1")));
+        assert!(search_rerank(Some("true")));
+        assert!(!search_rerank(Some("0")));
+        assert!(!search_rerank(Some("off")));
+        assert!(!search_rerank(Some("")));
     }
 
     #[test]
