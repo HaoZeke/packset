@@ -186,14 +186,42 @@ impl PacksetClient {
         limit: u32,
         as_of: Option<&str>,
     ) -> Result<Vec<Hit>, Error> {
+        self.search_opts(workspace, q, limit, as_of, false)
+    }
+
+    /// Ranked hits, optionally dated and optionally through the measured
+    /// cross-encoder stage.
+    ///
+    /// Off by default. On, the writer spends a forward pass per candidate and
+    /// the request waits for that rather than the usual five-second budget.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not a hit list.
+    pub fn search_opts(
+        &self,
+        workspace: &str,
+        q: &str,
+        limit: u32,
+        as_of: Option<&str>,
+        rerank: bool,
+    ) -> Result<Vec<Hit>, Error> {
         let url = format!("{}/v1/search", self.base);
+        let timeout = if rerank {
+            Duration::from_secs(60)
+        } else {
+            TIMEOUT
+        };
         let mut req = ureq::get(&url)
             .query("workspace", workspace)
             .query("q", q)
             .query("limit", &limit.to_string())
-            .timeout(TIMEOUT);
+            .timeout(timeout);
         if let Some(at) = as_of {
             req = req.query("as_of", at);
+        }
+        if rerank {
+            req = req.query("rerank", "1");
         }
         let body: serde_json::Value = req
             .call()

@@ -309,6 +309,7 @@ fn route(
                 };
                 let q = query.get("q").cloned().unwrap_or_default();
                 let set = query.get("set").filter(|s| !s.is_empty());
+                let rerank = crate::embed::requested(query.get("rerank").map(String::as_str));
                 match as_of_stamp(query) {
                     Err(a) => a,
                     Ok(at) => answer(service.search(
@@ -318,6 +319,7 @@ fn route(
                         set.map(String::as_str),
                         panel,
                         at.as_deref(),
+                        rerank,
                     )),
                 }
             }

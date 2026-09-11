@@ -21,6 +21,9 @@ pub struct SearchArgs {
     /// Retrieve the atoms that were live at this timestamp instead of now.
     #[serde(default)]
     pub as_of: Option<String>,
+    /// Run the measured cross-encoder second stage. Off unless asked.
+    #[serde(default)]
+    pub rerank: Option<bool>,
 }
 
 /// A workspace, optionally dated.

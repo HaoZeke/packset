@@ -13,7 +13,8 @@ Do not embed git-tracked files into memory.
 
 The search binary is built on the remote builder. `just milli`
 refuses anywhere else. Search falls back to the linear scorer
-when the binary is absent.
+when the binary is absent. `PACKSET_RERANK=1` (or `/v1/search?rerank=1`)
+runs the measured cross-encoder over the top 20; off by default.
 
 ## Architecture
 

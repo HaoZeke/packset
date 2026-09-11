@@ -122,11 +122,12 @@ impl PacksetServer {
     ) -> Result<Json<Vec<AtomRow>>, McpError> {
         let workspace = self.workspace_for(args.workspace.as_deref());
         let hits = client(self.port)
-            .search_as_of(
+            .search_opts(
                 &workspace,
                 &args.query,
                 args.limit.unwrap_or(10),
                 args.as_of.as_deref(),
+                args.rerank.unwrap_or(false),
             )
             .map_err(down)?;
         Ok(Json(
@@ -331,6 +332,7 @@ mod tests {
                 workspace: None,
                 limit: None,
                 as_of: None,
+                rerank: None,
             }))
             .await
         else {

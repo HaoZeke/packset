@@ -62,7 +62,9 @@ Whether the deed exists is a question the pack cannot ask. It checks the shape;
   measures better than any alone: see Retrieval below.
 - Search merge is a host voter panel. Default is CombMNZ then MMR,
   decay off, and the default was measured: see Retrieval below. `PACKSET_FUSE`, `PACKSET_DIVERSIFY`, and
-  `PACKSET_DECAY` select the sequence. Not a client header.
+  `PACKSET_DECAY` select the sequence. Not a client header. The measured
+  cross-encoder second stage is off unless `PACKSET_RERANK=1` or
+  `/v1/search?rerank=1`.
 - Tool dumps and fetched bodies are not atoms.
 
 ## Retrieval
@@ -227,7 +229,9 @@ quality-diversity kernel (DOI 10.1561/2200000044).
 Every arm above is first-stage retrieval. A cross-encoder that reads the
 question and a candidate together is the standard second stage (monoBERT, DOI
 10.48550/arXiv.1901.04085), and `packset-embed --rerank` runs one.
-`PACKSET_LOCOMO_RERANK=1` reorders the top 20 of the fused list with it:
+`/v1/search` runs that same stage when asked (`PACKSET_RERANK=1`, or
+`?rerank=1` on one request). `PACKSET_LOCOMO_RERANK=1` is the bench knob
+that measured it, reordering the top 20 of the fused list:
 
 | over passage BM25+ + dense, Borda | hit@1 | hit@5 | nDCG@5 |
 |---|---|---|---|
@@ -240,8 +244,10 @@ hit@10, which is a reranker promoting one answer and pushing others below the
 cut. Against the free change, it loses: score-level fusion with no model
 reaches the same hit@1 and beats it everywhere else. The run took three hours
 of CPU at eight cores for 1536 questions, a forward pass per candidate per
-question. The stage is in the binary and off by default, and it is not what
-the residual to the published number is made of.
+question. The same stage is on `/v1/search`, off by default: `PACKSET_RERANK=1`
+on the writer, or `?rerank=1` on one request, reorders the top 20 of the fused
+list the way the table measured. The locomo cost is why it stays off. It is
+not what the residual to the published number is made of.
 
 ## What did not work
 

@@ -281,6 +281,13 @@ impl Encoder {
     }
 }
 
+impl Drop for Encoder {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// Learned term weights: which vocabulary entries a text activates, and how
 /// much. Ascending by index, so two of them intersect in one pass.
 pub type Sparse = Vec<(u32, f32)>;
@@ -415,6 +422,93 @@ pub fn encode_sparse(text: &str) -> Option<Sparse> {
     None
 }
 
+/// How deep the second stage reads.
+///
+/// Reranking the whole first-stage ranking would cost the whole ranking, and
+/// the point of a two-stage system is that the second one reads few. Twenty is
+/// the deepest cut-off the locomo table scores, so every rank that table
+/// reports is inside the window and nothing below it can be promoted into view.
+pub const RERANK_DEPTH: usize = 20;
+
+/// Whether the live search path should run the second stage.
+///
+/// Off unless asked. The first stage embeds a corpus once and answers every
+/// question from what it stored; a cross-encoder runs a forward pass per
+/// candidate per question. The same three spellings `/v1/search?rerank=`
+/// accepts, so a host env and a query flag cannot disagree about what "on" is.
+#[must_use]
+pub fn wanted() -> bool {
+    flag_on(&std::env::var("PACKSET_RERANK").unwrap_or_default())
+}
+
+/// Whether one request should run the stage.
+///
+/// A query flag overrides the host default so a seat can spend the cost on
+/// one question without restarting. The same three spellings as the other
+/// `/v1` flags; anything else, including empty, is off.
+#[must_use]
+pub fn requested(query: Option<&str>) -> bool {
+    match query.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => flag_on(raw),
+        None => wanted(),
+    }
+}
+
+fn flag_on(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes"
+    )
+}
+
+/// Reorder the head of a ranking by cross-encoder scores.
+///
+/// `scores` must cover the head (`RERANK_DEPTH.min(hits.len())`). A length
+/// mismatch is refused rather than padded, the same way a short child reply is.
+/// The tail keeps its first-stage order. Ties are stable so the first stage
+/// breaks them rather than a sort order nobody chose.
+#[must_use]
+pub fn apply_rerank(hits: &[Value], scores: &[f32]) -> Option<Vec<Value>> {
+    let depth = RERANK_DEPTH.min(hits.len());
+    if scores.len() != depth {
+        return None;
+    }
+    let mut head: Vec<(f32, Value)> = scores
+        .iter()
+        .copied()
+        .zip(hits[..depth].iter().cloned())
+        .collect();
+    head.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut out: Vec<Value> = head.into_iter().map(|(_, hit)| hit).collect();
+    out.extend_from_slice(&hits[depth..]);
+    Some(out)
+}
+
+/// Reorder the top of a ranking by what a cross-encoder makes of it.
+///
+/// The same stage the locomo arm measures and `/v1/search` runs when asked.
+/// An absent or broken reranker is `None` so the caller can leave the ranking
+/// as it was and say so, rather than silently reordering by a stage that did
+/// not run.
+#[must_use]
+pub fn rerank_hits(question: &str, hits: &[Value]) -> Option<Vec<Value>> {
+    if hits.is_empty() {
+        return Some(Vec::new());
+    }
+    let depth = RERANK_DEPTH.min(hits.len());
+    let candidates: Vec<String> = hits[..depth]
+        .iter()
+        .map(|hit| {
+            hit.get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    let scores = rerank(question, &candidates)?;
+    apply_rerank(hits, &scores)
+}
+
 /// The kept cross-encoder, a fourth child.
 fn rerank_slot() -> &'static Slot {
     static RERANK: OnceLock<Slot> = OnceLock::new();
@@ -467,6 +561,21 @@ pub fn rerank(question: &str, candidates: &[String]) -> Option<Vec<f32>> {
         }
     }
     None
+}
+
+#[cfg(test)]
+pub fn reset_for_test() {
+    for slot in [
+        slot(true),
+        slot(false),
+        rerank_slot(),
+        late_slot(),
+        sparse_slot(),
+    ] {
+        if let Ok(mut held) = slot.lock() {
+            *held = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -537,5 +646,118 @@ mod tests {
         };
         let _ = child.wait();
         assert!(matches!(child.try_wait(), Ok(Some(_))));
+    }
+
+    fn hit(id: &str, text: &str) -> Value {
+        json!({ "id": id, "text": text })
+    }
+
+    /// The second stage is off unless the host asks. An unset env is the
+    /// shipped default; a process that already exported PACKSET_RERANK is a
+    /// different seat and this test does not speak for it.
+    #[test]
+    fn the_second_stage_is_off_unless_asked() {
+        if std::env::var_os("PACKSET_RERANK").is_some() {
+            return;
+        }
+        assert!(!wanted());
+        assert!(!requested(None));
+        assert!(!requested(Some("")));
+        assert!(!requested(Some("0")));
+        assert!(!requested(Some("on")));
+        assert!(requested(Some("1")));
+        assert!(requested(Some("true")));
+        assert!(requested(Some("yes")));
+    }
+
+    #[test]
+    fn apply_rerank_promotes_the_higher_score_and_keeps_the_tail() {
+        let hits: Vec<Value> = (0..22)
+            .map(|i| hit(&format!("h{i}"), &format!("text {i}")))
+            .collect();
+        let mut scores = vec![0.0f32; RERANK_DEPTH];
+        scores[0] = 0.1;
+        scores[1] = 0.9;
+        let ranked = apply_rerank(&hits, &scores).expect("length matches");
+        assert_eq!(ranked[0]["id"], json!("h1"));
+        assert_eq!(ranked[1]["id"], json!("h0"));
+        assert_eq!(ranked[2]["id"], json!("h2"));
+        assert_eq!(ranked[20]["id"], json!("h20"));
+        assert_eq!(ranked[21]["id"], json!("h21"));
+        assert_eq!(ranked.len(), 22);
+    }
+
+    #[test]
+    fn a_tie_keeps_the_first_stage_order() {
+        let hits = vec![hit("first", "a"), hit("second", "b")];
+        let ranked = apply_rerank(&hits, &[0.5, 0.5]).expect("length matches");
+        assert_eq!(ranked[0]["id"], json!("first"));
+        assert_eq!(ranked[1]["id"], json!("second"));
+    }
+
+    #[test]
+    fn a_short_score_list_is_refused_rather_than_padded() {
+        let hits = vec![hit("a", "a"), hit("b", "b")];
+        assert!(apply_rerank(&hits, &[0.9]).is_none());
+    }
+
+    #[test]
+    fn nothing_to_reorder_is_an_empty_ranking() {
+        assert_eq!(rerank_hits("which search tool", &[]), Some(Vec::new()));
+    }
+
+    /// A stub child that scores later candidates higher, then apply_rerank.
+    ///
+    /// This is the protocol `/v1/search` and the locomo arm share, without
+    /// loading a model.
+    #[test]
+    fn a_child_that_scores_the_tail_first_reorders_the_head() {
+        let script =
+            std::env::temp_dir().join(format!("packset-rerank-stub-{}.py", std::process::id()));
+        let body = concat!(
+            "#!/usr/bin/env python3\n",
+            "import json, sys\n",
+            "for line in sys.stdin:\n",
+            "    line = line.strip()\n",
+            "    if not line:\n",
+            "        continue\n",
+            "    req = json.loads(line)\n",
+            "    d = req.get('d', [])\n",
+            "    print(json.dumps({'id': req.get('id', 'q'), 's': list(range(len(d)))}), flush=True)\n",
+        );
+        if std::fs::write(&script, body).is_err() {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755));
+        }
+        let Ok(mut child) = Command::new(&script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+        else {
+            let _ = std::fs::remove_file(&script);
+            return;
+        };
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            let _ = std::fs::remove_file(&script);
+            return;
+        };
+        let mut enc = Encoder {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+        };
+        let candidates = vec!["first".into(), "second".into()];
+        let scores = enc.rerank("a question", &candidates);
+        drop(enc);
+        let _ = std::fs::remove_file(&script);
+        let scores = scores.expect("stub scored");
+        let hits = vec![hit("a", "first"), hit("b", "second")];
+        let ranked = apply_rerank(&hits, &scores).expect("length matches");
+        assert_eq!(ranked[0]["id"], json!("b"));
+        assert_eq!(ranked[1]["id"], json!("a"));
     }
 }
