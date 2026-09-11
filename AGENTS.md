@@ -1,4 +1,4 @@
-# AGENTS.md
+# Seat pack
 
 The seat pack (`USER.md`, `MEMORY.md`, atoms) is not this tree.
 Do not embed git-tracked files into memory.
@@ -31,6 +31,11 @@ Listen on `127.0.0.1` only. Never `localhost`.
 
 Atoms are one claim. `Remember:` / `Prefer:` are instant.
 Tool dumps are attach, not atoms.
+
+A `deed-` or `sha256:` entity is a deedar accession. The pack checks
+the shape; `deedar evidence` / `deedar current` answer the rest.
+The tracker cites the same accession. Completing a claimdag node
+does not close a ticket.
 
 `crates/packset-core/tests/goldens.json` is a frozen corpus, not
 generated output. It fixes the accept/reject boundary and the exact error
