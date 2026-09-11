@@ -18,6 +18,9 @@ pub struct SearchArgs {
     /// How many hits. Ten when omitted.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Run the measured cross-encoder second stage. Off unless asked.
+    #[serde(default)]
+    pub rerank: Option<bool>,
 }
 
 /// A workspace, or the seat's own.

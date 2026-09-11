@@ -31,7 +31,8 @@
 //! Four knobs, all off by default and all about what a run costs:
 //! `PACKSET_LOCOMO_RERANK` adds the cross-encoder second stage, which is the
 //! one arm here that is not free: it runs a forward pass per candidate per
-//! question where every other arm answers from what it stored.
+//! question where every other arm answers from what it stored. `/v1/search`
+//! runs that same stage when `PACKSET_RERANK` or `?rerank=1` asks.
 //!
 //! `PACKSET_LOCOMO_LATE` adds the per-token arms, `PACKSET_LOCOMO_WALK` adds
 //! the restart walk over the link graph, `PACKSET_LOCOMO_CONVERSATIONS` scores
@@ -523,53 +524,16 @@ fn rerank_wanted() -> bool {
     std::env::var("PACKSET_LOCOMO_RERANK").is_ok_and(|v| !v.is_empty() && v != "0")
 }
 
-/// How deep the second stage reads.
-///
-/// Reranking the whole first-stage ranking would cost the whole ranking, and
-/// the point of a two-stage system is that the second one reads few. Twenty is
-/// the deepest cut-off reported, so every rank this table scores is inside the
-/// window and nothing below it can be promoted into view.
-const RERANK_DEPTH: usize = 20;
+/// How deep the second stage reads. Same window `/v1/search` uses.
+const RERANK_DEPTH: usize = packset_daemon::embed::RERANK_DEPTH;
 
 /// Reorder the top of a ranking by what a cross-encoder makes of it.
 ///
-/// A different thing from the panel's own reranking, which diversifies a
-/// ranking it already has by maximal marginal relevance. That one drops
-/// redundancy; this one asks a model whether a candidate answers the question,
-/// which is the judgement no first-stage scorer is able to make.
-///
-/// Only the head is rescored and the tail keeps its first-stage order, which
-/// is what a second stage is: the first one decides what is worth reading and
-/// the second decides the order of those. The scores are the model's own, so
-/// they are not comparable with the first stage's and nothing tries to fuse
-/// the two here; the arm is the reranked order, against the order it came in.
+/// The live search path runs this same function. An absent or broken
+/// reranker leaves the ranking as it was, the same way an absent encoder
+/// leaves the dense arms empty.
 fn reranked(question: &str, hits: &[Value]) -> Vec<Value> {
-    let depth = RERANK_DEPTH.min(hits.len());
-    let candidates: Vec<String> = hits[..depth]
-        .iter()
-        .map(|hit| {
-            hit.get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string()
-        })
-        .collect();
-    // An absent or broken reranker leaves the ranking exactly as it was, the
-    // same way an absent encoder leaves the dense arms empty. A stage that
-    // silently reordered by nothing would be worse than one that is off.
-    let Some(scores) = packset_daemon::embed::rerank(question, &candidates) else {
-        return hits.to_vec();
-    };
-    let mut head: Vec<(f32, Value)> = scores
-        .into_iter()
-        .zip(hits[..depth].iter().cloned())
-        .collect();
-    // Descending by the model's score, and stable on ties so the first stage
-    // breaks them rather than a sort order nobody chose.
-    head.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let mut out: Vec<Value> = head.into_iter().map(|(_, hit)| hit).collect();
-    out.extend_from_slice(&hits[depth..]);
-    out
+    packset_daemon::embed::rerank_hits(question, hits).unwrap_or_else(|| hits.to_vec())
 }
 
 /// Where the one-hop comparison is made: half the places are retrieved and the

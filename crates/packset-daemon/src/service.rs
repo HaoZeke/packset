@@ -568,6 +568,7 @@ impl Service {
         limit: usize,
         set: Option<&str>,
         panel: &packset_core::Panel,
+        rerank: bool,
     ) -> anyhow::Result<Value> {
         let named = match set {
             Some(raw) => Some(
@@ -595,7 +596,7 @@ impl Service {
         let now = clock::utcnow();
 
         if packset_core::search::tokens(query).is_empty() {
-            return Ok(json!({"hits": [], "engine": "linear"}));
+            return Ok(json!({"hits": [], "engine": "linear", "rerank": "off"}));
         }
 
         let dir = self.home.milli_dir();
@@ -655,11 +656,26 @@ impl Service {
                 )
             }
         };
+        // The second stage is the same function the locomo arm measures:
+        // rescore the head with packset-embed --rerank, leave the tail.
+        let stage = if rerank && !ranked.is_empty() {
+            match crate::embed::rerank_hits(query, &ranked) {
+                Some(next) => {
+                    ranked = next;
+                    "applied"
+                }
+                None => "absent",
+            }
+        } else {
+            "off"
+        };
+        // Due atoms stay in front of that, because a review-clock hit is not a
+        // relevance claim the model is allowed to bury.
         let due = packset_core::search::due_hits(&atoms, scope, &now);
         if !due.is_empty() {
             ranked = packset_core::search::front_due(due, ranked, limit);
         }
-        Ok(json!({"hits": ranked, "engine": engine}))
+        Ok(json!({"hits": ranked, "engine": engine, "rerank": stage}))
     }
 
     /// Mine one archived day into proposals.
@@ -874,6 +890,13 @@ impl Service {
                 "binary": crate::embed::binary().map(|path| path.display().to_string()),
                 "available": embed_enabled() && crate::embed::binary().is_some(),
             },
+            // Off unless the host asked. The locomo cost lives in the README;
+            // status only says whether this writer will spend it.
+            "rerank": {
+                "enabled": crate::embed::wanted(),
+                "available": crate::embed::binary().is_some(),
+                "depth": crate::embed::RERANK_DEPTH,
+            },
             // Which voters are running, because the panel is host
             // configuration a client cannot see and a wrong one changes every
             // answer without changing any of them into an error.
@@ -1055,7 +1078,14 @@ mod tests {
             "{neu:?}"
         );
         let found = svc
-            .search("w", "Borda", 8, None, &packset_core::Panel::default())
+            .search(
+                "w",
+                "Borda",
+                8,
+                None,
+                &packset_core::Panel::default(),
+                false,
+            )
             .unwrap();
         let hits = found["hits"].as_array().expect("hits");
         assert!(
@@ -1064,7 +1094,14 @@ mod tests {
             "search filters the closed atom: {found}"
         );
         let found_new = svc
-            .search("w", "CombMNZ", 8, None, &packset_core::Panel::default())
+            .search(
+                "w",
+                "CombMNZ",
+                8,
+                None,
+                &packset_core::Panel::default(),
+                false,
+            )
             .unwrap();
         let new_hits = found_new["hits"].as_array().expect("hits");
         assert!(
@@ -1194,6 +1231,73 @@ mod tests {
         assert_eq!(status["workspace"], json!("w"));
         assert!(status["home"].is_string());
         assert!(status["last_write_ts"].is_string());
+        assert_eq!(status["rerank"]["depth"], json!(crate::embed::RERANK_DEPTH));
+        if std::env::var_os("PACKSET_RERANK").is_none() {
+            assert_eq!(status["rerank"]["enabled"], json!(false));
+        }
+    }
+
+    #[test]
+    fn search_leaves_the_second_stage_off() {
+        let (_dir, svc) = service();
+        svc.add(atom("Prefer ripgrep for search.")).unwrap();
+        let found = svc
+            .search(
+                "w",
+                "ripgrep",
+                8,
+                None,
+                &packset_core::Panel::default(),
+                false,
+            )
+            .unwrap();
+        assert_eq!(found["rerank"], json!("off"));
+        assert!(
+            found["hits"]
+                .as_array()
+                .expect("hits")
+                .iter()
+                .any(
+                    |h| h.get("text").and_then(Value::as_str) == Some("Prefer ripgrep for search.")
+                ),
+            "{found}"
+        );
+    }
+
+    /// A requested stage with no encoder leaves the ranking alone and says so.
+    ///
+    /// A seat that already has packset-embed on PATH would run the model,
+    /// which is a different test and not one this process can afford.
+    #[test]
+    fn a_requested_rerank_without_an_encoder_is_absent_not_a_reorder() {
+        if crate::embed::binary().is_some() {
+            return;
+        }
+        let (_dir, svc) = service();
+        svc.add(atom("Prefer ripgrep for search.")).unwrap();
+        svc.add(atom("Prefer fd for finding files.")).unwrap();
+        let off = svc
+            .search(
+                "w",
+                "Prefer",
+                8,
+                None,
+                &packset_core::Panel::default(),
+                false,
+            )
+            .unwrap();
+        let on = svc
+            .search(
+                "w",
+                "Prefer",
+                8,
+                None,
+                &packset_core::Panel::default(),
+                true,
+            )
+            .unwrap();
+        assert_eq!(on["rerank"], json!("absent"), "{on}");
+        assert_eq!(off["hits"], on["hits"]);
     }
 
     /// One accession, cited by one atom and not the other.

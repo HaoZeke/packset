@@ -296,7 +296,15 @@ fn route(
                 };
                 let q = query.get("q").cloned().unwrap_or_default();
                 let set = query.get("set").filter(|s| !s.is_empty());
-                answer(service.search(&workspace, &q, limit, set.map(String::as_str), panel))
+                let rerank = crate::embed::requested(query.get("rerank").map(String::as_str));
+                answer(service.search(
+                    &workspace,
+                    &q,
+                    limit,
+                    set.map(String::as_str),
+                    panel,
+                    rerank,
+                ))
             }
         },
         (Method::Get, "/v1/recall") => match required(query, "workspace") {
