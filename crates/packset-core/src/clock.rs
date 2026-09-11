@@ -59,6 +59,16 @@ pub fn parse_millis(text: &str) -> Option<i64> {
     Some(days * 86_400_000 + hour * 3_600_000 + minute * 60_000 + second * 1000 + millis)
 }
 
+/// The store form of a stamp, when it parses.
+///
+/// Atoms compare timestamps as strings, so a caller-supplied `+00:00` or
+/// space-T spelling has to become `YYYY-MM-DDTHH:MM:SS.mmmZ` before it is
+/// compared to `valid_from` / `valid_to`.
+#[must_use]
+pub fn canonical(text: &str) -> Option<String> {
+    parse_millis(text).map(format_millis)
+}
+
 /// A stored timestamp shifted by whole seconds, in the same format.
 #[must_use]
 pub fn shift(text: &str, seconds: i64) -> Option<String> {
@@ -137,6 +147,23 @@ mod tests {
             parse_millis("2026-01-01T00:00:00+00:00"),
             parse_millis("2026-01-01T00:00:00.000Z")
         );
+    }
+
+    #[test]
+    fn canonical_writes_the_store_form() {
+        assert_eq!(
+            canonical("2024-06-01T00:00:00+00:00").as_deref(),
+            Some("2024-06-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            canonical("2024-06-01 00:00:00.000Z").as_deref(),
+            Some("2024-06-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            canonical("2024-06-01T00:00:00.000Z").as_deref(),
+            Some("2024-06-01T00:00:00.000Z")
+        );
+        assert_eq!(canonical("not a stamp"), None);
     }
 
     #[test]

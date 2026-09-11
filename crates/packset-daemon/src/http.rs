@@ -560,11 +560,14 @@ impl Lookup for Map<String, Value> {
 }
 
 /// A dated retrieve stamp, or none when the caller asked for live-now.
+///
+/// The store compares timestamps as strings, so a parseable spelling that is
+/// not `YYYY-MM-DDTHH:MM:SS.mmmZ` is rewritten before it is compared.
 fn as_of_stamp(query: &HashMap<String, String>) -> Result<Option<String>, Answer> {
     match query.get("as_of").filter(|s| !s.is_empty()) {
         None => Ok(None),
-        Some(raw) => match packset_core::clock::parse_millis(raw) {
-            Some(_) => Ok(Some(raw.clone())),
+        Some(raw) => match packset_core::clock::canonical(raw) {
+            Some(at) => Ok(Some(at)),
             None => Err(Answer::err(400, "as_of must be a timestamp")),
         },
     }
@@ -706,6 +709,21 @@ mod tests {
         ));
         q.insert("as_of".into(), "not-a-date".into());
         assert!(matches!(as_of_stamp(&q), Err(a) if a.code == 400));
+    }
+
+    #[test]
+    fn an_as_of_stamp_is_written_in_the_store_form() {
+        let mut q = HashMap::new();
+        q.insert("as_of".into(), "2024-06-01T00:00:00+00:00".into());
+        assert!(matches!(
+            as_of_stamp(&q),
+            Ok(Some(ref s)) if s == "2024-06-01T00:00:00.000Z"
+        ));
+        q.insert("as_of".into(), "2024-06-01 00:00:00.000Z".into());
+        assert!(matches!(
+            as_of_stamp(&q),
+            Ok(Some(ref s)) if s == "2024-06-01T00:00:00.000Z"
+        ));
     }
 
     #[test]
