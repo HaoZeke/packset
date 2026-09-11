@@ -759,6 +759,78 @@ pub enum Grade {
     Lapsed,
 }
 
+/// Words used to tell a rewrite from a neighbour.
+fn tokens(text: &str) -> BTreeSet<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+/// Jaccard on the token sets.
+#[must_use]
+pub fn token_jaccard(left: &str, right: &str) -> f64 {
+    let a = tokens(left);
+    let b = tokens(right);
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    let inter = a.intersection(&b).count() as f64;
+    let union = a.union(&b).count() as f64;
+    if union == 0.0 {
+        0.0
+    } else {
+        inter / union
+    }
+}
+
+/// Whether `new` is a replacement for `old`, not a neighbour and not a retry.
+///
+/// Same kind, different text, and either an explicit `supersedes` id, a
+/// `correction` that shares an entity, or a rewrite of the same claim
+/// (token Jaccard at least 0.6). Linked atoms about the same entities
+/// with different sentences stay both live.
+#[must_use]
+pub fn replaces(new: &Map<String, Value>, old: &Map<String, Value>) -> bool {
+    if new.get("kind") != old.get("kind") {
+        return false;
+    }
+    let new_text = new.get("text").and_then(Value::as_str).unwrap_or("");
+    let old_text = old.get("text").and_then(Value::as_str).unwrap_or("");
+    if new_text.is_empty() || new_text == old_text {
+        return false;
+    }
+    let old_id = old.get("id").and_then(Value::as_str).unwrap_or("");
+    if !old_id.is_empty() {
+        if let Some(Value::Array(ids)) = new.get("supersedes") {
+            if ids.iter().any(|v| value_text(v) == old_id) {
+                return true;
+            }
+        }
+        if let Some(Value::String(id)) = new.get("supersedes") {
+            if id == old_id {
+                return true;
+            }
+        }
+    }
+    let shared: BTreeSet<_> = entities_of(new)
+        .intersection(&entities_of(old))
+        .cloned()
+        .collect();
+    if shared.is_empty() {
+        return false;
+    }
+    if new.get("kind").and_then(Value::as_str) == Some("correction") {
+        return true;
+    }
+    token_jaccard(new_text, old_text) >= 0.6
+}
+
+/// Close the live window. Search already drops atoms whose `valid_to` is past.
+pub fn close_valid_to(atom: &mut Map<String, Value>, now: &str) {
+    atom.insert("valid_to".into(), Value::String(now.to_string()));
+}
+
 /// Set `due_at` from stability and difficulty. `valid_to` is left alone.
 ///
 /// A lapse halves stability and nudges difficulty up; a recall grows stability
@@ -889,6 +961,37 @@ mod tests {
         assert!(reject_unsafe("plain text").is_ok());
         assert!(reject_unsafe("hidden\u{200b}text").is_err());
         assert!(reject_unsafe("\u{feff}bom").is_err());
+    }
+
+    #[test]
+    fn a_rewrite_of_the_same_claim_replaces_and_a_neighbour_does_not() {
+        let old = atom(json!({
+            "text": "The default fuse is Borda.",
+            "kind": "habit",
+            "entities": ["fuse", "Borda"]
+        }));
+        let rewrite = atom(json!({
+            "text": "The default fuse is CombMNZ.",
+            "kind": "habit",
+            "entities": ["fuse", "CombMNZ"]
+        }));
+        // Same entities, different sentence: a neighbour, not a replacement.
+        let neighbour = atom(json!({
+            "text": "The Header comes before the Parser body.",
+            "kind": "habit",
+            "entities": ["Parser", "Header"]
+        }));
+        let first = atom(json!({
+            "text": "The Parser reads the Header.",
+            "kind": "habit",
+            "entities": ["Parser", "Header"]
+        }));
+        assert!(replaces(&rewrite, &old), "shared stem, new object");
+        assert!(
+            !replaces(&neighbour, &first),
+            "linked claims stay both live"
+        );
+        assert!(!replaces(&old, &old), "the same text is a retry, not a close");
     }
 
     #[test]

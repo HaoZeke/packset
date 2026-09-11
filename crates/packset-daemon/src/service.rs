@@ -147,11 +147,54 @@ impl Service {
 
         let now = clock::utcnow();
         let mut batch = Vec::new();
+        let closed: Vec<String> = if record::is_live(&atom, &now) {
+            live.iter()
+                .filter(|existing| record::replaces(&atom, existing))
+                .filter_map(|existing| {
+                    existing
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !closed.is_empty() {
+            let supersedes = atom
+                .entry("supersedes")
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Value::Array(ids) = supersedes {
+                for id in &closed {
+                    if !ids.iter().any(|v| v.as_str() == Some(id)) {
+                        ids.push(Value::String(id.clone()));
+                    }
+                }
+            }
+        }
         if record::is_live(&atom, &now) {
             let rewritten = record::apply_links(&mut atom, live, record::LINK_THRESHOLD, &now);
+            let mut rewritten_ids = std::collections::BTreeSet::new();
             for mut peer in rewritten {
+                if let Some(id) = peer.get("id").and_then(Value::as_str) {
+                    rewritten_ids.insert(id.to_string());
+                    if closed.iter().any(|c| c == id) {
+                        record::close_valid_to(&mut peer, &now);
+                    }
+                }
                 peer.insert("ts".into(), Value::String(clock::utcnow()));
                 batch.push(peer);
+            }
+            for existing in live {
+                let Some(id) = existing.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if closed.iter().any(|c| c == id) && !rewritten_ids.contains(id) {
+                    let mut peer = existing.clone();
+                    record::close_valid_to(&mut peer, &now);
+                    peer.insert("ts".into(), Value::String(clock::utcnow()));
+                    batch.push(peer);
+                }
             }
         } else if !atom.contains_key("links") {
             atom.insert("links".into(), Value::Array(Vec::new()));
@@ -974,6 +1017,43 @@ mod tests {
             first["links"],
             json!([two["id"].as_str().unwrap()]),
             "the peer was rewritten, not just the newcomer"
+        );
+    }
+
+    #[test]
+    fn a_contrary_remember_closes_the_live_window() {
+        let (_dir, svc) = service();
+        let mut old = atom("The default fuse is Borda.");
+        old.insert("entities".into(), json!(["fuse", "Borda"]));
+        let old = svc.add(old).unwrap();
+        let mut neu = atom("The default fuse is CombMNZ.");
+        neu.insert("entities".into(), json!(["fuse", "CombMNZ"]));
+        let neu = svc.add(neu).unwrap();
+        let now = packset_core::clock::utcnow();
+        let live: Vec<_> = svc
+            .store()
+            .current("w", None)
+            .unwrap()
+            .into_iter()
+            .filter(|a| packset_core::record::is_live(a, &now))
+            .collect();
+        assert_eq!(live.len(), 1, "the old claim is no longer live");
+        assert_eq!(live[0]["id"], neu["id"]);
+        let closed = svc
+            .store()
+            .get("w", old["id"].as_str().unwrap())
+            .unwrap()
+            .expect("the closed atom stays on disk");
+        assert!(
+            closed.get("valid_to").and_then(Value::as_str).is_some(),
+            "{closed:?}"
+        );
+        let supersedes = neu["supersedes"].as_array().expect("supersedes");
+        assert!(
+            supersedes
+                .iter()
+                .any(|v| v.as_str() == old["id"].as_str()),
+            "{neu:?}"
         );
     }
 
