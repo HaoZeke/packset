@@ -8,6 +8,7 @@
 //! packset ensure | start | stop | status | port | url | which
 //! packset pin [NAME]
 //! packset accessions [WORKSPACE]
+//! packset retrieve --as-of TIMESTAMP [WORKSPACE]
 //! packset citers ACCESSION [WORKSPACE]
 //! ```
 //!
@@ -81,6 +82,7 @@ fn run() -> anyhow::Result<()> {
         "pin" => pin(port, rest.first().map(String::as_str)),
         "accessions" => accessions(port, rest.first().map(String::as_str)),
         "export" => export(port, rest),
+        "retrieve" => retrieve(port, rest),
         "citers" => citers(
             port,
             rest.first().map(String::as_str),
@@ -112,6 +114,7 @@ fn usage() -> String {
          pin [NAME]             read, or set, the pinned set\n\
          accessions [WORKSPACE] deed accessions live atoms cite\n\
          citers ACCESSION [WS]  the live atoms citing one accession\n\
+         retrieve --as-of TS [WS] atoms that were live at TS\n\
          export --into DIR [WS] atoms to a satchel; cited accessions to stdout"
         .to_string()
 }
@@ -303,6 +306,33 @@ fn pin(port: u16, name: Option<&str>) -> anyhow::Result<()> {
         None => client.pin(&workspace)?,
     };
     println!("{}", serde_json::to_string(&answer)?);
+    Ok(())
+}
+
+/// Atoms whose window covered `--as-of`, one JSON object a line.
+fn retrieve(port: u16, args: &[String]) -> anyhow::Result<()> {
+    let mut as_of: Option<String> = None;
+    let mut given: Option<String> = None;
+    let mut at = 0;
+    while at < args.len() {
+        match args[at].as_str() {
+            "--as-of" => {
+                at += 1;
+                as_of = Some(
+                    args.get(at)
+                        .ok_or_else(|| anyhow::anyhow!("retrieve needs --as-of TIMESTAMP"))?
+                        .clone(),
+                );
+            }
+            other => given = Some(other.to_string()),
+        }
+        at += 1;
+    }
+    let as_of = as_of.ok_or_else(|| anyhow::anyhow!("retrieve needs --as-of TIMESTAMP"))?;
+    let workspace = workspace(given.as_deref())?;
+    for atom in client(port).retrieve(&workspace, &as_of)? {
+        println!("{}", serde_json::to_string(&atom)?);
+    }
     Ok(())
 }
 

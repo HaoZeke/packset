@@ -551,6 +551,23 @@ impl Service {
         }
     }
 
+    /// Atoms whose window covered `as_of`.
+    ///
+    /// # Errors
+    ///
+    /// [`AtomError`] when `as_of` is not a timestamp, else the store's.
+    pub fn retrieve(&self, workspace: &str, as_of: &str) -> anyhow::Result<Value> {
+        if clock::parse_millis(as_of).is_none() {
+            anyhow::bail!(AtomError("as_of must be a timestamp".into()));
+        }
+        let atoms = self.store.as_of(workspace, as_of)?;
+        Ok(json!({
+            "workspace": workspace,
+            "as_of": as_of,
+            "atoms": atoms,
+        }))
+    }
+
     /// Ranked hits, and which engine produced them.
     ///
     /// The projection answers when it is there and the linear scan otherwise,
@@ -568,6 +585,26 @@ impl Service {
         limit: usize,
         set: Option<&str>,
         panel: &packset_core::Panel,
+    ) -> anyhow::Result<Value> {
+        self.search_at(workspace, query, limit, set, panel, None)
+    }
+
+    /// Ranked hits over the live set, or over the set that was live at `as_of`.
+    ///
+    /// A dated search cannot use the live projection: that index has already
+    /// dropped the closed atoms. It scores the dated corpus itself.
+    ///
+    /// # Errors
+    ///
+    /// [`AtomError`] for a bad set name or timestamp, else the store's.
+    pub fn search_at(
+        &self,
+        workspace: &str,
+        query: &str,
+        limit: usize,
+        set: Option<&str>,
+        panel: &packset_core::Panel,
+        as_of: Option<&str>,
     ) -> anyhow::Result<Value> {
         let named = match set {
             Some(raw) => Some(
@@ -590,9 +627,32 @@ impl Service {
             ),
         };
         // The snapshot and the index over it come as a pair: an ordinal in the
-        // index means a position in that snapshot and in no other.
-        let (atoms, index) = self.store.searchable(workspace)?;
-        let now = clock::utcnow();
+        // index means a position in that snapshot and in no other. A dated
+        // search builds both over the window that covered `as_of`, because the
+        // live snapshot has already dropped those atoms.
+        let now;
+        let atoms;
+        let index;
+        if let Some(at) = as_of {
+            if clock::parse_millis(at).is_none() {
+                anyhow::bail!(AtomError("as_of must be a timestamp".into()));
+            }
+            now = at.to_string();
+            let dated = self.store.as_of(workspace, at)?;
+            let documents: Vec<Vec<String>> = dated
+                .iter()
+                .map(packset_core::search::atom_tokens)
+                .collect();
+            index = std::sync::Arc::new(packset_core::bm25::Index::build(
+                documents.iter().map(Vec::as_slice),
+            ));
+            atoms = std::sync::Arc::new(dated);
+        } else {
+            now = clock::utcnow();
+            let pair = self.store.searchable(workspace)?;
+            atoms = pair.0;
+            index = pair.1;
+        }
 
         if packset_core::search::tokens(query).is_empty() {
             return Ok(json!({"hits": [], "engine": "linear"}));
@@ -628,7 +688,13 @@ impl Service {
             .map(|vector| packset_core::search::search_dense(&ask, &vector))
             .filter(|hits| !hits.is_empty());
 
-        let projected = crate::milli::search(corpus, query, limit, &dir, scope);
+        // milli is a live-now projection. A dated search would rank atoms
+        // the projection has already deleted.
+        let projected = if as_of.is_some() {
+            None
+        } else {
+            crate::milli::search(corpus, query, limit, &dir, scope)
+        };
         let (mut ranked, engine) = match projected {
             Some(atom_hits) => {
                 // Prose always comes from the pack, so the index copy of a card
@@ -1078,6 +1144,96 @@ mod tests {
             .and_then(Value::as_array)
             .is_some_and(|links| links.iter().any(|v| v.as_str() == old["id"].as_str()));
         assert!(!linked_to_closed, "a close is not a link: {neu:?}");
+    }
+
+    #[test]
+    fn a_dated_retrieve_returns_what_was_live_then() {
+        let (_dir, svc) = service();
+        svc.store()
+            .upsert(
+                &json!({
+                    "id": "then",
+                    "workspace": "w",
+                    "kind": "habit",
+                    "text": "The default fuse is Borda.",
+                    "valid_from": "2026-01-01T00:00:00.000Z",
+                    "valid_to": "2026-06-01T00:00:00.000Z"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            )
+            .unwrap();
+        svc.store()
+            .upsert(
+                &json!({
+                    "id": "now",
+                    "workspace": "w",
+                    "kind": "habit",
+                    "text": "The default fuse is CombMNZ.",
+                    "valid_from": "2026-06-01T00:00:00.000Z"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            )
+            .unwrap();
+
+        let spring = svc.retrieve("w", "2026-04-01T00:00:00.000Z").unwrap();
+        let spring_ids: Vec<&str> = spring["atoms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(spring_ids, vec!["then"], "{spring:?}");
+        assert_eq!(spring["as_of"], json!("2026-04-01T00:00:00.000Z"));
+
+        let autumn = svc.retrieve("w", "2026-09-01T00:00:00.000Z").unwrap();
+        let autumn_ids: Vec<&str> = autumn["atoms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(autumn_ids, vec!["now"], "{autumn:?}");
+
+        let panel = packset_core::Panel::default();
+        let dated = svc
+            .search_at(
+                "w",
+                "Borda",
+                8,
+                None,
+                &panel,
+                Some("2026-04-01T00:00:00.000Z"),
+            )
+            .unwrap();
+        let dated_ids: Vec<&str> = dated["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|h| h.get("id").and_then(Value::as_str))
+            .collect();
+        assert!(
+            dated_ids.contains(&"then"),
+            "dated search must still find the closed claim: {dated:?}"
+        );
+
+        let live = svc.search("w", "Borda", 8, None, &panel).unwrap();
+        let live_ids: Vec<&str> = live["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|h| h.get("id").and_then(Value::as_str))
+            .collect();
+        assert!(
+            !live_ids.contains(&"then"),
+            "live-now search still drops the closed window: {live:?}"
+        );
+
+        let err = svc.retrieve("w", "not-a-stamp").unwrap_err();
+        assert!(err.to_string().contains("timestamp"), "{err}");
     }
 
     #[test]

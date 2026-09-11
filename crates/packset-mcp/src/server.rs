@@ -13,7 +13,7 @@
 //! rather than letting an agent curl the port.
 //!
 //! What the pack knows and what it cites are different questions and both are
-//! here. `search` and `recall` answer the first. `accessions` and `citers`
+//! here. `search`, `recall`, and `retrieve` answer the first. `accessions` and `citers`
 //! answer the second, and they are how an agent crosses from a claim the seat
 //! remembers to the deed that backs it, which is the join this whole stack is
 //! built around.
@@ -131,6 +131,46 @@ impl PacksetServer {
                     text: hit.text,
                     kind: hit.kind,
                     score: hit.score,
+                })
+                .collect(),
+        ))
+    }
+
+    #[tool(
+        description = "Atoms that were live at a timestamp. Search answers live-now; this is the dated window over valid_from and valid_to.",
+        annotations(
+            title = "Retrieve as-of a date",
+            read_only_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn packset_retrieve(
+        &self,
+        Parameters(args): Parameters<RetrieveArgs>,
+    ) -> Result<Json<Vec<AtomRow>>, McpError> {
+        let workspace = self.workspace_for(args.workspace.as_deref());
+        let atoms = client(self.port)
+            .retrieve(&workspace, &args.as_of)
+            .map_err(down)?;
+        Ok(Json(
+            atoms
+                .iter()
+                .map(|atom| AtomRow {
+                    id: atom
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    text: atom
+                        .get("text")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    kind: atom
+                        .get("kind")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    score: 0.0,
                 })
                 .collect(),
         ))

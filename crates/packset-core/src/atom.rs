@@ -5,12 +5,31 @@ pub const SCHEMA: &str = "inside.atom/v1";
 
 /// Live = not a tombstone and `valid_to` is missing or still open.
 pub fn is_live(tombstone: bool, valid_to: Option<&str>, now: &str) -> bool {
+    is_live_at(tombstone, None, valid_to, now)
+}
+
+/// Live at `at`: not a tombstone, `valid_from` missing or already open, and
+/// `valid_to` missing or still open.
+///
+/// `valid_from` is inclusive and `valid_to` is exclusive, matching how the
+/// store already compares the close. A missing bound is an open end.
+pub fn is_live_at(
+    tombstone: bool,
+    valid_from: Option<&str>,
+    valid_to: Option<&str>,
+    at: &str,
+) -> bool {
     if tombstone {
         return false;
     }
+    if let Some(from) = valid_from {
+        if !from.is_empty() && from > at {
+            return false;
+        }
+    }
     match valid_to {
         None | Some("") => true,
-        Some(until) => until > now,
+        Some(until) => until > at,
     }
 }
 
@@ -125,6 +144,44 @@ mod tests {
             "2026-08-20T00:00:00Z"
         ));
         assert!(!is_live(true, None, "2026-08-20T00:00:00Z"));
+    }
+
+    #[test]
+    fn live_at_reads_both_ends_of_the_window() {
+        let at = "2026-04-01T00:00:00.000Z";
+        assert!(is_live_at(false, None, None, at));
+        assert!(is_live_at(
+            false,
+            Some("2026-01-01T00:00:00.000Z"),
+            Some("2026-06-01T00:00:00.000Z"),
+            at
+        ));
+        assert!(!is_live_at(
+            false,
+            Some("2026-05-01T00:00:00.000Z"),
+            None,
+            at
+        ));
+        assert!(!is_live_at(
+            false,
+            Some("2026-01-01T00:00:00.000Z"),
+            Some("2026-03-01T00:00:00.000Z"),
+            at
+        ));
+        assert!(
+            is_live_at(false, Some(at), None, at),
+            "valid_from is inclusive"
+        );
+        assert!(
+            !is_live_at(false, None, Some(at), at),
+            "valid_to is exclusive"
+        );
+        assert!(!is_live_at(
+            true,
+            Some("2026-01-01T00:00:00.000Z"),
+            None,
+            at
+        ));
     }
 
     #[test]

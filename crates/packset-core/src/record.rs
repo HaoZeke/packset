@@ -360,6 +360,31 @@ pub fn is_live(atom: &Map<String, Value>, now: &str) -> bool {
     }
 }
 
+/// Bound from `valid_from` or `valid_to`. Missing, null, and empty are open.
+fn window_bound(atom: &Map<String, Value>, key: &str) -> Option<String> {
+    match atom.get(key) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if s.is_empty() => None,
+        Some(other) => Some(value_text(other)),
+    }
+}
+
+/// Whether the atom's window covers `at`.
+///
+/// Live-now search does not ask this: it filters on `valid_to` against the
+/// clock. A dated retrieve has to read both ends, or a closed atom can never
+/// be the answer to "what was live then".
+#[must_use]
+pub fn is_live_at(atom: &Map<String, Value>, at: &str) -> bool {
+    let tombstone = atom
+        .get("tombstone")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let valid_from = window_bound(atom, "valid_from");
+    let valid_to = window_bound(atom, "valid_to");
+    crate::atom::is_live_at(tombstone, valid_from.as_deref(), valid_to.as_deref(), at)
+}
+
 /// Review clock. A missing `due_at` is not due, and `valid_to` is not consulted.
 #[must_use]
 pub fn is_due(atom: &Map<String, Value>, now: &str) -> bool {
@@ -1012,6 +1037,27 @@ mod tests {
             now
         ));
         assert!(!is_live(&atom(json!({"tombstone": true})), now));
+    }
+
+    #[test]
+    fn a_dated_window_reads_valid_from_and_valid_to() {
+        let at = "2026-04-01T00:00:00.000Z";
+        let closed = atom(json!({
+            "valid_from": "2026-01-01T00:00:00.000Z",
+            "valid_to": "2026-03-01T00:00:00.000Z"
+        }));
+        let then = atom(json!({
+            "valid_from": "2026-01-01T00:00:00.000Z",
+            "valid_to": "2026-06-01T00:00:00.000Z"
+        }));
+        let later = atom(json!({"valid_from": "2026-05-01T00:00:00.000Z"}));
+        assert!(!is_live_at(&closed, at));
+        assert!(is_live_at(&then, at));
+        assert!(!is_live_at(&later, at));
+        // Live-now still ignores valid_from: a future start stays in the
+        // current set until something closes it.
+        assert!(is_live(&later, at));
+        assert!(!is_live_at(&atom(json!({"tombstone": true})), at));
     }
 
     #[test]

@@ -28,6 +28,16 @@ pub struct WorkspaceArgs {
     pub workspace: Option<String>,
 }
 
+/// A dated retrieve: the atoms that were live at one timestamp.
+#[derive(Deserialize, JsonSchema)]
+pub struct RetrieveArgs {
+    /// Instant the window is asked about, `YYYY-MM-DDTHH:MM:SS.mmmZ`.
+    pub as_of: String,
+    /// Which workspace. The seat's own when omitted.
+    #[serde(default)]
+    pub workspace: Option<String>,
+}
+
 /// One accession, and where to look for what cites it.
 #[derive(Deserialize, JsonSchema)]
 pub struct CitersArgs {

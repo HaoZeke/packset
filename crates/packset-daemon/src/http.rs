@@ -183,9 +183,23 @@ fn route(
         },
         (Method::Get, "/v1/atoms") => match required(query, "workspace") {
             Err(a) => a,
-            Ok(workspace) => match service.store().live(&workspace) {
-                Ok(atoms) => Answer::ok(json!({ "atoms": atoms.as_ref() })),
-                Err(e) => Answer::err(400, e),
+            Ok(workspace) => match as_of_param(query) {
+                Err(a) => a,
+                Ok(Some(as_of)) => answer(service.retrieve(&workspace, &as_of)),
+                Ok(None) => match service.store().live(&workspace) {
+                    Ok(atoms) => Answer::ok(json!({ "atoms": atoms.as_ref() })),
+                    Err(e) => Answer::err(400, e),
+                },
+            },
+        },
+        (Method::Get, "/v1/retrieve") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => match required(query, "as_of") {
+                Err(a) => a,
+                Ok(as_of) => match as_of_stamp(&as_of) {
+                    Err(a) => a,
+                    Ok(as_of) => answer(service.retrieve(&workspace, &as_of)),
+                },
             },
         },
         // The deed accessions a workspace's live atoms cite, so `deedar
@@ -296,7 +310,17 @@ fn route(
                 };
                 let q = query.get("q").cloned().unwrap_or_default();
                 let set = query.get("set").filter(|s| !s.is_empty());
-                answer(service.search(&workspace, &q, limit, set.map(String::as_str), panel))
+                match as_of_param(query) {
+                    Err(a) => a,
+                    Ok(as_of) => answer(service.search_at(
+                        &workspace,
+                        &q,
+                        limit,
+                        set.map(String::as_str),
+                        panel,
+                        as_of.as_deref(),
+                    )),
+                }
             }
         },
         (Method::Get, "/v1/recall") => match required(query, "workspace") {
@@ -542,6 +566,21 @@ fn required<L: Lookup>(source: &L, key: &str) -> Result<String, Answer> {
         .ok_or_else(|| Answer::err(400, format!("{key} required")))
 }
 
+fn as_of_stamp(raw: &str) -> Result<String, Answer> {
+    if packset_core::clock::parse_millis(raw).is_none() {
+        Err(Answer::err(400, "as_of must be a timestamp"))
+    } else {
+        Ok(raw.to_string())
+    }
+}
+
+fn as_of_param(query: &HashMap<String, String>) -> Result<Option<String>, Answer> {
+    match query.get("as_of").filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(raw) => as_of_stamp(raw).map(Some),
+    }
+}
+
 fn truthy(raw: Option<&str>) -> bool {
     matches!(raw, Some("1" | "true" | "yes"))
 }
@@ -666,5 +705,27 @@ mod tests {
         assert_eq!(percent_decode("a+b"), "a b");
         assert_eq!(percent_decode("100%"), "100%");
         assert_eq!(percent_decode("%zz"), "%zz");
+    }
+
+    #[test]
+    fn as_of_refuses_a_string_that_is_not_a_stamp() {
+        let mut query = HashMap::new();
+        query.insert("as_of".into(), "yesterday".into());
+        match as_of_param(&query) {
+            Err(err) => {
+                assert_eq!(err.code, 400);
+                assert_eq!(err.body["error"], json!("as_of must be a timestamp"));
+            }
+            Ok(got) => panic!("expected a refusal, got {got:?}"),
+        }
+        query.insert("as_of".into(), "2026-04-01T00:00:00.000Z".into());
+        match as_of_param(&query) {
+            Ok(got) => assert_eq!(got.as_deref(), Some("2026-04-01T00:00:00.000Z")),
+            Err(err) => panic!("stamp refused: {}", err.body),
+        }
+        match as_of_param(&HashMap::new()) {
+            Ok(got) => assert_eq!(got, None),
+            Err(err) => panic!("empty query refused: {}", err.body),
+        }
     }
 }

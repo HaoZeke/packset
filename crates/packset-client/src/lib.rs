@@ -154,12 +154,31 @@ impl PacksetClient {
     }
 
     pub fn search(&self, workspace: &str, q: &str, limit: u32) -> Result<Vec<Hit>, Error> {
+        self.search_at(workspace, q, limit, None)
+    }
+
+    /// Ranked hits, optionally over the set that was live at `as_of`.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn search_at(
+        &self,
+        workspace: &str,
+        q: &str,
+        limit: u32,
+        as_of: Option<&str>,
+    ) -> Result<Vec<Hit>, Error> {
         let url = format!("{}/v1/search", self.base);
-        let body: serde_json::Value = ureq::get(&url)
+        let mut req = ureq::get(&url)
             .query("workspace", workspace)
             .query("q", q)
             .query("limit", &limit.to_string())
-            .timeout(TIMEOUT)
+            .timeout(TIMEOUT);
+        if let Some(as_of) = as_of {
+            req = req.query("as_of", as_of);
+        }
+        let body: serde_json::Value = req
             .call()
             .map_err(|e| Error::Http(Box::new(e)))?
             .into_json()?;
@@ -168,6 +187,27 @@ impl PacksetClient {
             .cloned()
             .unwrap_or(serde_json::Value::Array(vec![]));
         Ok(serde_json::from_value(hits)?)
+    }
+
+    /// Atoms whose window covered `as_of`.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn retrieve(&self, workspace: &str, as_of: &str) -> Result<Vec<serde_json::Value>, Error> {
+        let url = format!("{}/v1/retrieve", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .query("as_of", as_of)
+            .timeout(TIMEOUT)
+            .call()
+            .map_err(|e| Error::Http(Box::new(e)))?
+            .into_json()?;
+        let atoms = body
+            .get("atoms")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        Ok(serde_json::from_value(atoms)?)
     }
 
     /// Seat home, atom counts by kind, pin, index and embedder.

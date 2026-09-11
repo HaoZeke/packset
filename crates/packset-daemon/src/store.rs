@@ -331,6 +331,24 @@ impl Store {
         Ok((atoms, index))
     }
 
+    /// Atoms whose window covered `at`, including ones that have since closed.
+    ///
+    /// The live snapshot drops a closed atom, so a dated question has to scan
+    /// the store. Due-but-expired atoms stay out: this is the validity window,
+    /// not the review clock.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the scan does.
+    pub fn as_of(&self, workspace: &str, at: &str) -> anyhow::Result<Vec<Record>> {
+        let stored: Vec<Record> = self
+            .scan(Some(workspace))?
+            .into_iter()
+            .filter(|atom| record::is_live_at(atom, at))
+            .collect();
+        Ok(shown_from(&stored))
+    }
+
     /// The live and due records in one workspace, as a copy the caller owns.
     ///
     /// # Errors
@@ -514,6 +532,54 @@ mod tests {
         assert!(ids.contains(&"live".to_string()), "{ids:?}");
         assert!(ids.contains(&"due".to_string()), "{ids:?}");
         assert!(!ids.contains(&"gone".to_string()), "{ids:?}");
+    }
+
+    #[test]
+    fn as_of_returns_the_window_that_covered_the_date() {
+        let (_dir, store) = store();
+        store
+            .upsert(&record(json!({
+                "id": "then", "workspace": "w", "text": "then",
+                "valid_from": "2026-01-01T00:00:00.000Z",
+                "valid_to": "2026-06-01T00:00:00.000Z"
+            })))
+            .unwrap();
+        store
+            .upsert(&record(json!({
+                "id": "now", "workspace": "w", "text": "now",
+                "valid_from": "2026-06-01T00:00:00.000Z"
+            })))
+            .unwrap();
+        store
+            .upsert(&record(json!({
+                "id": "gone", "workspace": "w", "text": "gone",
+                "valid_from": "2026-01-01T00:00:00.000Z",
+                "valid_to": "2026-06-01T00:00:00.000Z",
+                "tombstone": true
+            })))
+            .unwrap();
+        let spring: Vec<String> = store
+            .as_of("w", "2026-04-01T00:00:00.000Z")
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(spring, vec!["then".to_string()], "{spring:?}");
+        let autumn: Vec<String> = store
+            .as_of("w", "2026-09-01T00:00:00.000Z")
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(autumn, vec!["now".to_string()], "{autumn:?}");
+        assert!(
+            !store
+                .current("w", None)
+                .unwrap()
+                .iter()
+                .any(|a| a["id"] == json!("then")),
+            "live-now still drops the closed window"
+        );
     }
 
     #[test]

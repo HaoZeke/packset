@@ -33,7 +33,7 @@ pub mod search;
 pub mod set_name;
 pub mod tideman;
 
-pub use atom::{entity_jaccard, is_due, is_live, SCHEMA as ATOM_SCHEMA};
+pub use atom::{entity_jaccard, is_due, is_live, is_live_at, SCHEMA as ATOM_SCHEMA};
 pub use borda::{borda_merge, Ballot};
 pub use cheap::{allowed as cheap_allowed, CheapJob, CheapWhen};
 pub use clock::utcnow;
