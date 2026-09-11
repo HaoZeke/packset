@@ -146,55 +146,56 @@ impl Service {
         }
 
         let now = clock::utcnow();
+        let mut closed: Vec<String> = Vec::new();
         let mut batch = Vec::new();
-        let closed: Vec<String> = if record::is_live(&atom, &now) {
-            live.iter()
-                .filter(|existing| record::replaces(&atom, existing))
-                .filter_map(|existing| {
-                    existing
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        if !closed.is_empty() {
-            let supersedes = atom
-                .entry("supersedes")
-                .or_insert_with(|| Value::Array(Vec::new()));
-            if let Value::Array(ids) = supersedes {
-                for id in &closed {
-                    if !ids.iter().any(|v| v.as_str() == Some(id)) {
-                        ids.push(Value::String(id.clone()));
+        if record::is_live(&atom, &now) {
+            for existing in live {
+                if record::replaces(&atom, existing) {
+                    let mut peer = existing.clone();
+                    record::close_valid_to(&mut peer, &now);
+                    peer.insert("ts".into(), Value::String(clock::utcnow()));
+                    if let Some(id) = peer.get("id").and_then(Value::as_str) {
+                        closed.push(id.to_string());
+                    }
+                    batch.push(peer);
+                }
+            }
+            if !closed.is_empty() {
+                let supersedes = atom
+                    .entry("supersedes")
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Value::Array(ids) = supersedes {
+                    for id in &closed {
+                        if !ids.iter().any(|v| v.as_str() == Some(id)) {
+                            ids.push(Value::String(id.clone()));
+                        }
                     }
                 }
             }
         }
         if record::is_live(&atom, &now) {
-            let rewritten = record::apply_links(&mut atom, live, record::LINK_THRESHOLD, &now);
-            let mut rewritten_ids = std::collections::BTreeSet::new();
+            // Closed peers stay out of apply_links: a rewrite of links would
+            // otherwise write them back without valid_to.
+            let remaining: Vec<Record>;
+            let peers: &[Record] = if closed.is_empty() {
+                live
+            } else {
+                remaining = live
+                    .iter()
+                    .filter(|peer| {
+                        peer.get("id")
+                            .and_then(Value::as_str)
+                            .map(|id| !closed.iter().any(|c| c == id))
+                            .unwrap_or(true)
+                    })
+                    .cloned()
+                    .collect();
+                &remaining
+            };
+            let rewritten = record::apply_links(&mut atom, peers, record::LINK_THRESHOLD, &now);
             for mut peer in rewritten {
-                if let Some(id) = peer.get("id").and_then(Value::as_str) {
-                    rewritten_ids.insert(id.to_string());
-                    if closed.iter().any(|c| c == id) {
-                        record::close_valid_to(&mut peer, &now);
-                    }
-                }
                 peer.insert("ts".into(), Value::String(clock::utcnow()));
                 batch.push(peer);
-            }
-            for existing in live {
-                let Some(id) = existing.get("id").and_then(Value::as_str) else {
-                    continue;
-                };
-                if closed.iter().any(|c| c == id) && !rewritten_ids.contains(id) {
-                    let mut peer = existing.clone();
-                    record::close_valid_to(&mut peer, &now);
-                    peer.insert("ts".into(), Value::String(clock::utcnow()));
-                    batch.push(peer);
-                }
             }
         } else if !atom.contains_key("links") {
             atom.insert("links".into(), Value::Array(Vec::new()));
@@ -1050,11 +1051,33 @@ mod tests {
         );
         let supersedes = neu["supersedes"].as_array().expect("supersedes");
         assert!(
-            supersedes
-                .iter()
-                .any(|v| v.as_str() == old["id"].as_str()),
+            supersedes.iter().any(|v| v.as_str() == old["id"].as_str()),
             "{neu:?}"
         );
+        let found = svc
+            .search("w", "Borda", 8, None, &packset_core::Panel::default())
+            .unwrap();
+        let hits = found["hits"].as_array().expect("hits");
+        assert!(
+            hits.iter()
+                .all(|h| h.get("id").and_then(Value::as_str) != old["id"].as_str()),
+            "search filters the closed atom: {found}"
+        );
+        let found_new = svc
+            .search("w", "CombMNZ", 8, None, &packset_core::Panel::default())
+            .unwrap();
+        let new_hits = found_new["hits"].as_array().expect("hits");
+        assert!(
+            new_hits
+                .iter()
+                .any(|h| h.get("id").and_then(Value::as_str) == neu["id"].as_str()),
+            "{found_new}"
+        );
+        let linked_to_closed = neu
+            .get("links")
+            .and_then(Value::as_array)
+            .is_some_and(|links| links.iter().any(|v| v.as_str() == old["id"].as_str()));
+        assert!(!linked_to_closed, "a close is not a link: {neu:?}");
     }
 
     #[test]

@@ -991,7 +991,10 @@ mod tests {
             !replaces(&neighbour, &first),
             "linked claims stay both live"
         );
-        assert!(!replaces(&old, &old), "the same text is a retry, not a close");
+        assert!(
+            !replaces(&old, &old),
+            "the same text is a retry, not a close"
+        );
     }
 
     #[test]
