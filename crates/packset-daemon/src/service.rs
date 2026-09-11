@@ -565,16 +565,6 @@ impl Service {
         }
     }
 
-    /// Ranked hits, and which engine produced them.
-    ///
-    /// The projection answers when it is there and the linear scan otherwise,
-    /// and every failure in the projection falls back rather than returning a
-    /// partial answer: a wrong answer that looks complete is worse than a
-    /// slower one that is right.
-    ///
-    /// # Errors
-    ///
-    /// [`AtomError`] for a bad set name, else the store's.
     /// The atoms that were live at `at`.
     ///
     /// Live-now is the snapshot. This is the dated retrieve over the same
@@ -583,12 +573,27 @@ impl Service {
     ///
     /// # Errors
     ///
-    /// The store's.
+    /// The store's, or a stamp `parse_millis` will not accept.
     pub fn as_of(&self, workspace: &str, at: &str) -> anyhow::Result<Value> {
-        let atoms = self.store.as_of(workspace, at)?;
+        let at =
+            clock::canonicalize(at).ok_or_else(|| anyhow::anyhow!("as_of must be a timestamp"))?;
+        let atoms = self.store.as_of(workspace, &at)?;
         Ok(json!({ "atoms": atoms, "as_of": at }))
     }
 
+    /// Ranked hits, and which engine produced them.
+    ///
+    /// The projection answers when it is there and the linear scan otherwise,
+    /// and every failure in the projection falls back rather than returning a
+    /// partial answer: a wrong answer that looks complete is worse than a
+    /// slower one that is right.
+    ///
+    /// `as_of` is the dated retrieve: the atoms whose window was open then,
+    /// not the live snapshot. Omit it for live-now.
+    ///
+    /// # Errors
+    ///
+    /// [`AtomError`] for a bad set name, else the store's.
     pub fn search(
         &self,
         workspace: &str,
@@ -622,8 +627,15 @@ impl Service {
         // index means a position in that snapshot and in no other. A dated
         // retrieve cannot use the live cache: that cache already dropped the
         // closed window.
-        let now = as_of.map(str::to_string).unwrap_or_else(clock::utcnow);
-        let dated = as_of.map(|at| self.store.as_of(workspace, at));
+        let as_of = match as_of {
+            Some(raw) => Some(
+                clock::canonicalize(raw)
+                    .ok_or_else(|| anyhow::anyhow!("as_of must be a timestamp"))?,
+            ),
+            None => None,
+        };
+        let now = as_of.clone().unwrap_or_else(clock::utcnow);
+        let dated = as_of.as_deref().map(|at| self.store.as_of(workspace, at));
         let (atoms, index) = match dated {
             Some(scan) => {
                 let atoms = std::sync::Arc::new(scan?);
@@ -1110,7 +1122,7 @@ mod tests {
             "{neu:?}"
         );
         let found = svc
-            .search("w", "Borda", 8, None, &packset_core::Panel::default())
+            .search("w", "Borda", 8, None, &packset_core::Panel::default(), None)
             .unwrap();
         let hits = found["hits"].as_array().expect("hits");
         assert!(
@@ -1119,7 +1131,14 @@ mod tests {
             "search filters the closed atom: {found}"
         );
         let found_new = svc
-            .search("w", "CombMNZ", 8, None, &packset_core::Panel::default())
+            .search(
+                "w",
+                "CombMNZ",
+                8,
+                None,
+                &packset_core::Panel::default(),
+                None,
+            )
             .unwrap();
         let new_hits = found_new["hits"].as_array().expect("hits");
         assert!(
@@ -1186,6 +1205,9 @@ mod tests {
             .collect();
         assert_eq!(then_ids, vec!["old"], "{then}");
         assert_eq!(then["as_of"], json!("2024-06-01T00:00:00.000Z"));
+        let offset = svc.as_of("w", "2024-06-01T00:00:00+00:00").unwrap();
+        assert_eq!(offset["as_of"], json!("2024-06-01T00:00:00.000Z"));
+        assert_eq!(offset["atoms"], then["atoms"]);
         let later = svc.as_of("w", "2025-01-01T00:00:00.000Z").unwrap();
         let later_ids: Vec<&str> = later["atoms"]
             .as_array()

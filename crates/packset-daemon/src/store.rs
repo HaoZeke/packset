@@ -341,10 +341,12 @@ impl Store {
     ///
     /// Fails when the scan does.
     pub fn as_of(&self, workspace: &str, at: &str) -> anyhow::Result<Vec<Record>> {
+        let at = packset_core::clock::canonicalize(at)
+            .ok_or_else(|| anyhow::anyhow!("as_of must be a timestamp"))?;
         let stored: Vec<Record> = self
             .scan(Some(workspace))?
             .into_iter()
-            .filter(|atom| record::is_live_at(atom, at))
+            .filter(|atom| record::is_live_at(atom, &at))
             .collect();
         Ok(shown_from(&stored))
     }
@@ -560,6 +562,9 @@ mod tests {
         let mid = store.as_of("w", "2024-06-01T00:00:00.000Z").unwrap();
         let mid_ids: Vec<&str> = mid.iter().filter_map(|a| a["id"].as_str()).collect();
         assert_eq!(mid_ids, vec!["then"], "{mid:?}");
+        let offset = store.as_of("w", "2024-06-01T00:00:00+00:00").unwrap();
+        let offset_ids: Vec<&str> = offset.iter().filter_map(|a| a["id"].as_str()).collect();
+        assert_eq!(offset_ids, mid_ids, "offset and Z as_of agree");
         let today = store.as_of("w", "2025-06-01T00:00:00.000Z").unwrap();
         let today_ids: Vec<&str> = today.iter().filter_map(|a| a["id"].as_str()).collect();
         assert_eq!(today_ids, vec!["now"], "{today:?}");

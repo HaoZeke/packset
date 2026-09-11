@@ -560,11 +560,15 @@ impl Lookup for Map<String, Value> {
 }
 
 /// A dated retrieve stamp, or none when the caller asked for live-now.
+///
+/// The query may spell the instant the way parse_millis already accepts
+/// (`+00:00`, a space instead of `T`, missing millis). The window compare
+/// is a string compare, so the value that leaves here is the store form.
 fn as_of_stamp(query: &HashMap<String, String>) -> Result<Option<String>, Answer> {
     match query.get("as_of").filter(|s| !s.is_empty()) {
         None => Ok(None),
-        Some(raw) => match packset_core::clock::parse_millis(raw) {
-            Some(_) => Ok(Some(raw.clone())),
+        Some(raw) => match packset_core::clock::canonicalize(raw) {
+            Some(at) => Ok(Some(at)),
             None => Err(Answer::err(400, "as_of must be a timestamp")),
         },
     }
@@ -706,6 +710,21 @@ mod tests {
         ));
         q.insert("as_of".into(), "not-a-date".into());
         assert!(matches!(as_of_stamp(&q), Err(a) if a.code == 400));
+    }
+
+    #[test]
+    fn a_plus_offset_as_of_agrees_with_the_store_form() {
+        let mut q = HashMap::new();
+        q.insert("as_of".into(), "2024-06-01T00:00:00+00:00".into());
+        assert!(matches!(
+            as_of_stamp(&q),
+            Ok(Some(ref s)) if s == "2024-06-01T00:00:00.000Z"
+        ));
+        q.insert("as_of".into(), "2024-06-01 00:00:00".into());
+        assert!(matches!(
+            as_of_stamp(&q),
+            Ok(Some(ref s)) if s == "2024-06-01T00:00:00.000Z"
+        ));
     }
 
     #[test]
