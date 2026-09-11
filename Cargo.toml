@@ -14,7 +14,9 @@ members = [
 edition = "2021"
 license = "MIT"
 version = "0.2.0"
-publish = false
+publish = true
+repository = "https://github.com/leidarljos/packset"
+homepage = "https://leidarljos.github.io/packset/"
 
 [workspace.dependencies]
 anyhow = "1"
