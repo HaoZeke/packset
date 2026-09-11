@@ -573,9 +573,11 @@ impl Service {
     ///
     /// # Errors
     ///
-    /// The store's.
+    /// The store's, or a stamp `parse_millis` will not accept.
     pub fn as_of(&self, workspace: &str, at: &str) -> anyhow::Result<Value> {
-        let atoms = self.store.as_of(workspace, at)?;
+        let at =
+            clock::canonicalize(at).ok_or_else(|| anyhow::anyhow!("as_of must be a timestamp"))?;
+        let atoms = self.store.as_of(workspace, &at)?;
         Ok(json!({ "atoms": atoms, "as_of": at }))
     }
 
@@ -587,14 +589,16 @@ impl Service {
     /// slower one that is right.
     ///
     /// `as_of` is the dated retrieve: the atoms whose window was open then,
-    /// not the live snapshot. `rerank` is the measured cross-encoder second
-    /// stage. Off unless the caller asked: the stage is a forward pass a
-    /// candidate, and the default first-stage ranking is what a seat already
-    /// gets.
+    /// not the live snapshot. A parseable stamp is rewritten to the store form
+    /// so the window compare is the same as live-now. Omit it for live-now.
+    /// `rerank` is the measured cross-encoder second stage. Off unless the
+    /// caller asked: the stage is a forward pass a candidate, and the default
+    /// first-stage ranking is what a seat already gets.
     ///
     /// # Errors
     ///
-    /// [`AtomError`] for a bad set name, else the store's.
+    /// [`AtomError`] for a bad set name, a stamp `parse_millis` will not
+    /// accept, else the store's.
     #[allow(clippy::too_many_arguments)]
     pub fn search(
         &self,
@@ -630,8 +634,15 @@ impl Service {
         // index means a position in that snapshot and in no other. A dated
         // retrieve cannot use the live cache: that cache already dropped the
         // closed window.
-        let now = as_of.map(str::to_string).unwrap_or_else(clock::utcnow);
-        let dated = as_of.map(|at| self.store.as_of(workspace, at));
+        let as_of = match as_of {
+            Some(raw) => Some(
+                clock::canonicalize(raw)
+                    .ok_or_else(|| anyhow::anyhow!("as_of must be a timestamp"))?,
+            ),
+            None => None,
+        };
+        let now = as_of.clone().unwrap_or_else(clock::utcnow);
+        let dated = as_of.as_deref().map(|at| self.store.as_of(workspace, at));
         let (atoms, index) = match dated {
             Some(scan) => {
                 let atoms = std::sync::Arc::new(scan?);
@@ -1244,6 +1255,15 @@ mod tests {
             .collect();
         assert_eq!(then_ids, vec!["old"], "{then}");
         assert_eq!(then["as_of"], json!("2024-06-01T00:00:00.000Z"));
+        let offset = svc.as_of("w", "2024-06-01T00:00:00+00:00").unwrap();
+        let offset_ids: Vec<&str> = offset["atoms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|a| a["id"].as_str())
+            .collect();
+        assert_eq!(offset_ids, then_ids, "{offset}");
+        assert_eq!(offset["as_of"], json!("2024-06-01T00:00:00.000Z"));
         let later = svc.as_of("w", "2025-01-01T00:00:00.000Z").unwrap();
         let later_ids: Vec<&str> = later["atoms"]
             .as_array()
@@ -1273,6 +1293,25 @@ mod tests {
             .collect();
         assert_eq!(hit_ids, vec!["old"], "{hits}");
         assert_eq!(hits["as_of"], json!("2024-06-01T00:00:00.000Z"));
+        let offset_hits = svc
+            .search(
+                "w",
+                "Borda",
+                8,
+                None,
+                &panel,
+                Some("2024-06-01T00:00:00+00:00"),
+                false,
+            )
+            .unwrap();
+        let offset_hit_ids: Vec<&str> = offset_hits["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|h| h["id"].as_str())
+            .collect();
+        assert_eq!(offset_hit_ids, hit_ids, "{offset_hits}");
+        assert_eq!(offset_hits["as_of"], json!("2024-06-01T00:00:00.000Z"));
         let now_hits = svc
             .search("w", "Borda", 8, None, &panel, None, false)
             .unwrap();

@@ -59,6 +59,17 @@ pub fn parse_millis(text: &str) -> Option<i64> {
     Some(days * 86_400_000 + hour * 3_600_000 + minute * 60_000 + second * 1000 + millis)
 }
 
+/// Rewrite any stamp [`parse_millis`] accepts into the store form.
+///
+/// Atoms compare timestamps as strings, so a caller-supplied `+00:00`,
+/// space instead of `T`, or missing-millis form has to become
+/// `YYYY-MM-DDTHH:MM:SS.mmmZ` before it is compared to `valid_from` /
+/// `valid_to`.
+#[must_use]
+pub fn canonicalize(text: &str) -> Option<String> {
+    parse_millis(text).map(format_millis)
+}
+
 /// A stored timestamp shifted by whole seconds, in the same format.
 #[must_use]
 pub fn shift(text: &str, seconds: i64) -> Option<String> {
@@ -137,6 +148,27 @@ mod tests {
             parse_millis("2026-01-01T00:00:00+00:00"),
             parse_millis("2026-01-01T00:00:00.000Z")
         );
+    }
+
+    #[test]
+    fn a_caller_stamp_rewrites_to_the_store_form() {
+        assert_eq!(
+            canonicalize("2024-06-01T00:00:00+00:00").as_deref(),
+            Some("2024-06-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            canonicalize("2024-06-01T00:00:00.000Z").as_deref(),
+            Some("2024-06-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            canonicalize("2024-06-01 00:00:00").as_deref(),
+            Some("2024-06-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            canonicalize("2024-06-01 00:00:00.000Z").as_deref(),
+            Some("2024-06-01T00:00:00.000Z")
+        );
+        assert_eq!(canonicalize("not-a-date"), None);
     }
 
     #[test]
