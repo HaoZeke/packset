@@ -183,9 +183,13 @@ fn route(
         },
         (Method::Get, "/v1/atoms") => match required(query, "workspace") {
             Err(a) => a,
-            Ok(workspace) => match service.store().live(&workspace) {
-                Ok(atoms) => Answer::ok(json!({ "atoms": atoms.as_ref() })),
-                Err(e) => Answer::err(400, e),
+            Ok(workspace) => match as_of_stamp(query) {
+                Err(a) => a,
+                Ok(Some(at)) => answer(service.as_of(&workspace, &at)),
+                Ok(None) => match service.store().live(&workspace) {
+                    Ok(atoms) => Answer::ok(json!({ "atoms": atoms.as_ref() })),
+                    Err(e) => Answer::err(400, e),
+                },
             },
         },
         // The deed accessions a workspace's live atoms cite, so `deedar
@@ -227,14 +231,23 @@ fn route(
                 Ok(workspace) => match service.store().get(&workspace, id) {
                     Err(e) => Answer::err(400, e),
                     Ok(None) => Answer::err(404, "no atom"),
-                    Ok(Some(atom)) => {
-                        let now = packset_core::clock::utcnow();
-                        if packset_core::record::is_live(&atom, &now) {
-                            Answer::ok(Value::Object(atom))
-                        } else {
-                            Answer::err(404, "no atom")
+                    Ok(Some(atom)) => match as_of_stamp(query) {
+                        Err(a) => a,
+                        Ok(at) => {
+                            let dated = at.is_some();
+                            let now = at.unwrap_or_else(packset_core::clock::utcnow);
+                            let live = if dated {
+                                packset_core::record::is_live_at(&atom, &now)
+                            } else {
+                                packset_core::record::is_live(&atom, &now)
+                            };
+                            if live {
+                                Answer::ok(Value::Object(atom))
+                            } else {
+                                Answer::err(404, "no atom")
+                            }
                         }
-                    }
+                    },
                 },
             }
         }
@@ -296,7 +309,17 @@ fn route(
                 };
                 let q = query.get("q").cloned().unwrap_or_default();
                 let set = query.get("set").filter(|s| !s.is_empty());
-                answer(service.search(&workspace, &q, limit, set.map(String::as_str), panel))
+                match as_of_stamp(query) {
+                    Err(a) => a,
+                    Ok(at) => answer(service.search(
+                        &workspace,
+                        &q,
+                        limit,
+                        set.map(String::as_str),
+                        panel,
+                        at.as_deref(),
+                    )),
+                }
             }
         },
         (Method::Get, "/v1/recall") => match required(query, "workspace") {
@@ -536,6 +559,17 @@ impl Lookup for Map<String, Value> {
     }
 }
 
+/// A dated retrieve stamp, or none when the caller asked for live-now.
+fn as_of_stamp(query: &HashMap<String, String>) -> Result<Option<String>, Answer> {
+    match query.get("as_of").filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(raw) => match packset_core::clock::parse_millis(raw) {
+            Some(_) => Ok(Some(raw.clone())),
+            None => Err(Answer::err(400, "as_of must be a timestamp")),
+        },
+    }
+}
+
 fn required<L: Lookup>(source: &L, key: &str) -> Result<String, Answer> {
     source
         .lookup(key)
@@ -659,6 +693,19 @@ mod tests {
         assert!(!truthy(Some("on")));
         assert!(!truthy(Some("")));
         assert!(!truthy(None));
+    }
+
+    #[test]
+    fn an_as_of_stamp_is_checked() {
+        let mut q = HashMap::new();
+        assert!(matches!(as_of_stamp(&q), Ok(None)));
+        q.insert("as_of".into(), "2024-06-01T00:00:00.000Z".into());
+        assert!(matches!(
+            as_of_stamp(&q),
+            Ok(Some(ref s)) if s == "2024-06-01T00:00:00.000Z"
+        ));
+        q.insert("as_of".into(), "not-a-date".into());
+        assert!(matches!(as_of_stamp(&q), Err(a) if a.code == 400));
     }
 
     #[test]

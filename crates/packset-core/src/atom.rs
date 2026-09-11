@@ -3,15 +3,31 @@
 /// Schema name for a pack atom.
 pub const SCHEMA: &str = "inside.atom/v1";
 
-/// Live = not a tombstone and `valid_to` is missing or still open.
-pub fn is_live(tombstone: bool, valid_to: Option<&str>, now: &str) -> bool {
+/// Live at `at`: not a tombstone, `valid_from` missing or already started,
+/// and `valid_to` missing or still open. The window is half-open `[from, to)`.
+pub fn is_live_at(
+    tombstone: bool,
+    valid_from: Option<&str>,
+    valid_to: Option<&str>,
+    at: &str,
+) -> bool {
     if tombstone {
         return false;
     }
+    if let Some(from) = valid_from {
+        if !from.is_empty() && from > at {
+            return false;
+        }
+    }
     match valid_to {
         None | Some("") => true,
-        Some(until) => until > now,
+        Some(until) => until > at,
     }
+}
+
+/// Live now: the `valid_to` half of [`is_live_at`], with no start bound.
+pub fn is_live(tombstone: bool, valid_to: Option<&str>, now: &str) -> bool {
+    is_live_at(tombstone, None, valid_to, now)
 }
 
 /// Review clock. Missing `due_at` is not due. Independent of `valid_to`.
@@ -125,6 +141,26 @@ mod tests {
             "2026-08-20T00:00:00Z"
         ));
         assert!(!is_live(true, None, "2026-08-20T00:00:00Z"));
+    }
+
+    #[test]
+    fn live_at_reads_both_ends_of_the_window() {
+        let at = "2026-08-20T00:00:00Z";
+        assert!(is_live_at(false, None, None, at));
+        assert!(is_live_at(
+            false,
+            Some("2026-01-01T00:00:00Z"),
+            Some("2099-01-01T00:00:00Z"),
+            at
+        ));
+        assert!(!is_live_at(false, Some("2026-09-01T00:00:00Z"), None, at));
+        assert!(!is_live_at(
+            false,
+            Some("2026-01-01T00:00:00Z"),
+            Some("2026-08-20T00:00:00Z"),
+            at
+        ));
+        assert!(!is_live_at(true, Some("2026-01-01T00:00:00Z"), None, at));
     }
 
     #[test]

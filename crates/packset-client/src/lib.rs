@@ -139,10 +139,27 @@ impl PacksetClient {
     }
 
     pub fn list_atoms(&self, workspace: &str) -> Result<Vec<serde_json::Value>, Error> {
+        self.atoms_as_of(workspace, None)
+    }
+
+    /// Live-now atoms, or the ones that were live at `as_of`.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn atoms_as_of(
+        &self,
+        workspace: &str,
+        as_of: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, Error> {
         let url = format!("{}/v1/atoms", self.base);
-        let body: serde_json::Value = ureq::get(&url)
+        let mut req = ureq::get(&url)
             .query("workspace", workspace)
-            .timeout(TIMEOUT)
+            .timeout(TIMEOUT);
+        if let Some(at) = as_of {
+            req = req.query("as_of", at);
+        }
+        let body: serde_json::Value = req
             .call()
             .map_err(|e| Error::Http(Box::new(e)))?
             .into_json()?;
@@ -154,12 +171,31 @@ impl PacksetClient {
     }
 
     pub fn search(&self, workspace: &str, q: &str, limit: u32) -> Result<Vec<Hit>, Error> {
+        self.search_as_of(workspace, q, limit, None)
+    }
+
+    /// Ranked hits, optionally over the atoms that were live at `as_of`.
+    ///
+    /// # Errors
+    ///
+    /// The request's, or a body that is not JSON.
+    pub fn search_as_of(
+        &self,
+        workspace: &str,
+        q: &str,
+        limit: u32,
+        as_of: Option<&str>,
+    ) -> Result<Vec<Hit>, Error> {
         let url = format!("{}/v1/search", self.base);
-        let body: serde_json::Value = ureq::get(&url)
+        let mut req = ureq::get(&url)
             .query("workspace", workspace)
             .query("q", q)
             .query("limit", &limit.to_string())
-            .timeout(TIMEOUT)
+            .timeout(TIMEOUT);
+        if let Some(at) = as_of {
+            req = req.query("as_of", at);
+        }
+        let body: serde_json::Value = req
             .call()
             .map_err(|e| Error::Http(Box::new(e)))?
             .into_json()?;
@@ -247,18 +283,7 @@ impl PacksetClient {
     ///
     /// The request's, or a body that is not JSON.
     pub fn atoms(&self, workspace: &str) -> Result<Vec<serde_json::Value>, Error> {
-        let url = format!("{}/v1/atoms", self.base);
-        let body: serde_json::Value = ureq::get(&url)
-            .query("workspace", workspace)
-            .timeout(TIMEOUT)
-            .call()
-            .map_err(|e| Error::Http(Box::new(e)))?
-            .into_json()?;
-        let found = body
-            .get("atoms")
-            .cloned()
-            .unwrap_or(serde_json::Value::Array(vec![]));
-        Ok(serde_json::from_value(found)?)
+        self.atoms_as_of(workspace, None)
     }
 
     /// The live atoms in a workspace that cite one deed accession.

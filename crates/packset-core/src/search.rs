@@ -328,7 +328,7 @@ pub fn search_linear(ask: &Ask<'_>) -> Vec<Value> {
     hits.extend(file_hits("memory", memory, &qtoks, 0.25));
 
     for atom in atoms {
-        if !record::is_live(atom, now) || !atom_in_set(atom, set) {
+        if !record::is_live_at(atom, now) || !atom_in_set(atom, set) {
             continue;
         }
         let entities: Vec<String> = atom
@@ -512,7 +512,7 @@ fn bm25_hits(
         let Some(atom) = atoms.get(ordinal) else {
             continue;
         };
-        if !record::is_live(atom, now) || !atom_in_set(atom, set) {
+        if !record::is_live_at(atom, now) || !atom_in_set(atom, set) {
             continue;
         }
         let ts = atom.get("ts").and_then(Value::as_str);
@@ -640,7 +640,7 @@ pub fn search_dense(ask: &Ask<'_>, query: &[f32]) -> Vec<Value> {
     }
     let mut hits: Vec<Value> = Vec::new();
     for atom in atoms {
-        if !record::is_live(atom, now) || !atom_in_set(atom, set) {
+        if !record::is_live_at(atom, now) || !atom_in_set(atom, set) {
             continue;
         }
         let Some(vector) = embedding_of(atom) else {
@@ -1009,6 +1009,23 @@ mod tests {
             "id": "a", "text": "ripgrep here", "kind": "voice",
             "valid_to": "2020-01-01T00:00:00.000Z"
         }))];
+        assert!(search_linear(&ask("", "", &atoms, "ripgrep", 10, None)).is_empty());
+    }
+
+    #[test]
+    fn a_closed_atom_is_found_when_the_ask_is_inside_its_window() {
+        let atoms = vec![atom(json!({
+            "id": "a", "text": "ripgrep here", "kind": "voice",
+            "valid_from": "2023-01-01T00:00:00.000Z",
+            "valid_to": "2024-12-01T00:00:00.000Z"
+        }))];
+        let then = Ask {
+            now: "2024-06-01T00:00:00.000Z",
+            ..ask("", "", &atoms, "ripgrep", 10, None)
+        };
+        let hits = search_linear(&then);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0]["id"], json!("a"));
         assert!(search_linear(&ask("", "", &atoms, "ripgrep", 10, None)).is_empty());
     }
 

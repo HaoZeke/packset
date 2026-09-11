@@ -122,7 +122,12 @@ impl PacksetServer {
     ) -> Result<Json<Vec<AtomRow>>, McpError> {
         let workspace = self.workspace_for(args.workspace.as_deref());
         let hits = client(self.port)
-            .search(&workspace, &args.query, args.limit.unwrap_or(10))
+            .search_as_of(
+                &workspace,
+                &args.query,
+                args.limit.unwrap_or(10),
+                args.as_of.as_deref(),
+            )
             .map_err(down)?;
         Ok(Json(
             hits.into_iter()
@@ -131,6 +136,46 @@ impl PacksetServer {
                     text: hit.text,
                     kind: hit.kind,
                     score: hit.score,
+                })
+                .collect(),
+        ))
+    }
+
+    #[tool(
+        description = "The atoms in a workspace. Live-now when as_of is omitted; the ones that were live at that timestamp when it is set. Search cannot answer a dated question without this.",
+        annotations(
+            title = "Retrieve atoms, optionally as-of a date",
+            read_only_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn packset_atoms(
+        &self,
+        Parameters(args): Parameters<AtomsArgs>,
+    ) -> Result<Json<Vec<AtomRow>>, McpError> {
+        let workspace = self.workspace_for(args.workspace.as_deref());
+        let atoms = client(self.port)
+            .atoms_as_of(&workspace, args.as_of.as_deref())
+            .map_err(down)?;
+        Ok(Json(
+            atoms
+                .iter()
+                .map(|atom| AtomRow {
+                    id: atom
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    text: atom
+                        .get("text")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    kind: atom
+                        .get("kind")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    score: 0.0,
                 })
                 .collect(),
         ))
@@ -285,6 +330,7 @@ mod tests {
                 query: "anything".into(),
                 workspace: None,
                 limit: None,
+                as_of: None,
             }))
             .await
         else {

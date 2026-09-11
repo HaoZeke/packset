@@ -8,6 +8,7 @@
 //! packset ensure | start | stop | status | port | url | which
 //! packset pin [NAME]
 //! packset accessions [WORKSPACE]
+//! packset atoms [--as-of TS] [WORKSPACE]
 //! packset citers ACCESSION [WORKSPACE]
 //! ```
 //!
@@ -80,6 +81,7 @@ fn run() -> anyhow::Result<()> {
         }
         "pin" => pin(port, rest.first().map(String::as_str)),
         "accessions" => accessions(port, rest.first().map(String::as_str)),
+        "atoms" => atoms(port, rest),
         "export" => export(port, rest),
         "citers" => citers(
             port,
@@ -111,6 +113,7 @@ fn usage() -> String {
          port | url | which\n\
          pin [NAME]             read, or set, the pinned set\n\
          accessions [WORKSPACE] deed accessions live atoms cite\n\
+         atoms [--as-of TS] [WS] live-now atoms, or those live at TS\n\
          citers ACCESSION [WS]  the live atoms citing one accession\n\
          export --into DIR [WS] atoms to a satchel; cited accessions to stdout"
         .to_string()
@@ -384,6 +387,32 @@ fn export(port: u16, args: &[String]) -> anyhow::Result<()> {
     eprintln!("{} atoms to {}", atoms.len(), path.display());
     for accession in cited {
         println!("{accession}");
+    }
+    Ok(())
+}
+
+/// Live-now atoms, or those live at `--as-of`, one JSON object a line.
+fn atoms(port: u16, args: &[String]) -> anyhow::Result<()> {
+    let mut as_of: Option<String> = None;
+    let mut given: Option<String> = None;
+    let mut at = 0;
+    while at < args.len() {
+        match args[at].as_str() {
+            "--as-of" => {
+                at += 1;
+                as_of = Some(
+                    args.get(at)
+                        .ok_or_else(|| anyhow::anyhow!("--as-of needs a timestamp"))?
+                        .to_string(),
+                );
+            }
+            other => given = Some(other.to_string()),
+        }
+        at += 1;
+    }
+    let workspace = workspace(given.as_deref())?;
+    for atom in client(port).atoms_as_of(&workspace, as_of.as_deref())? {
+        println!("{}", serde_json::to_string(&atom)?);
     }
     Ok(())
 }

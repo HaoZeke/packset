@@ -18,6 +18,20 @@ pub struct SearchArgs {
     /// How many hits. Ten when omitted.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Retrieve the atoms that were live at this timestamp instead of now.
+    #[serde(default)]
+    pub as_of: Option<String>,
+}
+
+/// A workspace, optionally dated.
+#[derive(Deserialize, JsonSchema)]
+pub struct AtomsArgs {
+    /// Which workspace. The seat's own when omitted.
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// Retrieve the atoms that were live at this timestamp instead of now.
+    #[serde(default)]
+    pub as_of: Option<String>,
 }
 
 /// A workspace, or the seat's own.

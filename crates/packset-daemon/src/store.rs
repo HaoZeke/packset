@@ -331,6 +331,24 @@ impl Store {
         Ok((atoms, index))
     }
 
+    /// The atoms that were live at `at`, including ones whose window later closed.
+    ///
+    /// The live snapshot is "now" and drops a closed window. A dated retrieve
+    /// has to scan the store, because that is where the closed record stays.
+    /// The review clock is a different question and is not consulted.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the scan does.
+    pub fn as_of(&self, workspace: &str, at: &str) -> anyhow::Result<Vec<Record>> {
+        let stored: Vec<Record> = self
+            .scan(Some(workspace))?
+            .into_iter()
+            .filter(|atom| record::is_live_at(atom, at))
+            .collect();
+        Ok(shown_from(&stored))
+    }
+
     /// The live and due records in one workspace, as a copy the caller owns.
     ///
     /// # Errors
@@ -514,6 +532,45 @@ mod tests {
         assert!(ids.contains(&"live".to_string()), "{ids:?}");
         assert!(ids.contains(&"due".to_string()), "{ids:?}");
         assert!(!ids.contains(&"gone".to_string()), "{ids:?}");
+    }
+
+    #[test]
+    fn as_of_returns_what_was_live_then() {
+        let (_dir, store) = store();
+        store
+            .upsert(&record(json!({
+                "id": "then", "workspace": "w", "text": "old claim",
+                "valid_from": "2024-01-01T00:00:00.000Z",
+                "valid_to": "2024-12-01T00:00:00.000Z"
+            })))
+            .unwrap();
+        store
+            .upsert(&record(json!({
+                "id": "now", "workspace": "w", "text": "new claim",
+                "valid_from": "2024-12-01T00:00:00.000Z"
+            })))
+            .unwrap();
+        store
+            .upsert(&record(json!({
+                "id": "tomb", "workspace": "w", "text": "deleted",
+                "valid_from": "2024-01-01T00:00:00.000Z",
+                "tombstone": true
+            })))
+            .unwrap();
+        let mid = store.as_of("w", "2024-06-01T00:00:00.000Z").unwrap();
+        let mid_ids: Vec<&str> = mid.iter().filter_map(|a| a["id"].as_str()).collect();
+        assert_eq!(mid_ids, vec!["then"], "{mid:?}");
+        let today = store.as_of("w", "2025-06-01T00:00:00.000Z").unwrap();
+        let today_ids: Vec<&str> = today.iter().filter_map(|a| a["id"].as_str()).collect();
+        assert_eq!(today_ids, vec!["now"], "{today:?}");
+        assert!(
+            store
+                .current("w", None)
+                .unwrap()
+                .iter()
+                .all(|a| a["id"] != json!("then")),
+            "live-now still drops the closed window"
+        );
     }
 
     #[test]

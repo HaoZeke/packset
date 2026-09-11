@@ -343,21 +343,42 @@ fn number_or_null(v: Option<f64>) -> Value {
         .map_or(Value::Null, Value::Number)
 }
 
+/// A stored timestamp field, or none when it is missing, null, or empty.
+fn field_stamp<'a>(atom: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    match atom.get(key) {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.as_str()),
+        _ => None,
+    }
+}
+
 /// Live set: not tombstoned, and `valid_to` missing or still open.
 #[must_use]
 pub fn is_live(atom: &Map<String, Value>, now: &str) -> bool {
-    if atom
-        .get("tombstone")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return false;
-    }
-    match atom.get("valid_to") {
-        None | Some(Value::Null) => true,
-        Some(Value::String(s)) if s.is_empty() => true,
-        Some(other) => value_text(other).as_str() > now,
-    }
+    crate::atom::is_live(
+        atom.get("tombstone")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        field_stamp(atom, "valid_to"),
+        now,
+    )
+}
+
+/// Live at `at` over the validity window.
+///
+/// `valid_from` is the start when it is set; otherwise `ts` is, so an atom
+/// written after `at` is not returned as if it had always been there. A
+/// missing start is open from the beginning, which is what the atoms already
+/// on disk look like. `valid_to` is the exclusive end, same as [`is_live`].
+#[must_use]
+pub fn is_live_at(atom: &Map<String, Value>, at: &str) -> bool {
+    crate::atom::is_live_at(
+        atom.get("tombstone")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        field_stamp(atom, "valid_from").or_else(|| field_stamp(atom, "ts")),
+        field_stamp(atom, "valid_to"),
+        at,
+    )
 }
 
 /// Review clock. A missing `due_at` is not due, and `valid_to` is not consulted.
@@ -1012,6 +1033,36 @@ mod tests {
             now
         ));
         assert!(!is_live(&atom(json!({"tombstone": true})), now));
+    }
+
+    #[test]
+    fn a_dated_retrieve_reads_the_window_not_now() {
+        let at = "2024-06-01T00:00:00.000Z";
+        let closed = atom(json!({
+            "valid_from": "2024-01-01T00:00:00.000Z",
+            "valid_to": "2024-12-01T00:00:00.000Z"
+        }));
+        let later = atom(json!({
+            "valid_from": "2025-01-01T00:00:00.000Z"
+        }));
+        let open = atom(json!({
+            "valid_from": "2024-01-01T00:00:00.000Z"
+        }));
+        let by_ts = atom(json!({"ts": "2024-03-01T00:00:00.000Z"}));
+        let too_new = atom(json!({"ts": "2025-01-01T00:00:00.000Z"}));
+        assert!(is_live_at(&closed, at), "closed later, live then");
+        assert!(!is_live(&closed, "2026-01-01T00:00:00.000Z"));
+        assert!(!is_live_at(&later, at), "not yet valid");
+        assert!(is_live_at(&open, at));
+        assert!(
+            is_live_at(&by_ts, at),
+            "ts is the start when valid_from is missing"
+        );
+        assert!(!is_live_at(&too_new, at));
+        assert!(!is_live_at(
+            &atom(json!({"tombstone": true, "valid_from": "2020-01-01T00:00:00.000Z"})),
+            at
+        ));
     }
 
     #[test]

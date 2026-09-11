@@ -94,7 +94,7 @@ fn main() -> anyhow::Result<()> {
             || {
                 let start = Instant::now();
                 service
-                    .search(WORKSPACE, "parser", 16, None, &panel)
+                    .search(WORKSPACE, "parser", 16, None, &panel, None)
                     .expect("search");
                 let ms = start.elapsed().as_secs_f64() * 1000.0;
                 if ms > worst {
@@ -136,7 +136,7 @@ fn main() -> anyhow::Result<()> {
                 counter += 1;
                 let start = Instant::now();
                 service
-                    .search(WORKSPACE, "parser", 16, None, &panel)
+                    .search(WORKSPACE, "parser", 16, None, &panel, None)
                     .expect("search");
                 let ms = start.elapsed().as_secs_f64() * 1000.0;
                 if ms > worst {

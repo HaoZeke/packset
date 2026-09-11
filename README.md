@@ -14,6 +14,7 @@ homes do not get a private store.
 ```
 packset ensure          # start packsetd; print PACKSET_URL
 packset pin NAME        # scope retrieve and Remember
+packset atoms --as-of 2024-06-01T00:00:00.000Z
 # In chat:  Remember: always open review links after pushing
 ```
 
