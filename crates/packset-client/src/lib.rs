@@ -133,7 +133,8 @@ impl PacksetClient {
     }
 
     pub fn health(&self) -> Result<String, Error> {
-        let body = ureq::get(&format!("{}/health", self.base))
+        let url = format!("{}/health", self.base);
+        let body = ureq::get(&url)
             .timeout(TIMEOUT)
             .call()
             .map_err(|e| refused(&url, e))?
