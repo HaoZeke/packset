@@ -2,6 +2,13 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
+## Unreleased
+
+- The LongMemEval harness gains an island arm: sessions link to their five
+  nearest by dense cosine, the fused top ten seed the writer's own
+  spreading activation over that graph, and the cluster is ranked. The
+  island the seat reads at a sitting, measured on the benchmark.
+
 ## 0.7.2 (2026-09-12)
 
 - The lockfile follows the version bump. The release builds of v0.7.0 and

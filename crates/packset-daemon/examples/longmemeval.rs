@@ -429,6 +429,48 @@ fn recency(question: &Question, docs: &[Document], fused: &[(usize, f64)]) -> Ve
     scaled
 }
 
+/// How many nearest sessions each session links to in the island graph.
+const ISLAND_LINKS: usize = 5;
+/// How far activation spreads from the seeds, as in the writer.
+const ISLAND_HOPS: usize = 2;
+
+/// The fused ranking spread along the pack's kind of link graph. Sessions
+/// link to their [`ISLAND_LINKS`] nearest by dense cosine, the cosine is
+/// the link weight, and the fused top documents seed spreading activation
+/// over that graph (`packset_core::island::activate`, the writer's own
+/// island). A session the question does not name but that stands close to
+/// several that it does gains activation; a seed with no neighbours keeps
+/// its own. This is the island the seat reads at a sitting, measured on the
+/// benchmark: does the cluster beat the hits.
+fn island(vectors: &[Vec<f32>], fused: &[(usize, f64)], limit: usize) -> Vec<(usize, f64)> {
+    let mut atoms: Vec<Record> = Vec::with_capacity(vectors.len());
+    for (i, v) in vectors.iter().enumerate() {
+        let mut near: Vec<(usize, f64)> = if v.is_empty() {
+            Vec::new()
+        } else {
+            dense(v, vectors)
+                .into_iter()
+                .filter(|(j, _)| *j != i)
+                .take(ISLAND_LINKS)
+                .collect()
+        };
+        near.sort_by_key(|(j, _)| *j);
+        let links: Vec<Value> = near.iter().map(|(j, _)| json!(j.to_string())).collect();
+        let weights: serde_json::Map<String, Value> = near
+            .iter()
+            .map(|(j, w)| (j.to_string(), json!(*w)))
+            .collect();
+        let mut atom = Record::new();
+        atom.insert("id".into(), json!(i.to_string()));
+        atom.insert("links".into(), Value::Array(links));
+        atom.insert("link_weights".into(), Value::Object(weights));
+        atoms.push(atom);
+    }
+    let graph = packset_core::island::Graph::from_atoms(&atoms);
+    let seeds: Vec<(usize, f64)> = fused.iter().take(limit).copied().collect();
+    packset_core::island::activate(&graph, &seeds, ISLAND_HOPS)
+}
+
 /// Sessions in the order their best document ranks.
 fn collapse(order: impl Iterator<Item = usize>, docs: &[Document]) -> Vec<String> {
     let mut seen = BTreeSet::new();
@@ -597,6 +639,7 @@ fn main() -> anyhow::Result<()> {
             arms.push(format!("{p} fused"));
             arms.push(format!("{p} fused recency"));
             arms.push(format!("{p} fused window"));
+            arms.push(format!("{p} fused island"));
             if rerank {
                 arms.push(format!("{p} fused rerank"));
             }
@@ -649,6 +692,9 @@ fn main() -> anyhow::Result<()> {
                 slot += 1;
                 let framed = windowed(question, docs, &fused_docs);
                 record(&collapse(framed.iter().map(|(i, _)| *i), docs), slot);
+                slot += 1;
+                let lit = island(&vecs, &fused_docs, CUTOFFS[CUTOFFS.len() - 1]);
+                record(&collapse(lit.iter().map(|(i, _)| *i), docs), slot);
                 slot += 1;
                 if rerank {
                     let top: Vec<&str> = fused_sessions
