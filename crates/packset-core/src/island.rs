@@ -232,12 +232,6 @@ pub fn fire(atoms: &mut [Record], fired: &[usize]) -> Vec<usize> {
 /// Rounds of label propagation before the labels are taken as they stand.
 const PROPAGATION_ROUNDS: usize = 20;
 
-/// The islands: communities by label propagation (Raghavan, Albert and
-/// Kumara, doi:10.1103/PhysRevE.76.036106). Every node takes the label most
-/// of its neighbours held in the previous round, smallest label on a tie, so
-/// the answer is deterministic; a lone bridge edge loses to the clique on
-/// its far side within two rounds. Largest island first, then by first
-/// member.
 /// The damping of the hub walk: the share of each step that follows a
 /// link rather than jumping anywhere, as in the original.
 pub const HUB_DAMPING: f64 = 0.85;
@@ -291,6 +285,12 @@ pub fn hubs(graph: &Graph) -> Vec<(usize, f64)> {
     ranked
 }
 
+/// The islands: communities by label propagation (Raghavan, Albert and
+/// Kumara, doi:10.1103/PhysRevE.76.036106). Every node takes the label most
+/// of its neighbours held in the previous round, smallest label on a tie, so
+/// the answer is deterministic; a lone bridge edge loses to the clique on
+/// its far side within two rounds. Largest island first, then by first
+/// member.
 #[must_use]
 pub fn islands(graph: &Graph) -> Vec<Vec<usize>> {
     let n = graph.len();
