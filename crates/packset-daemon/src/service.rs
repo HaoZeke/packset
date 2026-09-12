@@ -982,6 +982,26 @@ impl Service {
                 .cmp(b.get("ts").and_then(Value::as_str).unwrap_or(""))
         });
         let now = clock::utcnow();
+        // Candidates share their first words or an entity; the rule is then
+        // asked of each pair. A pack of ten thousand claims is buckets of a
+        // few, not fifty million comparisons, and the nudge that counts the
+        // pairs on every prompt stays cheap. A rewrite that shares neither
+        // is not seen here, as it is not seen by a read.
+        let mut buckets: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (i, atom) in atoms.iter().enumerate() {
+            let text = atom.get("text").and_then(Value::as_str).unwrap_or("");
+            let head = record::head_tokens(text);
+            if head.len() >= record::HEAD_MIN {
+                buckets
+                    .entry(format!("h:{}", head[..record::HEAD_MIN].join(" ")))
+                    .or_default()
+                    .push(i);
+            }
+            for entity in record::entities_of(atom) {
+                buckets.entry(format!("e:{entity}")).or_default().push(i);
+            }
+        }
         let mut open = vec![true; atoms.len()];
         let mut pairs: Vec<(usize, usize)> = Vec::new();
         for i in 0..atoms.len() {
@@ -989,7 +1009,15 @@ impl Service {
                 open[i] = false;
                 continue;
             }
-            for j in 0..i {
+            let mut candidates: Vec<usize> = buckets
+                .values()
+                .filter(|members| members.contains(&i))
+                .flat_map(|members| members.iter().copied())
+                .filter(|&j| j < i && open[j])
+                .collect();
+            candidates.sort_unstable();
+            candidates.dedup();
+            for j in candidates {
                 if open[j] && record::replaces(&atoms[i], &atoms[j]) {
                     open[j] = false;
                     pairs.push((i, j));
