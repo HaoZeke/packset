@@ -31,6 +31,10 @@ pub struct Service {
     home: Home,
     store: Store,
     attach: Mutex<BTreeMap<String, Attachment>>,
+    /// One logical write at a time. LMDB serialises transactions, not the
+    /// read-check-write a dedupe or a grade is, so two identical remembers
+    /// arriving together must not both be stored.
+    writes: Mutex<()>,
 }
 
 impl Service {
@@ -45,6 +49,7 @@ impl Service {
             home,
             store,
             attach: Mutex::new(BTreeMap::new()),
+            writes: Mutex::new(()),
         })
     }
 
@@ -66,7 +71,12 @@ impl Service {
     ///
     /// [`AtomError`] when the text is a tool dump or the record does not
     /// validate, else the store's.
-    pub fn add(&self, mut atom: Record) -> anyhow::Result<Record> {
+    pub fn add(&self, atom: Record) -> anyhow::Result<Record> {
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+        self.add_unlocked(atom)
+    }
+
+    fn add_unlocked(&self, mut atom: Record) -> anyhow::Result<Record> {
         let text = atom
             .get("text")
             .and_then(Value::as_str)
@@ -248,6 +258,16 @@ impl Service {
         id: &str,
         fields: &Map<String, Value>,
     ) -> anyhow::Result<Record> {
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+        self.update_unlocked(workspace, id, fields)
+    }
+
+    fn update_unlocked(
+        &self,
+        workspace: &str,
+        id: &str,
+        fields: &Map<String, Value>,
+    ) -> anyhow::Result<Record> {
         let current = self.store.live(workspace)?;
         let mut updated = current
             .iter()
@@ -288,6 +308,7 @@ impl Service {
     ///
     /// As [`Service::update`].
     pub fn grade(&self, workspace: &str, id: &str, recalled: bool) -> anyhow::Result<Record> {
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
         let mut atom = self
             .store
             .live(workspace)?
@@ -304,7 +325,7 @@ impl Service {
         let mut fields = Map::new();
         fields.insert("due_at".into(), atom["due_at"].clone());
         fields.insert("review".into(), atom["review"].clone());
-        self.update(workspace, id, &fields)
+        self.update_unlocked(workspace, id, &fields)
     }
 
     /// Tombstone one atom and drop it from the projection.
@@ -323,6 +344,7 @@ impl Service {
         id: &str,
         why: Option<&str>,
     ) -> anyhow::Result<Record> {
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
         let why = match why.map(str::trim).filter(|w| !w.is_empty()) {
             Some(w) if !packset_core::atom::is_accession(w) => {
                 return Err(anyhow::Error::new(AtomError(format!(
@@ -387,6 +409,7 @@ impl Service {
     ///
     /// [`AtomError`] for a bad name, else the write's.
     pub fn set_pin(&self, workspace: &str, name: &str) -> anyhow::Result<String> {
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
         let path = self.home.pin_path(workspace);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -824,8 +847,9 @@ impl Service {
     ///
     /// The miner's, or the store's.
     pub fn accept(&self, workspace: &str, proposal_id: &str) -> anyhow::Result<Record> {
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
         let (atom, rec) = crate::proposals::accept(&self.home, workspace, proposal_id)?;
-        let stored = self.add(atom)?;
+        let stored = self.add_unlocked(atom)?;
         let atom_id = stored.get("id").and_then(Value::as_str).unwrap_or("");
         crate::proposals::mark_accepted(&self.home, workspace, &rec, atom_id)?;
         Ok(stored)
