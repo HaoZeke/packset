@@ -326,7 +326,7 @@ fn bearing(top: &[usize], docs: &[Document], answers: &[String], k: usize) -> bo
         .any(|a| text.contains(&a))
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct Tally {
     asked: usize,
     hit: Vec<usize>,
