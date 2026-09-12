@@ -77,37 +77,37 @@ impl Graph {
 const PROPAGATION_ROUNDS: usize = 20;
 
 /// The islands: communities by label propagation (Raghavan, Albert and
-/// Kumara, doi:10.1103/PhysRevE.76.036106), deterministic by position order
-/// and smallest-label ties. Largest first, then by first member.
+/// Kumara, doi:10.1103/PhysRevE.76.036106). Every node takes the label most
+/// of its neighbours held in the previous round, smallest label on a tie, so
+/// the answer is deterministic; a lone bridge edge loses to the clique on
+/// its far side within two rounds. Largest island first, then by first
+/// member.
 #[must_use]
 pub fn islands(graph: &Graph) -> Vec<Vec<usize>> {
     let n = graph.len();
     let mut label: Vec<usize> = (0..n).collect();
     for _ in 0..PROPAGATION_ROUNDS {
-        let mut changed = false;
-        for node in 0..n {
-            let peers = &graph.adjacency[node];
-            if peers.is_empty() {
-                continue;
-            }
-            let mut counts: HashMap<usize, usize> = HashMap::new();
-            for &peer in peers {
-                *counts.entry(label[peer]).or_insert(0) += 1;
-            }
-            let best = counts
-                .iter()
-                .map(|(&l, &c)| (c, std::cmp::Reverse(l)))
-                .max()
-                .map(|(_, std::cmp::Reverse(l))| l)
-                .unwrap_or(label[node]);
-            if best != label[node] {
-                label[node] = best;
-                changed = true;
-            }
-        }
-        if !changed {
+        let next: Vec<usize> = (0..n)
+            .map(|node| {
+                let peers = &graph.adjacency[node];
+                if peers.is_empty() {
+                    return label[node];
+                }
+                let mut counts: HashMap<usize, usize> = HashMap::new();
+                for &peer in peers {
+                    *counts.entry(label[peer]).or_insert(0) += 1;
+                }
+                counts
+                    .iter()
+                    .map(|(&l, &c)| (c, std::cmp::Reverse(l)))
+                    .max()
+                    .map_or(label[node], |(_, std::cmp::Reverse(l))| l)
+            })
+            .collect();
+        if next == label {
             break;
         }
+        label = next;
     }
     let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
     for (node, &l) in label.iter().enumerate() {
