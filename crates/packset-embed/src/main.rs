@@ -152,7 +152,6 @@ fn choose(name: &str) -> Option<Choice> {
 const KNOWN: &str = "bge-small, bge-base, bge-large, e5-base, e5-large (multilingual), \
                      e5-large-v2 (English, from files), gte-large, mxbai-large";
 
-/// Where a seat keeps weights, when it says.
 /// Where models live: `PACKSET_EMBED_CACHE`, else `$XDG_CACHE_HOME/packset/embed`,
 /// else `~/.cache/packset/embed`. Never the working directory.
 fn cache_dir() -> Option<std::path::PathBuf> {
