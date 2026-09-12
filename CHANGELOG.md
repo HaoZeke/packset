@@ -2,7 +2,7 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
-## Unreleased
+## 0.8.0 (2026-09-12)
 
 - The timeline reading measured against the raw prompt (350 questions,
   four types, 7B reader): 0.420 against 0.431 overall, temporal reasoning
