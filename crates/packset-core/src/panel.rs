@@ -68,13 +68,16 @@ pub enum Diversify {
     None,
 }
 
-/// Decay slot. Off leaves fuse scores unchanged.
+/// Decay slot. Off leaves fuse scores unchanged; On is a half-life on age;
+/// Fsrs is the review model's retrievability, from stability and the time
+/// since the last review.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Decay {
     #[default]
     Off,
     On,
+    Fsrs,
 }
 
 /// Host sequence. Clients do not choose this.
@@ -172,6 +175,7 @@ impl Decay {
         match name {
             "off" => Ok(Self::Off),
             "on" => Ok(Self::On),
+            "fsrs" | "retrievability" => Ok(Self::Fsrs),
             other => Err(UnknownVoter::Decay(other.to_string())),
         }
     }
@@ -180,6 +184,7 @@ impl Decay {
         match self {
             Self::Off => "off",
             Self::On => "on",
+            Self::Fsrs => "fsrs",
         }
     }
 }
@@ -218,10 +223,21 @@ impl Panel {
         )
     }
 
-    pub fn decay_weight(&self, source: &str, age_days: f64) -> f64 {
+    /// The factor a fused score is scaled by. `age_days` is the time since
+    /// the last review (or the write); `stability_days` is the review model's,
+    /// read only by `Fsrs`. Evergreen sources stay at one.
+    pub fn decay_weight(&self, source: &str, age_days: f64, stability_days: f64) -> f64 {
         match self.decay {
             Decay::Off => 1.0,
             Decay::On => temporal_decay(source, age_days, Some(DECAY_HALF_LIFE_DAYS)),
+            Decay::Fsrs => {
+                if matches!(source, "global" | "workspace" | "user" | "evergreen") {
+                    1.0
+                } else {
+                    crate::decay::retrievability(age_days, stability_days)
+                        .max(crate::decay::RETRIEVABILITY_FLOOR)
+                }
+            }
         }
     }
 
@@ -625,11 +641,21 @@ mod tests {
     #[test]
     fn decay_off_is_one_on_uses_temporal() {
         let off = Panel::default();
-        assert_eq!(off.decay_weight("session", 14.0), 1.0);
+        assert_eq!(off.decay_weight("session", 14.0, 1.0), 1.0);
         let on = Panel::named("borda", "mmr", "on").unwrap();
-        let w = on.decay_weight("session", 14.0);
+        let w = on.decay_weight("session", 14.0, 1.0);
         assert!((w - 0.5).abs() < 1e-9);
-        assert_eq!(on.decay_weight("global", 400.0), 1.0);
+        assert_eq!(on.decay_weight("global", 400.0, 1.0), 1.0);
+        let fsrs = Panel::named("combmnz", "mmr", "fsrs").unwrap();
+        assert_eq!(fsrs.decay, Decay::Fsrs);
+        assert_eq!(Decay::parse("retrievability").unwrap(), Decay::Fsrs);
+        assert_eq!(Decay::Fsrs.as_str(), "fsrs");
+        assert!((fsrs.decay_weight("atoms", 3.0, 3.0) - 0.9).abs() < 1e-9);
+        assert_eq!(
+            fsrs.decay_weight("atoms", 1e6, 1.0),
+            crate::decay::RETRIEVABILITY_FLOOR
+        );
+        assert_eq!(fsrs.decay_weight("user", 1e6, 1.0), 1.0);
     }
 
     #[test]

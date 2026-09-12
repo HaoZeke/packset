@@ -1274,17 +1274,23 @@ pub fn merge_ballots(
         .map(|key| (key.clone(), scores.get(key).copied().unwrap_or(0.0)))
         .collect();
 
-    if panel.decay == crate::panel::Decay::On {
+    if panel.decay != crate::panel::Decay::Off {
         let order: std::collections::HashMap<&String, usize> =
             ranked.iter().enumerate().map(|(i, k)| (k, i)).collect();
         for key in &ranked {
             let hit = &by_key[key];
             let source = hit["field"].as_str().unwrap_or("");
-            let age = hit["ts"]
+            // Since the last review when there was one, else since the write.
+            let since = hit["review"]["last"]
                 .as_str()
-                .map_or(0.0, |ts| clock::elapsed_days(ts, now));
+                .filter(|l| !l.is_empty())
+                .or_else(|| hit["ts"].as_str());
+            let age = since.map_or(0.0, |ts| clock::elapsed_days(ts, now));
+            let stability = hit["review"]["stability"]
+                .as_f64()
+                .unwrap_or(crate::record::DEFAULT_STABILITY);
             if let Some(weight) = weights.get_mut(key) {
-                *weight *= panel.decay_weight(source, age);
+                *weight *= panel.decay_weight(source, age, stability);
             }
         }
         let mut sorted = ranked.clone();
@@ -1364,6 +1370,28 @@ mod merge_tests {
         let b = vec![hit("atom", "both", "beta"), hit("atom", "other", "gamma")];
         let merged = merge_ballots(&[a, b], 10, &default_panel(), NOW);
         assert_eq!(merged[0]["id"], json!("both"), "{merged:?}");
+    }
+
+    /// A claim reviewed long ago ranks below one reviewed today under the
+    /// retrievability slot; off keeps the fused order.
+    #[test]
+    fn a_stale_claim_sinks_only_when_decay_reads_the_review_clock() {
+        let hit = |id: &str, last: &str| {
+            json!({
+                "id": id, "field": "atoms", "text": "the same claim", "score": 1.0,
+                "ts": "2026-01-01T00:00:00.000Z",
+                "review": {"last": last, "stability": 1.0}
+            })
+        };
+        let stale = hit("stale", "2026-01-01T00:00:00.000Z");
+        let fresh = hit("fresh", NOW);
+        let ballot = vec![stale, fresh];
+        let off = merge_ballots(&[ballot.clone()], 2, &default_panel(), NOW);
+        assert_eq!(off[0]["id"], "stale");
+        let fsrs = crate::panel::Panel::named("combmnz", "none", "fsrs").unwrap();
+        let ranked = merge_ballots(&[ballot], 2, &fsrs, NOW);
+        assert_eq!(ranked[0]["id"], "fresh");
+        assert_eq!(ranked.len(), 2);
     }
 
     #[test]

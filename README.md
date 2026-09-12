@@ -68,6 +68,21 @@ is memory, so it has a validity window and can be superseded, and `export`
 carries it with the rest. The seat reads the live rows into a consensus; the
 pack does not settle anything itself.
 
+## Forgetting
+
+Every claim carries a review clock: `due_at`, and a `review` block with
+stability and difficulty that `POST /v1/grade` moves (recalled grows
+stability by how overdue the claim was; lapsed halves it). A new claim is due
+after one day. `PACKSET_DECAY=fsrs` makes the clock a voter: a fused score is
+scaled by the FSRS-4.5 retrievability `R = (1 + 19/81 * t/S)^(-1/2)`, with
+`t` the days since the last review (or the write) and `S` the stability, so
+`R(S) = 0.9` (doi:10.1145/3534678.3539081). Cards stay at one, and `R` floors
+at 0.25 so a forgotten claim is still found when nothing else answers. The
+power-law form follows Wixted and Ebbesen (doi:10.1111/j.1467-9280.1991.tb00175.x);
+the spacing effect it schedules for is reviewed in Cepeda et al.
+(doi:10.1037/0033-2909.132.3.354). Default off: the LoCoMo corpus has no
+review history, so the slot cannot be measured there.
+
 ## Law
 
 - One writer. Working tree is not the pack.
