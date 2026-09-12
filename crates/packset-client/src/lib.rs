@@ -427,18 +427,32 @@ impl PacksetClient {
         Ok(body)
     }
 
-    /// The memories a cue activates, strongest first.
+    /// Claims that fired together: their links gain weight.
+    pub fn fire(&self, workspace: &str, ids: &[String]) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/fire", self.base);
+        let body: serde_json::Value = ureq::post(&url)
+            .timeout(timeout())
+            .send_json(serde_json::json!({"workspace": workspace, "ids": ids}))
+            .map_err(|e| refused(&url, e))?
+            .into_json()?;
+        Ok(body)
+    }
+
+    /// The memories a cue activates, strongest first; with `fire`, the top
+    /// of them fire together.
     pub fn activate(
         &self,
         workspace: &str,
         q: &str,
         limit: u32,
+        fire: bool,
     ) -> Result<serde_json::Value, Error> {
         let url = format!("{}/v1/activate", self.base);
         let body: serde_json::Value = ureq::get(&url)
             .query("workspace", workspace)
             .query("q", q)
             .query("limit", &limit.to_string())
+            .query("fire", if fire { "1" } else { "0" })
             .timeout(timeout())
             .call()
             .map_err(|e| refused(&url, e))?

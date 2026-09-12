@@ -297,6 +297,24 @@ fn route(
             let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
             Answer::ok(crate::context::repo_map(std::path::Path::new(&cwd)))
         }
+        (Method::Post, "/v1/fire") => match required(body, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => {
+                let ids: Vec<String> = body
+                    .get("ids")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if ids.len() < 2 {
+                    return Answer::err(400, "ids: two or more claims that fired together");
+                }
+                answer(service.fire(&workspace, &ids))
+            }
+        },
         (Method::Get, "/v1/islands") => match required(query, "workspace") {
             Err(a) => a,
             Ok(workspace) => answer(service.islands(&workspace)),
@@ -312,7 +330,8 @@ fn route(
                 if q.trim().is_empty() {
                     return Answer::err(400, "q required: the cue that activates");
                 }
-                answer(service.activate(&workspace, &q, limit, panel))
+                let fire = crate::embed::requested(query.get("fire").map(String::as_str));
+                answer(service.activate(&workspace, &q, limit, panel, fire))
             }
         },
         (Method::Get, "/v1/search") => match required(query, "workspace") {

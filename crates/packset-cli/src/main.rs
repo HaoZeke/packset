@@ -11,7 +11,8 @@
 //! packset search [--workspace WS] QUERY...
 //! packset due [WORKSPACE]
 //! packset islands [WORKSPACE]
-//! packset island [--workspace WS] CUE
+//! packset island [--workspace WS] [--fire] CUE
+//! packset fire [--workspace WS] ID ID...
 //! packset grade ID [--lapsed] [WORKSPACE]
 //! packset pin [NAME]
 //! packset accessions [WORKSPACE]
@@ -97,6 +98,7 @@ fn run() -> anyhow::Result<()> {
         "due" => due(port, rest.first().map(String::as_str)),
         "islands" => islands(port, rest.first().map(String::as_str)),
         "island" => island(port, rest),
+        "fire" => fire(port, rest),
         "grade" => grade(port, rest),
         "pin" => pin(port, rest.first().map(String::as_str)),
         "accessions" => accessions(port, rest.first().map(String::as_str)),
@@ -135,7 +137,8 @@ fn usage() -> String {
          search [--workspace WS] QUERY    ranked claims, score kind id text\n\
          due [WORKSPACE]        claims whose review clock has run out\n\
          islands [WORKSPACE]    the link graph's clusters, largest first\n\
-         island [--workspace WS] CUE   the memories a cue activates\n\
+         island [--workspace WS] [--fire] CUE   the memories a cue activates\n\
+         fire [--workspace WS] ID ID...   these claims fired together; their links gain weight\n\
          grade ID [--lapsed] [WS]  mark a review recalled, or lapsed\n\
          pin [NAME]             read, or set, the pinned set\n\
          accessions [WORKSPACE] deed accessions live atoms cite\n\
@@ -518,15 +521,35 @@ fn islands(port: u16, given: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Two or more claims fired together.
+fn fire(port: u16, args: &[String]) -> anyhow::Result<()> {
+    let (given, ids) = split_workspace(args);
+    if ids.len() < 2 {
+        anyhow::bail!("fire: pass two or more claim ids that fired together");
+    }
+    let workspace = workspace(given.as_deref())?;
+    let body = client(port).fire(&workspace, &ids)?;
+    println!("{} fired, {} changed", body["fired"], body["changed"]);
+    Ok(())
+}
+
 /// The memories a cue activates: activation, seed mark, id, text.
 fn island(port: u16, args: &[String]) -> anyhow::Result<()> {
     let (given, words) = split_workspace(args);
-    let cue = words.join(" ").trim().to_string();
+    let firing = words.iter().any(|w| w == "--fire");
+    let cue = words
+        .iter()
+        .filter(|w| *w != "--fire")
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
     if cue.is_empty() {
         anyhow::bail!("island: pass the cue, the task or question at hand");
     }
     let workspace = workspace(given.as_deref())?;
-    let body = client(port).activate(&workspace, &cue, 24)?;
+    let body = client(port).activate(&workspace, &cue, 24, firing)?;
     for atom in body["island"].as_array().into_iter().flatten() {
         println!(
             "{:.3}\t{}\t{}\t{}",

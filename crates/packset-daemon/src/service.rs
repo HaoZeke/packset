@@ -31,6 +31,8 @@ pub struct Attachment {
 const ACTIVATION_SEEDS: usize = 5;
 /// How far activation spreads along the links.
 const ACTIVATION_HOPS: usize = 2;
+/// How many of an island's strongest claims fire together when asked.
+const FIRE_TOP: usize = 8;
 
 pub struct Service {
     home: Home,
@@ -896,8 +898,45 @@ impl Service {
         Ok(json!({"islands": islands, "atoms": atoms.len()}))
     }
 
+    /// Claims that fired together: every pair's link gains weight, their
+    /// other links lose a little, and a missing link is made. Returns how
+    /// many records changed.
+    ///
+    /// # Errors
+    ///
+    /// The store's.
+    pub fn fire(&self, workspace: &str, ids: &[String]) -> anyhow::Result<Value> {
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+        let live = self.store.live(workspace)?;
+        let mut atoms: Vec<Record> = live.iter().cloned().collect();
+        let fired: Vec<usize> = ids
+            .iter()
+            .filter_map(|id| {
+                atoms
+                    .iter()
+                    .position(|a| a.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            })
+            .collect();
+        let changed = packset_core::island::fire(&mut atoms, &fired);
+        if !changed.is_empty() {
+            let now = clock::utcnow();
+            let batch: Vec<Record> = changed
+                .iter()
+                .map(|&i| {
+                    let mut atom = atoms[i].clone();
+                    atom.insert("ts".into(), Value::String(now.clone()));
+                    atom
+                })
+                .collect();
+            self.store.upsert_many(&batch)?;
+            self.project_atoms(&batch);
+        }
+        Ok(json!({"fired": fired.len(), "changed": changed.len()}))
+    }
+
     /// The memories a cue activates: the top search hits as seeds, spread
-    /// two hops along the links, strongest first.
+    /// two hops along the links, strongest first. With `fire`, the top
+    /// [`FIRE_TOP`] of them fire together.
     ///
     /// # Errors
     ///
@@ -908,6 +947,7 @@ impl Service {
         query: &str,
         limit: usize,
         panel: &packset_core::Panel,
+        fire: bool,
     ) -> anyhow::Result<Value> {
         let seeds = self.search(workspace, query, ACTIVATION_SEEDS, None, panel, None, false)?;
         let atoms = self.store.live(workspace)?;
@@ -942,7 +982,23 @@ impl Service {
                 })
             })
             .collect();
-        Ok(json!({"island": island, "seeds": weighted.len(), "hops": ACTIVATION_HOPS}))
+        let fired = if fire {
+            let ids: Vec<String> = lit
+                .iter()
+                .take(FIRE_TOP)
+                .filter_map(|(at, _)| atoms[*at].get("id").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect();
+            self.fire(workspace, &ids)?["changed"].as_u64().unwrap_or(0)
+        } else {
+            0
+        };
+        Ok(json!({
+            "island": island,
+            "seeds": weighted.len(),
+            "hops": ACTIVATION_HOPS,
+            "fired": fired,
+        }))
     }
 
     /// The open proposals for a workspace.

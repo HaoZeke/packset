@@ -6,10 +6,19 @@ use std::collections::HashMap;
 
 use crate::search::Record;
 
-/// The link graph over one live set, as positions.
+/// The weight a link carries when nothing has fired over it.
+pub const WEIGHT_DEFAULT: f64 = 0.5;
+/// How far a co-activated pair moves toward one.
+pub const ETA: f64 = 0.1;
+/// How much of every other link a fired claim forgets.
+pub const LAMBDA: f64 = 0.02;
+/// The most links `fire` will add to a claim that has none to spare.
+pub const FIRE_LINK_MAX: usize = 8;
+
+/// The link graph over one live set, as positions, each edge with its weight.
 pub struct Graph {
     ids: Vec<String>,
-    adjacency: Vec<Vec<usize>>,
+    adjacency: Vec<Vec<(usize, f64)>>,
 }
 
 impl Graph {
@@ -31,25 +40,45 @@ impl Graph {
             .enumerate()
             .map(|(i, id)| (id.as_str(), i))
             .collect();
-        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); atoms.len()];
+        let mut adjacency: Vec<HashMap<usize, f64>> = vec![HashMap::new(); atoms.len()];
         for (i, atom) in atoms.iter().enumerate() {
             let Some(links) = atom.get("links").and_then(|v| v.as_array()) else {
                 continue;
             };
             for link in links.iter().filter_map(|l| l.as_str()) {
-                if let Some(&j) = index.get(link) {
-                    if i != j {
-                        adjacency[i].push(j);
-                        adjacency[j].push(i);
-                    }
+                let Some(&j) = index.get(link) else {
+                    continue;
+                };
+                if i == j {
+                    continue;
                 }
+                let weight = weight_of(atom, link);
+                // Both sides may carry a weight; the heavier one is the edge's.
+                let held = adjacency[i].entry(j).or_insert(0.0);
+                *held = held.max(weight);
+                let back = adjacency[j].entry(i).or_insert(0.0);
+                *back = back.max(weight);
             }
         }
-        for row in &mut adjacency {
-            row.sort_unstable();
-            row.dedup();
-        }
+        let adjacency = adjacency
+            .into_iter()
+            .map(|row| {
+                let mut edges: Vec<(usize, f64)> = row.into_iter().collect();
+                edges.sort_by(|a, b| a.0.cmp(&b.0));
+                edges
+            })
+            .collect();
         Self { ids, adjacency }
+    }
+
+    /// The weight of the edge between two positions, if there is one.
+    #[must_use]
+    pub fn weight(&self, from: usize, to: usize) -> Option<f64> {
+        self.adjacency
+            .get(from)?
+            .iter()
+            .find(|(peer, _)| *peer == to)
+            .map(|(_, w)| *w)
     }
 
     #[must_use]
@@ -73,6 +102,119 @@ impl Graph {
     }
 }
 
+/// The weight an atom records for one of its links; absent means the default.
+fn weight_of(atom: &Record, peer: &str) -> f64 {
+    atom.get("link_weights")
+        .and_then(|w| w.get(peer))
+        .and_then(|w| w.as_f64())
+        .unwrap_or(WEIGHT_DEFAULT)
+}
+
+fn set_weight(atom: &mut Record, peer: &str, weight: f64) {
+    let entry = atom
+        .entry("link_weights")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(map) = entry.as_object_mut() {
+        map.insert(peer.to_string(), serde_json::json!(weight));
+    }
+}
+
+fn has_link(atom: &Record, peer: &str) -> bool {
+    atom.get("links")
+        .and_then(|l| l.as_array())
+        .is_some_and(|links| links.iter().any(|l| l.as_str() == Some(peer)))
+}
+
+fn link_count(atom: &Record) -> usize {
+    atom.get("links")
+        .and_then(|l| l.as_array())
+        .map_or(0, Vec::len)
+}
+
+fn add_link(atom: &mut Record, peer: &str) {
+    let entry = atom
+        .entry("links")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    if let Some(links) = entry.as_array_mut() {
+        links.push(serde_json::Value::String(peer.to_string()));
+    }
+}
+
+/// Claims that fired together wire together. Every pair among `fired` moves
+/// its weight toward one by [`ETA`], gaining a link when neither side is at
+/// [`FIRE_LINK_MAX`]; every other link of a fired claim forgets by
+/// [`LAMBDA`], the term Oja's rule adds to Hebb (doi:10.1007/BF00275687).
+/// Returns the positions whose record changed.
+pub fn fire(atoms: &mut [Record], fired: &[usize]) -> Vec<usize> {
+    let mut fired: Vec<usize> = fired.iter().copied().filter(|&i| i < atoms.len()).collect();
+    fired.sort_unstable();
+    fired.dedup();
+    if fired.len() < 2 {
+        return Vec::new();
+    }
+    let ids: Vec<String> = atoms
+        .iter()
+        .map(|a| {
+            a.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+    let mut changed = std::collections::BTreeSet::new();
+    for &i in &fired {
+        let peers: Vec<String> = atoms[i]
+            .get("links")
+            .and_then(|l| l.as_array())
+            .map(|links| {
+                links
+                    .iter()
+                    .filter_map(|l| l.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for peer in peers {
+            let together = fired.iter().any(|&j| ids[j] == peer);
+            if !together {
+                let w = weight_of(&atoms[i], &peer) * (1.0 - LAMBDA);
+                set_weight(&mut atoms[i], &peer, w);
+                changed.insert(i);
+            }
+        }
+    }
+    for (a, &i) in fired.iter().enumerate() {
+        for &j in &fired[a + 1..] {
+            let (id_i, id_j) = (ids[i].clone(), ids[j].clone());
+            if id_i.is_empty() || id_j.is_empty() {
+                continue;
+            }
+            let linked = has_link(&atoms[i], &id_j) || has_link(&atoms[j], &id_i);
+            if !linked {
+                if link_count(&atoms[i]) >= FIRE_LINK_MAX || link_count(&atoms[j]) >= FIRE_LINK_MAX
+                {
+                    continue;
+                }
+                add_link(&mut atoms[i], &id_j);
+                add_link(&mut atoms[j], &id_i);
+            } else {
+                if !has_link(&atoms[i], &id_j) {
+                    add_link(&mut atoms[i], &id_j);
+                }
+                if !has_link(&atoms[j], &id_i) {
+                    add_link(&mut atoms[j], &id_i);
+                }
+            }
+            let w = weight_of(&atoms[i], &id_j).max(weight_of(&atoms[j], &id_i));
+            let w = (w + ETA * (1.0 - w)).min(1.0);
+            set_weight(&mut atoms[i], &id_j, w);
+            set_weight(&mut atoms[j], &id_i, w);
+            changed.insert(i);
+            changed.insert(j);
+        }
+    }
+    changed.into_iter().collect()
+}
+
 /// Rounds of label propagation before the labels are taken as they stand.
 const PROPAGATION_ROUNDS: usize = 20;
 
@@ -93,15 +235,18 @@ pub fn islands(graph: &Graph) -> Vec<Vec<usize>> {
                 if peers.is_empty() {
                     return label[node];
                 }
-                let mut counts: HashMap<usize, usize> = HashMap::new();
-                for &peer in peers {
-                    *counts.entry(label[peer]).or_insert(0) += 1;
+                let mut counts: HashMap<usize, f64> = HashMap::new();
+                for &(peer, weight) in peers {
+                    *counts.entry(label[peer]).or_insert(0.0) += weight;
                 }
                 counts
                     .iter()
-                    .map(|(&l, &c)| (c, std::cmp::Reverse(l)))
-                    .max()
-                    .map_or(label[node], |(_, std::cmp::Reverse(l))| l)
+                    .max_by(|a, b| {
+                        a.1.partial_cmp(b.1)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| b.0.cmp(a.0))
+                    })
+                    .map_or(label[node], |(&l, _)| l)
             })
             .collect();
         if next == label {
@@ -125,9 +270,11 @@ pub fn islands(graph: &Graph) -> Vec<Vec<usize>> {
 pub const HOP_DECAY: f64 = 0.5;
 
 /// Spreading activation from weighted seeds (Collins and Loftus,
-/// doi:10.1037/0033-295X.82.6.407; the fan effect of Anderson's 1983
-/// spreading-activation theory of memory, as division by degree). Returns
-/// every node that received activation, strongest first.
+/// doi:10.1037/0033-295X.82.6.407). Each hop passes [`HOP_DECAY`] of a
+/// node's energy to its neighbours in proportion to the link weights, so a
+/// well-worn link carries more and a busy node spreads thinner: Anderson's
+/// fan effect, over Hebbian weights. Returns every node that received
+/// activation, strongest first.
 #[must_use]
 pub fn activate(graph: &Graph, seeds: &[(usize, f64)], hops: usize) -> Vec<(usize, f64)> {
     let n = graph.len();
@@ -145,9 +292,12 @@ pub fn activate(graph: &Graph, seeds: &[(usize, f64)], hops: usize) -> Vec<(usiz
             if *energy <= 0.0 || peers.is_empty() {
                 continue;
             }
-            let share = HOP_DECAY * energy / peers.len() as f64;
-            for &peer in peers {
-                next[peer] += share;
+            let total: f64 = peers.iter().map(|(_, w)| w).sum();
+            if total <= 0.0 {
+                continue;
+            }
+            for &(peer, weight) in peers {
+                next[peer] += HOP_DECAY * energy * weight / total;
             }
         }
         for (held, gained) in activation.iter_mut().zip(&next) {
@@ -212,6 +362,36 @@ mod tests {
             }
         }
         assert_eq!(lit[0].0, a1);
+    }
+
+    /// Firing a pair raises its weight toward one and decays the links they
+    /// did not fire with; the heavier link then carries more activation.
+    #[test]
+    fn fire_together_wire_together() {
+        let mut atoms = clique("a", 3);
+        let graph = Graph::from_atoms(&atoms);
+        assert_eq!(graph.weight(0, 1), Some(WEIGHT_DEFAULT));
+        let changed = fire(&mut atoms, &[0, 1]);
+        assert_eq!(changed, vec![0, 1]);
+        let graph = Graph::from_atoms(&atoms);
+        let w1 = graph.weight(0, 1).unwrap();
+        assert!(w1 > WEIGHT_DEFAULT && w1 < 1.0, "{w1}");
+        let w2_cold = graph.weight(0, 2).unwrap();
+        assert!(w2_cold < WEIGHT_DEFAULT, "{w2_cold}");
+        fire(&mut atoms, &[0, 1]);
+        let graph = Graph::from_atoms(&atoms);
+        assert!(graph.weight(0, 1).unwrap() > w1);
+        let lit = activate(&graph, &[(0, 1.0)], 1);
+        let at = |n: usize| lit.iter().find(|(i, _)| *i == n).map_or(0.0, |(_, a)| *a);
+        assert!(at(1) > at(2), "{lit:?}");
+        // Two lone claims that fire together gain a link.
+        let mut pair = vec![
+            json!({"id": "x"}).as_object().cloned().unwrap(),
+            json!({"id": "y"}).as_object().cloned().unwrap(),
+        ];
+        assert_eq!(fire(&mut pair, &[0, 1]), vec![0, 1]);
+        assert!(has_link(&pair[0], "y") && has_link(&pair[1], "x"));
+        assert!(fire(&mut pair, &[0]).is_empty());
     }
 
     /// An atom with no links is its own island and activates nothing else.

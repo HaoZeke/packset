@@ -78,6 +78,16 @@ spread along the links, half lost per hop and divided by fan-out
 and `GET /v1/activate` are the endpoints; the seat's `ljos island` reads
 the second.
 
+Links carry weights, and use moves them. `link_weights` sits beside `links`
+on the atom, absent meaning 0.5, so every pack written so far reads
+unchanged. `packset fire ID ID...` (or `island --fire`, which fires the top
+eight it returns) says these claims fired together: each pair moves toward
+one by a tenth of the gap, a pair with no link gains one when both have
+room, and every other link of a fired claim loses two percent, the
+forgetting term Oja adds to Hebb (doi:10.1007/BF00275687). Activation then
+spreads in proportion to weight, so the paths a seat uses carry more and the
+ones it does not fade.
+
 ## Forgetting
 
 Every claim carries a review clock: `due_at`, and a `review` block with

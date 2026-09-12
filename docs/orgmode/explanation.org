@@ -84,6 +84,16 @@ and Loftus, doi:10.1037/0033-295X.82.6.407). An island is not a set or a
 persona: a set is a slice a person pinned, a persona colours everything,
 an island is what one piece of work touches, found from the work itself.
 
+Use shapes the graph. A link carries a weight, 0.5 until something fires
+over it. When the seat uses an island, the claims in it fired together:
+each pair's weight moves a tenth of the way to one, a pair with no link
+gains one, and every other link of a fired claim loses two percent. That is
+Hebb's rule with the forgetting term Oja added so weights stay bounded
+(doi:10.1007/BF00275687). Activation spreads in proportion to weight, so
+the paths a seat walks carry more each time and the ones it never walks
+fade toward nothing without being deleted. Weights sit beside the links on
+the atom and travel in a handover.
+
 * One writer
 
 The store is one Lightning Memory-Mapped Database (LMDB) file and one
