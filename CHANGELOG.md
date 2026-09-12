@@ -4,6 +4,9 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- The full answer-accuracy run, 470 questions, top five sessions, 7B
+  reader and judge: labelled sessions 0.634, fused panel 0.549, lexical
+  0.532; fused leads where retrieval decides, the reader decides the rest.
 - The window arm measured: fifteen of 470 questions name a time the parser
   reads; on temporal reasoning hit@1 0.811 to 0.835, recall@5 0.899 to
   0.878, the rest unchanged.
