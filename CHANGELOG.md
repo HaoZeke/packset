@@ -7,6 +7,10 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 - Search hits and island rows carry `ts`, when the memory was written, so
   a reader can lay what it recalls on a timeline; a hit from the index
   projection takes its stamp, kind and review date from the pack's record.
+- LoCoMo answer accuracy, 1540 questions, 7B reader and judge, dated
+  turns: labelled evidence 0.747, fused panel 0.637 at twenty turns and
+  0.577 at ten, lexical 0.488 at ten. Fused over lexical by nine points at
+  the same depth; depth buys most on multi-hop questions.
 - The full answer-accuracy run, 470 questions, top five sessions, 7B
   reader and judge: labelled sessions 0.634, fused panel 0.549, lexical
   0.532; fused leads where retrieval decides, the reader decides the rest.

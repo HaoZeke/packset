@@ -90,7 +90,22 @@ On LoCoMo at turn granularity, where the unit is the dialogue turn the
 benchmark marks as evidence, the fused panel finds an evidence turn first
 0.414 of the time and within ten 0.759, against 0.318 and 0.647 for the
 lexical ballot over 1986 questions; a turn is a short witness, so the
-answer-accuracy run hands the reader ten or twenty of them.
+answer-accuracy run hands the reader ten or twenty of them. Over the 1540
+questions outside the adversarial category, same 7B reader and judge,
+each turn dated and marked with its distance from the question:
+
+| arm | multi-hop | temporal | open-domain | single-hop | all |
+|---+---+---+---+---+---|
+| evidence turns (oracle) | 0.759 | 0.533 | 0.490 | 0.854 | 0.747 |
+| turns, fused panel, top 20 | 0.525 | 0.396 | 0.406 | 0.793 | 0.637 |
+| turns, fused panel, top 10 | 0.422 | 0.352 | 0.365 | 0.738 | 0.577 |
+| turns, lexical alone, top 10 | 0.312 | 0.321 | 0.344 | 0.627 | 0.488 |
+
+At the same depth the fused panel answers nine points more than the
+lexical ballot; twenty turns reach 85% of the ceiling. Multi-hop
+questions are where depth buys most, because their evidence is several
+turns apart; the ceiling itself is the reader's, and a 7B reader gets half
+the temporal and open-domain questions even when handed the evidence.
 
 Two systems publish on the same benchmarks and do a different job. Mem0
 (doi:10.48550/arXiv.2504.19413) reports a 26% relative gain in an

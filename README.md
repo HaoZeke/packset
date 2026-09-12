@@ -53,7 +53,10 @@ $ packset island fusing two ballots     # the memories a task activates
   lexical ballot alone 0.532, and the labelled sessions (the ceiling for
   any retriever) 0.634; the fused panel leads where retrieval decides
   (multi-session, single-session-user, preference) and the reader decides
-  the rest. `scripts/longmemeval_qa.py` runs it over the
+  the rest. On LoCoMo at turn granularity, same reader and judge, 1540
+  questions: the fused panel answers 0.637 with twenty turns and 0.577
+  with ten, the lexical ballot 0.488 with ten, the labelled evidence turns
+  0.747. `scripts/longmemeval_qa.py` runs it over the
   harness's retrieval dump with any OpenAI-compatible reader and judge; the
   explanation page says how to read the result.
 - Claims link by shared names; links carry weights that use strengthens and
