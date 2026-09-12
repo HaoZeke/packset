@@ -99,10 +99,45 @@ def chat(base, key, model, prompt, max_tokens):
     return out["choices"][0]["message"]["content"].strip()
 
 
+LOCOMO_READ = (
+    "Below are excerpts of a conversation between two people, each with the date "
+    "of the session it comes from. Answer the question briefly, based only on the "
+    "excerpts.\n\nExcerpts:\n\n{}\n\nQuestion: {}\nAnswer:"
+)
+
+
+def locomo_rows(data, rows, arm, top):
+    """LoCoMo: `data` is the list of samples, a row names a conversation and
+    the turn ids an arm retrieved. Category 5 (adversarial) is left out, as
+    the memory systems' published rows leave it out."""
+    for row in rows:
+        if row["category"] == 5:
+            continue
+        sample = data[row["conversation"]]
+        conv = sample["conversation"]
+        where = {}
+        for key, val in conv.items():
+            if key.startswith("session_") and isinstance(val, list):
+                date = conv.get(f"{key}_date_time", "")
+                for n, t in enumerate(val):
+                    where[t["dia_id"]] = (key, n, date, f"{t.get('speaker', '')}: {t.get('text', '')}")
+        chosen = row["evidence"] if arm == "oracle" else row["retrieved"][arm][:top]
+        picked = sorted((where[d] for d in chosen if d in where), key=lambda x: (int(x[0].split("_")[1]), x[1]))
+        excerpts = "\n".join(f"[{date}] {text}" for _, _, date, text in picked)
+        yield {
+            "question_id": f"c{row['conversation']}-q{row['question_index']}",
+            "question_type": f"category-{row['category']}",
+            "question": row["question"],
+            "answer": row["answer"],
+            "prompt": LOCOMO_READ.format(excerpts, row["question"]),
+        }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dataset")
     ap.add_argument("dump")
+    ap.add_argument("--bench", default="longmemeval", choices=["longmemeval", "locomo"])
     ap.add_argument("--arm", default="sessions fused")
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--limit", type=int, default=0)
@@ -113,10 +148,32 @@ def main():
     key = os.environ.get("QA_API_KEY", "")
     reader = os.environ.get("QA_MODEL", "")
     judge = os.environ.get("QA_JUDGE_MODEL", reader)
-    data = {q["question_id"]: q for q in json.load(open(a.dataset))}
+    raw = json.load(open(a.dataset))
     rows = [json.loads(l) for l in open(a.dump) if l.strip()]
     if a.limit:
         rows = rows[: a.limit]
+    if a.bench == "locomo":
+        items = list(locomo_rows(raw, rows, a.arm, a.top))
+
+        def one_locomo(item):
+            response = chat(base, key, reader, item["prompt"], 256)
+            verdict = chat(base, key, judge, JUDGE_BASE.format(item["question"], item["answer"], response), 8)
+            return {
+                "question_id": item["question_id"],
+                "question_type": item["question_type"],
+                "correct": "yes" in verdict.lower(),
+                "response": response,
+            }
+
+        results = []
+        with cf.ThreadPoolExecutor(a.workers) as pool:
+            for n, r in enumerate(pool.map(one_locomo, items), 1):
+                results.append(r)
+                if n % 100 == 0:
+                    print(f"{n} questions", file=sys.stderr)
+        report(results, a, reader, judge, "LoCoMo")
+        return
+    data = {q["question_id"]: q for q in raw}
 
     def one(row):
         q = data[row["question_id"]]
@@ -153,6 +210,10 @@ def main():
             results.append(r)
             if n % 25 == 0:
                 print(f"{n} questions", file=sys.stderr)
+    report(results, a, reader, judge, "LongMemEval_S")
+
+
+def report(results, a, reader, judge, bench):
     if a.out:
         with open(a.out, "w") as f:
             for r in results:
@@ -163,7 +224,7 @@ def main():
         t[0] += r["correct"]
         t[1] += 1
     total = sum(r["correct"] for r in results)
-    print(f"\nLongMemEval_S answer accuracy, arm {a.arm!r} top {a.top}, reader {reader}, judge {judge}\n")
+    print(f"\n{bench} answer accuracy, arm {a.arm!r} top {a.top}, reader {reader}, judge {judge}\n")
     print("| type | asked | accuracy |\n|---|---|---|")
     for kind, (c, n) in sorted(by.items()):
         print(f"| {kind} | {n} | {c / n:.3f} |")
