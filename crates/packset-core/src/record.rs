@@ -549,7 +549,7 @@ fn ranked<'a>(
 }
 
 /// The live peers this atom is most about, at most [`LINK_MAX`], chosen by
-/// [`diversified`]; deterministic over a corpus.
+/// `diversified`; deterministic over a corpus.
 #[must_use]
 pub fn link_targets(
     atom: &Map<String, Value>,
