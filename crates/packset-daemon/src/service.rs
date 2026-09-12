@@ -898,6 +898,32 @@ impl Service {
         Ok(json!({"islands": islands, "atoms": atoms.len()}))
     }
 
+    /// The claims the link graph turns on, highest first: a weighted
+    /// PageRank over the links. What matters in the pack by its own
+    /// connections, before any query.
+    ///
+    /// # Errors
+    ///
+    /// The store's.
+    pub fn hubs(&self, workspace: &str, limit: usize) -> anyhow::Result<Value> {
+        let atoms = self.store.live(workspace)?;
+        let graph = packset_core::island::Graph::from_atoms(&atoms);
+        let hubs: Vec<Value> = packset_core::island::hubs(&graph)
+            .into_iter()
+            .take(limit)
+            .map(|(i, score)| {
+                json!({
+                    "id": atoms[i].get("id").cloned().unwrap_or(Value::Null),
+                    "kind": atoms[i].get("kind").cloned().unwrap_or(Value::Null),
+                    "text": atoms[i].get("text").cloned().unwrap_or(Value::Null),
+                    "score": score,
+                    "links": atoms[i].get("links").and_then(Value::as_array).map_or(0, Vec::len),
+                })
+            })
+            .collect();
+        Ok(json!({"hubs": hubs, "atoms": atoms.len()}))
+    }
+
     /// Claims that fired together: every pair's link gains weight, their
     /// other links lose a little, and a missing link is made. Returns how
     /// many records changed.

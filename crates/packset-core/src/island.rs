@@ -239,6 +239,59 @@ const PROPAGATION_ROUNDS: usize = 20;
 /// its far side within two rounds. Largest island first, then by first
 /// member.
 #[must_use]
+/// The damping of the hub walk: the share of each step that follows a
+/// link rather than jumping anywhere, as in the original.
+pub const HUB_DAMPING: f64 = 0.85;
+
+/// Which claims the link graph turns on: a weighted PageRank (Brin and
+/// Page, Computer Networks 30, 1998) over the links, each step
+/// following a link with probability proportional to its weight. A claim
+/// many well-linked claims link to stands high; an isolated claim keeps
+/// the jump floor. Returns every claim with its score, highest first; the
+/// scores sum to one. This is the graph's own answer to what matters, as
+/// opposed to what a query asks for.
+#[must_use]
+pub fn hubs(graph: &Graph) -> Vec<(usize, f64)> {
+    let n = graph.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let uniform = 1.0 / n as f64;
+    let mut score = vec![uniform; n];
+    let totals: Vec<f64> = graph
+        .adjacency
+        .iter()
+        .map(|edges| edges.iter().map(|(_, w)| *w).sum::<f64>())
+        .collect();
+    for _ in 0..100 {
+        let mut next = vec![(1.0 - HUB_DAMPING) * uniform; n];
+        for (i, edges) in graph.adjacency.iter().enumerate() {
+            if totals[i] <= 0.0 {
+                // A claim with no links spreads its score everywhere.
+                for x in next.iter_mut() {
+                    *x += HUB_DAMPING * score[i] * uniform;
+                }
+                continue;
+            }
+            for (j, w) in edges {
+                next[*j] += HUB_DAMPING * score[i] * (w / totals[i]);
+            }
+        }
+        let diff: f64 = next.iter().zip(&score).map(|(a, b)| (a - b).abs()).sum();
+        score = next;
+        if diff < 1e-9 {
+            break;
+        }
+    }
+    let mut ranked: Vec<(usize, f64)> = score.into_iter().enumerate().collect();
+    ranked.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    ranked
+}
+
 pub fn islands(graph: &Graph) -> Vec<Vec<usize>> {
     let n = graph.len();
     let mut label: Vec<usize> = (0..n).collect();
@@ -335,6 +388,37 @@ pub fn activate(graph: &Graph, seeds: &[(usize, f64)], hops: usize) -> Vec<(usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The claim every other claim links to stands highest; an isolated
+    /// claim keeps the jump floor; the scores sum to one.
+    #[test]
+    fn hubs_rank_the_linked_to() {
+        let atom = |id: &str, links: &[&str]| -> Record {
+            serde_json::json!({"id": id, "kind": "conclusion", "text": id, "links": links})
+                .as_object()
+                .cloned()
+                .unwrap()
+        };
+        let atoms = vec![
+            atom("hub", &[]),
+            atom("a", &["hub"]),
+            atom("b", &["hub"]),
+            atom("c", &["hub", "a"]),
+            atom("lone", &[]),
+        ];
+        let graph = Graph::from_atoms(&atoms);
+        let ranked = hubs(&graph);
+        assert_eq!(ranked.len(), 5);
+        assert_eq!(graph.id(ranked[0].0), "hub", "{ranked:?}");
+        let total: f64 = ranked.iter().map(|(_, s)| s).sum();
+        assert!((total - 1.0).abs() < 1e-6);
+        let lone = ranked
+            .iter()
+            .find(|(i, _)| graph.id(*i) == "lone")
+            .unwrap()
+            .1;
+        assert!(lone > 0.0 && lone < ranked[0].1);
+    }
     use serde_json::json;
 
     fn clique(prefix: &str, n: usize) -> Vec<Record> {

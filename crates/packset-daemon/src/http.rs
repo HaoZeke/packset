@@ -319,6 +319,16 @@ fn route(
             Err(a) => a,
             Ok(workspace) => answer(service.islands(&workspace)),
         },
+        (Method::Get, "/v1/hubs") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => {
+                let limit = query
+                    .get("limit")
+                    .and_then(|l| l.parse::<usize>().ok())
+                    .unwrap_or(10);
+                answer(service.hubs(&workspace, limit))
+            }
+        },
         (Method::Get, "/v1/activate") => match required(query, "workspace") {
             Err(a) => a,
             Ok(workspace) => {

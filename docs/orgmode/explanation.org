@@ -158,6 +158,16 @@ the paths a seat walks carry more each time and the ones it never walks
 fade toward nothing without being deleted. Weights sit beside the links on
 the atom and travel in a handover.
 
+* Hubs
+
+Islands say what a task touches; hubs say what the pack turns on. A
+weighted PageRank over the links (Brin and Page, Computer Networks 30,
+1998) gives each claim the share of a random
+walk that keeps landing on it, and the claims many well-linked claims link
+to stand highest. That is the graph's own reading of what matters, before
+any query, and the natural list to pin, to review first when the clock is
+crowded, or to carry in a handover when the whole pack is too much.
+
 * One writer
 
 The store is one Lightning Memory-Mapped Database (LMDB) file and one

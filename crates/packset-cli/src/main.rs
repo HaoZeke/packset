@@ -94,6 +94,7 @@ fn run() -> anyhow::Result<()> {
         "search" => search(port, rest),
         "due" => due(port, rest.first().map(String::as_str)),
         "islands" => islands(port, rest.first().map(String::as_str)),
+        "hubs" => hubs(port, rest.first().map(String::as_str)),
         "island" => island(port, rest),
         "fire" => fire(port, rest),
         "grade" => grade(port, rest),
@@ -134,6 +135,7 @@ fn usage() -> String {
          search [--workspace WS] QUERY    ranked claims, score kind id text\n\
          due [WORKSPACE]        claims whose review clock has run out\n\
          islands [WORKSPACE]    the link graph's clusters, largest first\n\
+         hubs [WORKSPACE]       the claims the link graph turns on, highest first\n\
          island [--workspace WS] [--fire] CUE   the memories a cue activates\n\
          fire [--workspace WS] ID ID...   these claims fired together; their links gain weight\n\
          grade ID [--lapsed] [WS]  mark a review recalled, or lapsed\n\
@@ -504,6 +506,22 @@ fn due(port: u16, given: Option<&str>) -> anyhow::Result<()> {
 }
 
 /// One line per island: size, then the first claim in it.
+/// One line per hub: score, links, id, text.
+fn hubs(port: u16, given: Option<&str>) -> anyhow::Result<()> {
+    let workspace = given.map_or_else(|| client(port).workspace(), str::to_string);
+    let body = client(port).hubs(&workspace, 10)?;
+    for hub in body["hubs"].as_array().into_iter().flatten() {
+        println!(
+            "{:.4}\t{}\t{}\t{}",
+            hub["score"].as_f64().unwrap_or(0.0),
+            hub["links"].as_u64().unwrap_or(0),
+            hub["id"].as_str().unwrap_or("-"),
+            hub["text"].as_str().unwrap_or("")
+        );
+    }
+    Ok(())
+}
+
 fn islands(port: u16, given: Option<&str>) -> anyhow::Result<()> {
     let workspace = workspace(given)?;
     let body = client(port).islands(&workspace)?;

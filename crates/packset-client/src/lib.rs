@@ -455,6 +455,19 @@ impl PacksetClient {
     }
 
     /// The link graph's communities, largest first.
+    /// The claims the link graph turns on, highest first.
+    pub fn hubs(&self, workspace: &str, limit: usize) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/hubs", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .query("limit", &limit.to_string())
+            .timeout(timeout())
+            .call()
+            .map_err(|e| refused(&url, e))?
+            .into_json()?;
+        Ok(body)
+    }
+
     pub fn islands(&self, workspace: &str) -> Result<serde_json::Value, Error> {
         let url = format!("{}/v1/islands", self.base);
         let body: serde_json::Value = ureq::get(&url)
