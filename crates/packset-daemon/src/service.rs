@@ -1346,6 +1346,53 @@ mod tests {
     }
 
     #[test]
+    fn consolidate_closes_what_arrival_never_saw_and_reports_first() {
+        let (_dir, svc) = service();
+        // Two claims written straight to the store, as an import or an older
+        // writer would leave them: the later rewrites the earlier and
+        // nothing closed it.
+        let mut older = atom("The default fuse is Borda.");
+        older.insert("id".into(), json!("older0000000000000000000000000001"));
+        older.insert("ts".into(), json!("2026-01-01T00:00:00.000Z"));
+        older.insert("kind".into(), json!("lesson"));
+        let mut newer = atom("The default fuse is CombMNZ.");
+        newer.insert("id".into(), json!("newer0000000000000000000000000002"));
+        newer.insert("ts".into(), json!("2026-02-01T00:00:00.000Z"));
+        newer.insert("kind".into(), json!("lesson"));
+        svc.store()
+            .upsert_many(&[older.clone(), newer.clone()])
+            .unwrap();
+
+        let report = svc.consolidate("w", false).unwrap();
+        assert_eq!(report["closed"], json!(1), "{report}");
+        assert_eq!(report["applied"], json!(false));
+        assert_eq!(report["pairs"][0]["old"], older["id"]);
+        assert_eq!(report["pairs"][0]["new"], newer["id"]);
+        assert_eq!(
+            svc.store().live("w").unwrap().len(),
+            2,
+            "a report writes nothing"
+        );
+
+        let applied = svc.consolidate("w", true).unwrap();
+        assert_eq!(applied["closed"], json!(1), "{applied}");
+        let live = svc.store().live("w").unwrap();
+        assert_eq!(live.len(), 1, "{live:?}");
+        assert_eq!(live[0]["id"], newer["id"]);
+        assert!(
+            live[0]["supersedes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == &older["id"]),
+            "{:?}",
+            live[0]
+        );
+        let again = svc.consolidate("w", true).unwrap();
+        assert_eq!(again["closed"], json!(0), "nothing left to close");
+    }
+
+    #[test]
     fn an_id_is_thirty_two_hex_characters_and_does_not_repeat() {
         let a = new_id();
         assert_eq!(a.len(), 32, "{a}");
