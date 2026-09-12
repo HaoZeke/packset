@@ -240,6 +240,25 @@ file is how a pack ends up with two answers to one question, so a second
 and a search runs over an index built once per generation, which is why a
 query over ten thousand atoms costs about two milliseconds.
 
+* A later claim closes the earlier one it rewrites
+
+A claim that arrives closes the live claim it replaces: one it names in
+=supersedes=, a correction sharing an entity, a rewrite of the same
+sentence (token Jaccard of at least 0.6), or one that opens with the same
+words for at least three and six tenths of the shorter and then says a
+different thing, the shape of a fact whose object changed (=The default
+fuse is Borda= to =The default fuse is CombMNZ=, =Roy Rogers is married to
+Dale Evans= to =... John McVie=, which the set measure misses because the
+object is two words). When both claims carry entities they must share
+one; a claim without entities is read by its text, because most claims a
+seat writes name none, and before that reading the pack of one seat had
+closed nothing in a day of lessons. The closed claim keeps its window and
+answers an as-of read. =POST /v1/consolidate= runs the same rule over what
+is held, for a pack filled before the rule or by import, and reports the
+pairs before it writes them. The MemoryAgentBench conflict-resolution rows
+measure this rule on public data: a list of facts where a later one
+overwrites an earlier one about the same subject.
+
 * Trust is memory too
 
 A =trust= atom is one weighted edge of an influence graph: who listens to
