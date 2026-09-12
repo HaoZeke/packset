@@ -141,13 +141,8 @@ pub fn activate(graph: &Graph, seeds: &[(usize, f64)], hops: usize) -> Vec<(usiz
     }
     for _ in 0..hops {
         let mut next = vec![0.0f64; n];
-        for node in 0..n {
-            let energy = frontier[node];
-            if energy <= 0.0 {
-                continue;
-            }
-            let peers = &graph.adjacency[node];
-            if peers.is_empty() {
+        for (energy, peers) in frontier.iter().zip(&graph.adjacency) {
+            if *energy <= 0.0 || peers.is_empty() {
                 continue;
             }
             let share = HOP_DECAY * energy / peers.len() as f64;
@@ -155,8 +150,8 @@ pub fn activate(graph: &Graph, seeds: &[(usize, f64)], hops: usize) -> Vec<(usiz
                 next[peer] += share;
             }
         }
-        for node in 0..n {
-            activation[node] += next[node];
+        for (held, gained) in activation.iter_mut().zip(&next) {
+            *held += gained;
         }
         frontier = next;
     }
