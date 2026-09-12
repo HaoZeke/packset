@@ -1313,9 +1313,20 @@ pub fn merge_ballots(
         })
         .collect();
     let order = panel.rerank(&items, 0.7);
+    // The score a caller reads is the panel's, on one scale; the ballot's own
+    // score stays beside it.
     order
         .into_iter()
-        .filter_map(|key| by_key.get(&key).cloned())
+        .filter_map(|key| {
+            let mut hit = by_key.get(&key).cloned()?;
+            if let Some(object) = hit.as_object_mut() {
+                if let Some(own) = object.get("score").cloned() {
+                    object.insert("ballot_score".into(), own);
+                }
+                object.insert("score".into(), json!(weights[&key]));
+            }
+            Some(hit)
+        })
         .take(limit)
         .collect()
 }
@@ -1370,6 +1381,25 @@ mod merge_tests {
         let b = vec![hit("atom", "both", "beta"), hit("atom", "other", "gamma")];
         let merged = merge_ballots(&[a, b], 10, &default_panel(), NOW);
         assert_eq!(merged[0]["id"], json!("both"), "{merged:?}");
+    }
+
+    /// The score on a returned hit is the panel's fused weight, so two hits
+    /// from different ballots read on one scale; the ballot's own score is
+    /// kept beside it.
+    #[test]
+    fn a_returned_score_is_the_panels() {
+        let a = vec![hit("atom", "both", "alpha"), hit("atom", "solo", "beta")];
+        let b = vec![hit("atom", "both", "alpha")];
+        let merged = merge_ballots(&[a, b], 10, &default_panel(), NOW);
+        let both = merged.iter().find(|h| h["id"] == "both").unwrap();
+        let solo = merged.iter().find(|h| h["id"] == "solo").unwrap();
+        assert!(both["score"].as_f64().unwrap() > solo["score"].as_f64().unwrap());
+        assert!(both.get("ballot_score").is_some());
+        let scores: Vec<f64> = merged
+            .iter()
+            .map(|h| h["score"].as_f64().unwrap())
+            .collect();
+        assert!(scores.windows(2).all(|w| w[0] >= w[1]), "{scores:?}");
     }
 
     /// A claim reviewed long ago ranks below one reviewed today under the
