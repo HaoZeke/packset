@@ -1,0 +1,107 @@
+===========
+Explanation
+===========
+
+
+
+A pack is not a transcript
+--------------------------
+
+Most memory layers for agents mine a transcript for facts and index what
+they find. The pack refuses that path. Nothing is extracted on write. A
+claim exists because a person or a seat wrote it, in two sentences at most,
+and said what kind of claim it is. Text that was merely read never becomes
+text that is remembered. A seat has to say what it learned, and in return
+every claim has an author, a time, and a window of truth. A wrong claim is
+closed or retracted with the deed that showed it wrong.
+
+What a search ranks
+-------------------
+
+Two lexical ballots always run: a prefix-and-one-edit scan that finds a
+claim through a typo, and BM25+ over an inverted index that weighs a word by
+how much it narrows the pack. A dense ballot runs when an encoder is
+present. The panel fuses the ballots by CombMNZ and diversifies by maximal marginal
+relevance (MMR).
+Each default was measured on LoCoMo (https://doi.org/10.48550/arXiv.2402.17753), 1986
+questions over ten conversations with labelled evidence turns, loaded as
+atoms so the scorer is what is measured:
+
+.. table::
+
+    +--------------------------------------+-------+-------+
+    | Arm                                  | hit@1 | hit@5 |
+    +======================================+=======+=======+
+    | BM25, turns                          | 0.615 | 0.716 |
+    +--------------------------------------+-------+-------+
+    | BM25+, turns                         | 0.635 | 0.732 |
+    +--------------------------------------+-------+-------+
+    | BM25+, passage windows of six turns  | 0.668 | 0.771 |
+    +--------------------------------------+-------+-------+
+    | passage BM25+ fused with e5-large-v2 | 0.736 | 0.812 |
+    +--------------------------------------+-------+-------+
+    | published lexical plus dense system  | 0.752 | 0.829 |
+    +--------------------------------------+-------+-------+
+
+Dirichlet language-model scoring lost to BM25+. SPLADE++ alone scored
+0.637 and fused to 0.714, level with the dense ballot. A cross-encoder
+second stage did not beat the free fusion and is off by default. The
+diversify slot made no difference to recall, which is the wrong benchmark
+for it: a diversifier is for not answering the same claim four ways, and
+LoCoMo has nothing to suppress. The full table with every arm is in the
+repository README.
+
+Forgetting is a feature
+-----------------------
+
+A claim that is never used should not weigh as much as one that is. The
+pack gives every claim a review clock modelled on spaced repetition: a
+stability in days, a difficulty, and a due date. Grading a review recalled
+grows stability by how overdue the claim was; lapsed halves it. This is
+the update rule the Free Spaced Repetition Scheduler (FSRS) fits to millions
+of reviews
+(https://doi.org/10.1145/3534678.3539081), and the retrievability it implies,
+``R = (1 + 19/81 * t/S)^(-1/2)``, is a power law of the kind Wixted and
+Ebbesen found for human forgetting (https://doi.org/10.1111/j.1467-9280.1991.tb00175.x)
+and Anderson and Schooler traced to the statistics of the environment
+(https://doi.org/10.1111/j.1467-9280.1991.tb00174.x). The spacing effect the clock
+schedules for is the best replicated result in the memory literature
+(Cepeda et al., https://doi.org/10.1037/0033-2909.132.3.354); Ebbinghaus's own curve
+replicates (https://doi.org/10.1371/journal.pone.0120644).
+
+Two consequences. ``due`` lists what a seat is about to forget, and a
+sitting starts by reading and grading it. With ``PACKSET_DECAY=fsrs`` the
+same ``R`` scales a search score, so an unreviewed claim sinks without
+vanishing: it floors at a quarter of its weight, and a claim nothing else
+answers is still found. Trust rows and cards are exempt; they are weighed,
+not recalled. LoCoMo carries no review history, so this slot cannot be
+measured there and stays off by default. A longitudinal benchmark is the
+open work.
+
+One writer
+----------
+
+The store is one Lightning Memory-Mapped Database (LMDB) file and one
+process owns it. Two writers on one
+file is how a pack ends up with two answers to one question, so a second
+``packsetd`` refuses to start. Readers share one parsed snapshot per write,
+and a search runs over an index built once per generation, which is why a
+query over ten thousand atoms costs about two milliseconds.
+
+Trust is memory too
+-------------------
+
+A ``trust`` atom is one weighted edge of an influence graph: who listens to
+whom, and how much. It carries the same validity window and supersession
+as any claim, cites the deeds behind it, and travels in a handover. The
+seat reads the live rows into a DeGroot or Friedkin-Johnsen settle, and
+reweighs voters by what turned out right. The pack stores the rows; it
+settles nothing.
+
+Where the stack joins
+---------------------
+
+A claim may cite a deed accession. The deed store owns the bytes and the
+proof; the tracker cites the same accession on a node. ``accessions`` and
+``citers`` are the two directions of that join, and neither store opens the
+other. The seat, ``ljos``, composes them.

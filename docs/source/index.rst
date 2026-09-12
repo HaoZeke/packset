@@ -1,7 +1,8 @@
-#+title: packset
-#+options: toc:nil num:nil
+=======
+packset
+=======
 
-#+begin_export rst
+
 .. raw:: html
 
    <div class="vi-hero">
@@ -23,7 +24,6 @@
        <a class="vi-btn vi-btn-ghost" href="reference.html">Reference</a>
      </div>
    </div>
-#+end_export
 
 A pack is what a seat has decided to keep: one claim per atom, written on
 purpose, never mined from a transcript. Search ranks the claims by a
@@ -32,33 +32,34 @@ is forgotten, and a claim that is not reviewed decays in the ranking. The
 writer is one daemon over one Lightning Memory-Mapped Database (LMDB) file,
 and every other tool is a client.
 
-* Install
+Install
+-------
 
-#+begin_src console
-$ cargo install --git https://github.com/leidarljos/packset packset-cli packset-daemon
-$ cargo install --git https://github.com/leidarljos/packset packset-mcp   # optional
-$ packset ensure
-PACKSET_URL=http://127.0.0.1:8761
-#+end_src
+.. code:: console
 
-=packset ensure= starts the writer when it is down and prints the URL every
-client reads from =PACKSET_URL=. The dense scorer is a separate binary,
-=packset-embed=, and the pack answers without it.
+    $ cargo install --git https://github.com/leidarljos/packset packset-cli packset-daemon
+    $ cargo install --git https://github.com/leidarljos/packset packset-mcp   # optional
+    $ packset ensure
+    PACKSET_URL=http://127.0.0.1:8761
 
-* First minute
+``packset ensure`` starts the writer when it is down and prints the URL every
+client reads from ``PACKSET_URL``. The dense scorer is a separate binary,
+``packset-embed``, and the pack answers without it.
 
-#+begin_src console
-$ export PACKSET_URL=http://127.0.0.1:8761
-$ packset remember --workspace demo "BM25+ is the default lexical scorer. It beat BM25 by two points."
-3f9c...	lesson	due 2026-09-13T08:54:37.394Z
-$ packset search --workspace demo lexical scorer
-9.1000	lesson	3f9c...	BM25+ is the default lexical scorer. It beat BM25 by two points.
-#+end_src
+First minute
+------------
 
-The [[file:getting-started.org][tutorial]] does the same through the seat's
+.. code:: console
+
+    $ export PACKSET_URL=http://127.0.0.1:8761
+    $ packset remember --workspace demo "BM25+ is the default lexical scorer. It beat BM25 by two points."
+    3f9c...	lesson	due 2026-09-13T08:54:37.394Z
+    $ packset search --workspace demo lexical scorer
+    9.1000	lesson	3f9c...	BM25+ is the default lexical scorer. It beat BM25 by two points.
+
+The :doc:`tutorial <getting-started>` does the same through the seat's
 own verbs and ends with a handover another machine can open.
 
-#+begin_export rst
 .. toctree::
    :maxdepth: 1
    :caption: Guides
@@ -69,4 +70,3 @@ own verbs and ends with a handover another machine can open.
    reference
    explanation
    architecture
-#+end_export

@@ -18,17 +18,12 @@ import re
 import sys
 from pathlib import Path
 
-PAGES = [
-    "getting-started",
-    "howto",
-    "harness",
-    "reference",
-    "control",
-    "explanation",
-    "emacs",
-    "org-syntax",
-    "ecosystem",
-]
+# The pages a site has are the org files it has, index aside, in a fixed order.
+_ORG = Path(__file__).resolve().parents[1] / "orgmode"
+_ORDER = ["getting-started", "howto", "reference", "explanation", "architecture"]
+PAGES = [p for p in _ORDER if (_ORG / f"{p}.org").is_file()] + sorted(
+    q.stem for q in _ORG.glob("*.org") if q.stem not in _ORDER and q.stem != "index"
+)
 
 TOCTREE = """
 
