@@ -91,8 +91,10 @@ Ten conversations, 5882 turns loaded as atoms, 1536 answerable questions:
 
 ### Which formula
 
-BM25 is a 1994 baseline with two known defects, and treating it as the floor
-was the mistake. The lexical path takes a scorer:
+BM25+ (Lv and Zhai, DOI 10.1145/2063576.2063584) holds each occurrence above a
+floor that plain BM25's length normalisation drives toward zero. It is the
+default and leads at every granularity measured; query likelihood with a
+Dirichlet prior (DOI 10.1145/984321.984322) loses, alone and fused.
 
 | scorer over passages | hit@1 | nDCG@5 |
 |---|---|---|
@@ -101,76 +103,19 @@ was the mistake. The lexical path takes a scorer:
 | query likelihood, Dirichlet | 0.637 | 0.734 |
 | BM25+ and Dirichlet fused | 0.665 | 0.751 |
 
-BM25's length normalisation over-penalizes long documents. One occurrence's
-contribution is divided by the length, so past a length it approaches zero,
-which is what an absence is worth: containing the term stops distinguishing
-the document. Lv and Zhai state this as a constraint the scorer should satisfy
-and does not, and their fix (DOI 10.1145/2063576.2063584) holds every
-occurrence above a floor. It is the default, and it leads at every granularity
-measured: 0.635 hit@1 against 0.615 on turns, 0.638 against 0.633 on sessions,
-0.668 against 0.660 on passages.
-
-The largest gain is on turns, the shortest documents, which was not the
-prediction: the defect is a long-document one, so sessions should have gained
-most. Short documents gain from a different effect of the same constant. The
-floor is paid once per matching term, so it rewards a document matching more
-of the query, and that separates documents most when each carries few terms.
-
-Query likelihood with a Dirichlet prior (DOI 10.1145/984321.984322) is a
-different derivation and it loses here. Fusing it with BM25+ does not beat
-BM25+ alone, so a second lexical ballot is worth having only when it is a
-peer. Reported because it was run.
-
 ### What a document is
 
-A conversation can be indexed at either extreme, and both were, with nothing
-between them:
+Passage-level evidence (Callan, DOI 10.1007/978-1-4471-2099-5_31): windows of
+six turns at stride three, each session scored by its best window. The size is
+set from what a passage is for, not searched over. Every collapsing arm is
+retrieved deep enough to fill the deepest cut-off, so the table compares
+protocols, not ranking depth.
 
 | protocol | hit@1 | nDCG@5 |
 |---|---|---|
 | turn ranking read as sessions | 0.615 | 0.716 |
 | session as one document | 0.633 | 0.735 |
 | **passage windows** | **0.660** | **0.751** |
-
-Passage-level evidence is the standard middle (Callan, DOI
-10.1007/978-1-4471-2099-5_31): overlapping windows of six turns at a stride of
-three, each session scored by its best window. A window of one turn is the
-turn protocol and a window of a whole session is the session protocol, so this
-is the method the two arms were the degenerate cases of.
-
-The window is set from what a passage is for, not searched over. Long enough
-to carry a question and its answer, short enough that length normalisation
-still bites, and overlapping so a match spanning a boundary is whole in the
-next window. Picking the size by which value scores best on these questions
-would be fitting.
-
-Every arm that collapses a ranking into sessions is retrieved deep enough for
-the collapse to fill the deepest cut-off. A session ranking read off twenty
-turns is not twenty sessions, because the top turns cluster in a handful of
-rooms; comparing that against a corpus of session documents measures the depth
-of the ranking as if it were the protocol.
-
-Stemming is on by default and `PACKSET_STEM=off` turns it back off. The
-default is measured on dialogue turns, and a pack is not dialogue turns: it
-holds short written claims where two atoms may differ deliberately in a way
-suffix stripping erases. What this benchmark establishes is that stemming helps
-a lexical retriever over conversation. Whether it helps over three hundred
-one-line claims is a different question this corpus cannot answer, which is why
-the switch exists rather than the change being silent.
-
-`PACKSET_EMBED_MODEL` picks the encoder. bge-small is the default because it is
-130 MB against 1.3 GB and encodes about three times faster, and it costs 0.08
-R@10.
-
-Size is part of it and not all of it. bge-base measures no better than
-bge-small, so the small end is not a ladder; bge-large is worth 0.06 R@10 over
-bge-small. But multilingual-e5-large is the same 335M parameters as bge-large and measures
-0.02 R@10 above it, which is a third of what the whole step up from small bought.
-Which family was trained how matters at the top end, so a seat naming a larger
-model should name which larger model.
-
-Every ballot is optional. A seat with no encoder gets the first three rows and
-loses 0.08 to 0.14 R@10, which is what the dense projection is worth.
 
 ## Which voter fuses them
 
@@ -203,8 +148,10 @@ of three or more.
 
 ### Which diversifier
 
-The slot after the fuse reorders every answer, and it had never been measured.
-Over the strongest pair, fused by CombSUM:
+No difference, so the default stays. A diversifier suppresses redundancy and
+this benchmark scores recall of labelled evidence, so it cannot see what the
+slot is for. `PACKSET_DIVERSIFY` picks; DPP is greedy MAP over a
+quality-diversity kernel (DOI 10.1561/2200000044).
 
 | diversify | hit@1 | nDCG@5 |
 |---|---|---|
@@ -212,26 +159,13 @@ Over the strongest pair, fused by CombSUM:
 | `dpp` | 0.732 | 0.810 |
 | `none` | 0.732 | 0.810 |
 
-It changes nothing here, so the worry that prompted the sweep, a default
-quietly costing recall, was unfounded and the default stays.
-
-The rest of that result is what this benchmark cannot see. A diversifier is
-not for recall. It is for not spending four of five answers on one claim said
-four ways, and LoCoMo scores whether labelled evidence was retrieved, so the
-method has nothing here to suppress and nothing to be credited for. Reading
-the table as "diversity does not help" reads it past what it measures.
-
-`PACKSET_DIVERSIFY` picks between them; DPP is greedy MAP over a
-quality-diversity kernel (DOI 10.1561/2200000044).
-
 ### A second stage
 
-Every arm above is first-stage retrieval. A cross-encoder that reads the
-question and a candidate together is the standard second stage (monoBERT, DOI
-10.48550/arXiv.1901.04085), and `packset-embed --rerank` runs one.
-`/v1/search` runs that same stage when asked (`PACKSET_RERANK=1`, or
-`?rerank=1` on one request). `PACKSET_LOCOMO_RERANK=1` is the bench knob
-that measured it, reordering the top 20 of the fused list:
+A cross-encoder reads question and candidate together (monoBERT, DOI
+10.48550/arXiv.1901.04085); `PACKSET_LOCOMO_RERANK=1` reorders the top 20 of
+the fused list with `packset-embed --rerank`. Against the free change it
+loses: score-level fusion with no model matches its hit@1 and beats it
+elsewhere, at a forward pass per candidate per question less. Off by default.
 
 | over passage BM25+ + dense, Borda | hit@1 | hit@5 | nDCG@5 |
 |---|---|---|---|
@@ -239,53 +173,20 @@ that measured it, reordering the top 20 of the fused list:
 | reranked, bge-reranker-base | 0.730 | 0.913 | 0.797 |
 | first stage, CombSUM instead of Borda | **0.732** | **0.933** | **0.809** |
 
-It is worth 1.9 points of hit@1 over the list it reorders and costs hit@5 and
-hit@10, which is a reranker promoting one answer and pushing others below the
-cut. Against the free change, it loses: score-level fusion with no model
-reaches the same hit@1 and beats it everywhere else. The run took three hours
-of CPU at eight cores for 1536 questions, a forward pass per candidate per
-question. The same stage is on `/v1/search`, off by default: `PACKSET_RERANK=1`
-on the writer, or `?rerank=1` on one request, reorders the top 20 of the fused
-list the way the table measured. The locomo cost is why it stays off. It is
-not what the residual to the published number is made of.
-
 ## What a question costs
 
-Nothing in this repository had been timed. `cargo bench -p packset-core`
-(criterion, `crates/packset-core/benches/retrieval.rs`) now measures the three
-things a search pays: building the inverted index when the pack changed,
-scoring one question against it, and fusing the ballots. On a shared 32-core
-node, one twelve-word question:
+`cargo bench -p packset-core` times the index build, one question per scorer,
+and the fuse. "Before" built a hit for every candidate and sorted them all; a
+bounded heap now keeps the k best. The pack's own scan scores by the tokens
+the index was built from rather than re-tokenising: 60 ms to 13 ms at 10k
+atoms in one run. Fusing two ballots of twenty costs 79 µs bare, 655 µs under
+DPP, 917 µs under MMR.
 
 | atoms | index build | BM25+ question, before | after | the pack's own scan |
 |---|---|---|---|---|
 | 1,000 | 1.2 ms | 1.7 ms | **0.23 ms** | 3.8 ms |
 | 10,000 | 13 ms | 41 ms | **2.3 ms** | 55 ms |
 | 100,000 | 95 ms | 438 ms | **53 ms** | 795 ms |
-
-"Before" is what the first measurement found: the scorer built a JSON hit for
-every atom carrying a query term, sorted them all, and kept twenty. For a
-common term that is most of the pack, so a question cost the whole pack in
-allocations after an inverted index had found the candidates in a fraction of
-that. A bounded heap now keeps the k best as a score, an id and an ordinal,
-ordered the way the final sort orders, and the JSON is built for the survivors
-only; a test forces ties and checks the two agree exactly for every k.
-
-Fusing two ballots of twenty costs 79 µs with no diversifier, 655 µs under
-DPP and 917 µs under the shipped MMR. The diversifier is ten times the fusion
-and measured no benefit on the benchmark above, which cannot see what it is
-for. One millisecond a question is acceptable for a seat; the number is here
-so that stays a decision rather than an assumption.
-
-The pack's own scorer, the prefix-and-one-edit scan that makes a typo still
-find an atom, is linear in the pack by design. It was tokenising every atom
-again on every question, lowercasing and stemming a text the writer had
-tokenised a moment before to build the index. The writer now hands the scan
-the tokens it already holds, and in one run on the shared node the scan went
-from 60 ms to 13 ms at ten thousand atoms and from 620 ms to 155 ms at a
-hundred thousand: 4.6 and 4 times. What remains is the comparison itself,
-every query token against every atom token with an edit distance on the
-misses, and that is the next thing to measure into.
 
 ## What did not work
 
@@ -360,9 +261,12 @@ the BM25 side, as the section below says.
 
 ### Which encoder, and whether it has to be dense
 
-Three more encoders were in the binary and never measured, and the learned
-sparse verdict had been drawn from BGE-M3's side output rather than from a
-sparse model. On ten conversations, turn level, alone:
+SPLADE++ (DOI 10.1145/3404835.3463098) is a peer of BM25+ alone and matches
+e5-large-v2 dense as a fusion partner, from a 110M model whose output lives in
+an inverted index. The passage protocol is a lexical gain: passage dense
+scores no better than turn dense. gte-large and mxbai-large lose by a distance
+the leaderboards do not predict; the runtime's gte export may not be the
+reference model.
 
 | ballot | hit@1 | nDCG@5 |
 |---|---|---|
@@ -373,129 +277,22 @@ sparse model. On ten conversations, turn level, alone:
 | dense, mxbai-embed-large-v1 | 0.562 | 0.689 |
 | dense, gte-large-en-v1.5 | 0.477 | 0.607 |
 | BGE-M3 sparse head | 0.553 | |
-
-And as the second ballot beside passage BM25+, Borda:
-
 | pair | hit@1 | nDCG@5 |
 |---|---|---|
 | + dense, e5-large-v2 | 0.711 | 0.794 |
 | + **SPLADE++** | **0.714** | 0.787 |
 | + passage dense, e5-large-v2 | 0.709 | 0.791 |
-
-Two things follow. The learned-sparse verdict was wrong about the method and
-right about the model: SPLADE++ (DOI 10.1145/3404835.3463098) is a peer of
-BM25+ on its own and matches a 335M dense encoder as a fusion partner, from a
-110M model whose output lives in an inverted index with no vector store. That
-is the cheaper answer for a seat, and it is what a pack without a dense
-projection should run.
-
-And the passage protocol is a lexical gain, not a dense one: embedding the six
-turn windows scores no better than embedding turns, and fusing passage dense
-loses to fusing turn dense. The encoder already reads a turn as a whole; the
-window helps a scorer that counts words.
-
-gte-large and mxbai-large lose by a distance the leaderboards do not predict.
-The runtime's gte-large is a fixed-shape ONNX export of a model whose
-reference needs custom code and an 8192 context, so whether that row measures
-the model or the export is not settled here; mxbai carries the query
-instruction its card asks for. Reported as measured, since both were run.
-
-The gain reproduces almost exactly. That paper reports +11.2 points over BM25
-alone, and fusing dense into session BM25 here is worth +8.9, of which CombMNZ
-over Borda is 1.9.
-
-The starting point did not reproduce until the lexical path stopped skipping a
-standard component. Their +11.2 implies a BM25 baseline near 0.640; this
-measured 0.607, and the missing 0.033 turned out to be that nothing here
-stemmed. With suffix stripping the session BM25 baseline is 0.633, which is
-that gap closed rather than explained away, and the best arm moves from 0.716
-to 0.722 hit@1 and 0.794 to 0.802 nDCG@5.
-
-Two more standard components were missing after that one. The lexical scorer
-was plain BM25 where the floored variant is strictly better on long documents
-and measures better here on short ones too, and the benchmark indexed at two
-extremes with no passage in between. Both closed part of the residual: 0.722
-to 0.732 hit@1, 0.802 to 0.809 nDCG@5.
-
-So the residual is a difference in the BM25 side or in the sample, not in the
-fusion. The paper does not state which subset of LoCoMo it used and the family
-runs to fifty dialogues where the public file holds ten, so that last part is
-not closable from here.
-
-What closed the part that was closable was a missing component rather than a
-setting: nothing here stemmed, and every serious implementation of this scorer
-does. That is the distinction this section rests on. Adding suffix stripping is
-a method the baseline was supposed to have; choosing among stemmers by which
-scores best on these questions would be fitting, and has not been done.
-
-The rest is a statement about what can be established, not an excuse, and it
-has a consequence worth being explicit about: no parameter in this crate has
-been moved to close it. Every arm reported was run because it answered a question
-about the retriever, and the two that were tried because they might have closed
-the gap, late interaction and pseudo-relevance feedback, are reported as losses.
-A number that might not be comparable is not a target, and the way it stops
-being one is by refusing to aim at it.
-
-Of the distance that did close, from 0.203 to 0.036, three of four causes were
-defects rather than missing capability. Score fusion parsed and never ran. A
-relevance model weighted rarity twice. A voter could stop the process. The
-fourth was a unit: "session granularity" naming two protocols.
-
-Late interaction has been tried at this scale now, and it loses.
-
 | session granularity, ten conversations | hit@1 | nDCG@5 |
 |---|---|---|
 | session BM25 + dense (multilingual-e5-large), CombMNZ | **0.716** | **0.794** |
 | session BM25 + per-token (BGE-M3 int8), CombMNZ | 0.673 | 0.763 |
 | session BM25 + learned sparse (BGE-M3), Borda | 0.629 | 0.716 |
-
-On three of the ten conversations late interaction had won, so the subset
-misled, and the prediction drawn from it was wrong. What survives is the
-narrower claim the ablation actually supports: holding the model fixed, BGE-M3
-scored by its per-token vectors beats BGE-M3 scored by its pooled one, 0.559
-against 0.490. That says the scoring method is worth something. It does not say
-which arm wins when the models differ, and the distance from BGE-M3 int8 to
-multilingual-e5-large is larger than the distance from cosine to max-sim.
-
-Reading a controlled comparison as a ranking is the same error as reading two
-model sizes as the shape of a curve, which this file also had to correct. The
-learned sparse weights lose to BM25 as well, 0.553 against 0.589, so the third
-representation that arrives free with the pass does not pay either.
-
-What that ablation does establish, and all it establishes, is that the scoring
-method is worth something with the model held fixed. One model scored both ways,
-BGE-M3 over three of the conversations:
-
 | arm | R@10 | session hit@1 |
 |---|---|---|
 | its pooled vector, by cosine | 0.562 | 0.499 |
 | its per-token vectors, by max-sim | **0.649** | **0.564** |
 | BM25 + pooled | 0.635 | 0.590 |
 | BM25 + max-sim | **0.653** | **0.642** |
-
-The same weights, the same corpus, the same questions. Scoring a document by the
-best match each query token finds anywhere in it beats pooling those tokens into
-one vector, by 0.087 R@10 and 0.065 session hit@1 alone, and by 0.052 session
-hit@1 once BM25 is fused in.
-
-That is a statement about the method and not a ranking of the arms, which is the
-distinction the table above cost. A better model pooled beats a worse model per
-token, and at ten conversations e5-large-v2 pooled does exactly that.
-
-Size is not hiding in there either: BGE-M3's pooled output at 568M parameters is
-*worse* here than bge-small's at 33M, 0.562 R@10 against 0.641.
-
-`packset-embed --late` and `search::max_sim` implement it, and nothing in the
-writer reads them. A vector per token is thirty vectors where the pooled form is
-one, so an atom's `embedding` would grow accordingly, and on this evidence the
-storage would buy nothing: the pooled vector of a better model already scores
-higher. What would settle it is the same scoring over a model the size of the
-one that wins, which is not on offer here.
-
-The stored link graph does not help a query. Given twenty places, filling the
-last ten by following the neighbours of the first ten scores 0.562 R@20 against
-0.617 for letting the ranking continue. A neighbourhood is for walking out from
-something already found, not for answering.
 
 ## Crates
 
