@@ -2,11 +2,19 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
-## 0.5.0 (2026-09-12)
+## Unreleased
 
-- LongMemEval_S with an encoder: the fused panel over session documents
-  reaches 0.920 hit@1 and 0.968 recall@5 on the first hundred questions,
-  against 0.840 and 0.904 for the lexical ballot alone.
+- The writer keeps two query encoders (`PACKSET_EMBED_QUERY_WORKERS`), so
+  agents asking at once are answered side by side instead of one behind
+  the other; eight concurrent hooks took 281 ms wall on one encoder.
+- Two kinds: `prediction` (a voter's forecast on an issue, for the
+  surprisingly popular rule) and `rule` (a pattern with a verdict, argv law
+  kept in the pack and exported with the rest).
+
+## 0.5.1 (2026-09-12)
+
+- Two panel tests were red at 0.5.0: `Panel::parse` still filled the decay
+  slot with `off`, and a test read the default as `off`.
 - The first answer-accuracy row: with Qwen2.5-7B-Instruct Q5_K_M as
   reader and judge and LongMemEval's own prompts, the fused panel answers
   0.630 of the first hundred questions, the lexical ballot 0.570, the
@@ -15,6 +23,14 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
   measured and kept opt-in: bge-reranker-base over the windows of the fused
   top sessions falls from 0.920 to 0.780 hit@1 on the first hundred
   questions.
+- `examples/locomo_dump` and `scripts/longmemeval_qa.py --bench locomo`:
+  the same retrieval dump and answer-accuracy seam for LoCoMo.
+
+## 0.5.0 (2026-09-12)
+
+- LongMemEval_S with an encoder: the fused panel over session documents
+  reaches 0.920 hit@1 and 0.968 recall@5 on the first hundred questions,
+  against 0.840 and 0.904 for the lexical ballot alone.
 - `examples/longmemeval` writes the sessions each arm retrieved to
   `PACKSET_LME_DUMP`, and `scripts/longmemeval_qa.py` turns that into
   LongMemEval answer accuracy with the benchmark's reading and judge
