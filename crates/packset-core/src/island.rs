@@ -238,7 +238,6 @@ const PROPAGATION_ROUNDS: usize = 20;
 /// the answer is deterministic; a lone bridge edge loses to the clique on
 /// its far side within two rounds. Largest island first, then by first
 /// member.
-#[must_use]
 /// The damping of the hub walk: the share of each step that follows a
 /// link rather than jumping anywhere, as in the original.
 pub const HUB_DAMPING: f64 = 0.85;
@@ -292,6 +291,7 @@ pub fn hubs(graph: &Graph) -> Vec<(usize, f64)> {
     ranked
 }
 
+#[must_use]
 pub fn islands(graph: &Graph) -> Vec<Vec<usize>> {
     let n = graph.len();
     let mut label: Vec<usize> = (0..n).collect();
