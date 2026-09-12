@@ -40,6 +40,11 @@ const STARTUP: Duration = Duration::from_secs(5);
 const OURS: &[&str] = &["packsetd", "inside-memd"];
 
 fn main() -> std::process::ExitCode {
+    // A closed pipe ends the run quietly, so `packset status | head` is not a panic.
+    // SAFETY: resetting a signal disposition before any thread is spawned.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
@@ -167,12 +172,15 @@ fn is_ours(port: u16) -> bool {
 }
 
 /// The workspace a command was given, or the one the environment names.
+/// The workspace a verb acts on: the argument, else `PACKSET_WORKSPACE`, else
+/// what the client derives from the working directory's git remote, else
+/// `default`. The same answer every other client gives.
 fn workspace(given: Option<&str>) -> anyhow::Result<String> {
-    given
+    Ok(given
         .map(str::to_string)
         .or_else(|| env::var("PACKSET_WORKSPACE").ok())
         .filter(|w| !w.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("name a workspace, or set PACKSET_WORKSPACE"))
+        .unwrap_or_else(|| client(port()).workspace()))
 }
 
 /// The daemon this seat would run.
