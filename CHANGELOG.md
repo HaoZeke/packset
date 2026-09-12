@@ -2,6 +2,11 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
+## 0.7.1 (2026-09-12)
+
+- The lockfile follows the version bump. v0.7.0's release build refused
+  `--locked` because the lock still named 0.6.0.
+
 ## 0.7.0 (2026-09-12)
 
 - Search hits and island rows carry `ts`, when the memory was written, so
