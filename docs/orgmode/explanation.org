@@ -4,7 +4,7 @@
 * A pack is not a transcript
 
 Most memory layers for agents mine a transcript for facts and index what
-they find. The pack refuses that path. Nothing is extracted on write: a
+they find. The pack refuses that path. Nothing is extracted on write. A
 claim exists because a person or a seat wrote it, in two sentences at most,
 and said what kind of claim it is. Text that was merely read never becomes
 text that is remembered. A seat has to say what it learned, and in return
@@ -32,7 +32,7 @@ atoms so the scorer is what is measured:
 
 Dirichlet language-model scoring lost to BM25+. SPLADE++ alone scored
 0.637 and fused to 0.714, level with the dense ballot. A cross-encoder
-second stage did not beat the free fusion and ships off by default. The
+second stage did not beat the free fusion and is off by default. The
 diversify slot made no difference to recall, which is the wrong benchmark
 for it: a diversifier is for not answering the same claim four ways, and
 LoCoMo has nothing to suppress. The full table with every arm is in the
