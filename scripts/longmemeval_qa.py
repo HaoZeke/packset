@@ -45,6 +45,27 @@ SESSION_TIMED = (
 )
 
 
+# The reader's context, in characters: about four per token, leaving room
+# for the prompt and the answer under a 32k-token slot. LongMemEval trims
+# its history the same way (max_retrieval_length); here the longest
+# sessions give up their tails first, so every retrieved session stays.
+HISTORY_CHARS = 100_000
+
+
+def fit(parts):
+    """Trim the longest parts from the end until the whole fits the budget."""
+    parts = list(parts)
+    total = sum(len(p) for p in parts)
+    while total > HISTORY_CHARS and parts:
+        i = max(range(len(parts)), key=lambda k: len(parts[k]))
+        cut = min(len(parts[i]) - 500, total - HISTORY_CHARS)
+        if cut <= 0:
+            break
+        parts[i] = parts[i][: len(parts[i]) - cut] + "\n[... trimmed to fit ...]\n"
+        total = sum(len(p) for p in parts)
+    return parts
+
+
 def days_of(date):
     """Days since the epoch of a benchmark date, `2023/05/20 (Sat) 02:21`."""
     import datetime
@@ -195,8 +216,16 @@ def main():
         items = list(locomo_rows(raw, rows, a.arm, a.top))
 
         def one_locomo(item):
-            response = chat(base, key, reader, item["prompt"], 256)
-            verdict = chat(base, key, judge, JUDGE_BASE.format(item["question"], item["answer"], response), 8)
+            try:
+                response = chat(base, key, reader, item["prompt"][:HISTORY_CHARS], 256)
+                verdict = chat(base, key, judge, JUDGE_BASE.format(item["question"], item["answer"], response), 8)
+            except Exception as e:
+                return {
+                    "question_id": item["question_id"],
+                    "question_type": item["question_type"],
+                    "correct": False,
+                    "response": f"[error: {e}]",
+                }
             return {
                 "question_id": item["question_id"],
                 "question_type": item["question_type"],
@@ -234,12 +263,20 @@ def main():
                 parts.append(SESSION.format(n + 1, q["haystack_dates"][i], content))
             else:
                 parts.append(SESSION_TIMED.format(n + 1, q["haystack_dates"][i], gap, content))
-        history = "".join(parts)
+        history = "".join(fit(parts))
         prompt = READ.format(history, q["question_date"], q["question"])
         if not a.no_timeline:
             prompt = TIMELINE_NOTE + prompt
-        response = chat(base, key, reader, prompt, 512)
-        verdict = chat(base, key, judge, judge_prompt(q["question_type"], q["question"], q["answer"], response), 8)
+        try:
+            response = chat(base, key, reader, prompt, 512)
+            verdict = chat(base, key, judge, judge_prompt(q["question_type"], q["question"], q["answer"], response), 8)
+        except Exception as e:  # one question's failure is one wrong answer, not a dead arm
+            return {
+                "question_id": q["question_id"],
+                "question_type": q["question_type"],
+                "correct": False,
+                "response": f"[error: {e}]",
+            }
         return {
             "question_id": q["question_id"],
             "question_type": q["question_type"],
