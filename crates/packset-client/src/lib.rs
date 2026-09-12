@@ -351,6 +351,29 @@ impl PacksetClient {
         Ok(serde_json::from_value(found)?)
     }
 
+    /// Tombstone one atom. The daemon keeps the record and drops the index
+    /// entry, so a forgotten atom stops being recalled without the pack losing
+    /// the fact that it once held it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Bad`] when the workspace does not hold that atom, else the
+    /// request's or a body that is not JSON.
+    pub fn delete_atom(&self, workspace: &str, id: &str) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/atoms/delete", self.base);
+        let resp = match ureq::post(&url).timeout(TIMEOUT).send_json(serde_json::json!({
+            "workspace": workspace,
+            "id": id,
+        })) {
+            Ok(resp) => resp,
+            Err(ureq::Error::Status(404, _)) => {
+                return Err(Error::Bad(format!("no atom {id}")));
+            }
+            Err(e) => return Err(refused(&url, e)),
+        };
+        Ok(resp.into_json()?)
+    }
+
     pub fn post_atom(&self, atom: &serde_json::Value) -> Result<serde_json::Value, Error> {
         let url = format!("{}/v1/atoms", self.base);
         let body: serde_json::Value = ureq::post(&url)
