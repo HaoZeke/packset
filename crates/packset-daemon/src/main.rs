@@ -72,11 +72,10 @@ fn main() -> anyhow::Result<()> {
     );
 
     let service = Arc::new(Service::open(Home::new(root))?);
-    // The encoder loads its model on first use, which costs seconds; pay it
-    // now rather than on the first client's write.
-    std::thread::spawn(|| {
-        let _ = packset_daemon::embed::encode_query("the pack is open");
-    });
+    // Each encoder loads its model on first use, which costs seconds; pay it
+    // now, for every query encoder in the pool, rather than on the first
+    // agents' asks.
+    std::thread::spawn(packset_daemon::embed::warm_queries);
     http::serve(service, panel, &host, port)
 }
 

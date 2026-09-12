@@ -6,7 +6,9 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 - The writer keeps two query encoders (`PACKSET_EMBED_QUERY_WORKERS`), so
   agents asking at once are answered side by side instead of one behind
-  the other; eight concurrent hooks took 281 ms wall on one encoder.
+  the other; eight concurrent hooks took 281 ms wall on one encoder and
+  243 ms on two once warm. The pool is warmed at start, since the first
+  use of a cold second encoder cost 770 ms.
 - Two kinds: `prediction` (a voter's forecast on an issue, for the
   surprisingly popular rule) and `rule` (a pattern with a verdict, argv law
   kept in the pack and exported with the rest).

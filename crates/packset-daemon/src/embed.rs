@@ -316,6 +316,19 @@ fn query_slot() -> &'static Slot {
     &pool[0]
 }
 
+/// Start every query encoder now, side by side, so the first agents to ask
+/// at once do not each pay a model load. Each probe holds one slot while it
+/// runs, which is what makes the pool spread rather than stack.
+pub fn warm_queries() {
+    let workers = query_workers();
+    let hands: Vec<_> = (0..workers)
+        .map(|_| std::thread::spawn(|| encode_query("the pack is open")))
+        .collect();
+    for hand in hands {
+        let _ = hand.join();
+    }
+}
+
 pub fn encode(text: &str, query: bool) -> Option<Vec<f32>> {
     if text.trim().is_empty() {
         return None;
