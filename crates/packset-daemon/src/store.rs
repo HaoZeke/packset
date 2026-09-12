@@ -614,7 +614,10 @@ mod tests {
         // The record is still there to be read; it has left the live set.
         assert!(store.get("w", "a").unwrap().is_some());
         assert!(store.current("w", None).unwrap().is_empty());
-        assert!(store.delete("w", "a", None).is_err(), "twice is not current");
+        assert!(
+            store.delete("w", "a", None).is_err(),
+            "twice is not current"
+        );
     }
 
     #[test]
@@ -625,9 +628,7 @@ mod tests {
                 json!({"id": "a", "workspace": "w", "text": "the claim"}),
             ))
             .unwrap();
-        let tomb = store
-            .delete("w", "a", Some("deed-patch-overlay"))
-            .unwrap();
+        let tomb = store.delete("w", "a", Some("deed-patch-overlay")).unwrap();
         assert_eq!(tomb["retracted_by"], json!("deed-patch-overlay"));
         // Both halves read back together: what was withdrawn, and on what.
         assert_eq!(tomb["text"], json!("the claim"));
