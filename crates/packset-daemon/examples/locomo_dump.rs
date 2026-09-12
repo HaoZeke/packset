@@ -140,13 +140,6 @@ fn fused_scored(lexical: &[(usize, f64)], dense: &[(usize, f64)]) -> Vec<(usize,
         .collect()
 }
 
-fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)]) -> Vec<usize> {
-    fused_scored(lexical, dense)
-        .into_iter()
-        .map(|(i, _)| i)
-        .collect()
-}
-
 fn cache_dir() -> Option<std::path::PathBuf> {
     let dir = std::path::PathBuf::from(std::env::var_os("PACKSET_LME_CACHE")?);
     std::fs::create_dir_all(&dir).ok()?;
