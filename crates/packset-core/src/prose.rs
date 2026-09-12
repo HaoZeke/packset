@@ -108,11 +108,8 @@ fn words_of(text: &str) -> Vec<&str> {
 }
 
 /// Split on runs of `.`, `!` and `?`, keeping only pieces carrying a word.
-/// Sentences, split where a terminator is followed by space or the end.
-///
-/// A full stop inside a number or a version is not a boundary. An
-/// abbreviation followed by a space still splits: over-counting a sentence is
-/// cheaper than refusing a number.
+/// Sentences, split at `.`, `!` and `?`, except a full stop between two digits:
+/// a decimal or a version is not a sentence boundary.
 fn sentences_of(text: &str) -> Vec<&str> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
@@ -121,13 +118,15 @@ fn sentences_of(text: &str) -> Vec<&str> {
         if !matches!(b, b'.' | b'!' | b'?') {
             continue;
         }
-        let ends_here = bytes
-            .get(at + 1)
-            .is_none_or(|next| next.is_ascii_whitespace());
-        if ends_here {
-            out.push(&text[start..at]);
-            start = at + 1;
+        let between_digits = b == b'.'
+            && at > 0
+            && bytes[at - 1].is_ascii_digit()
+            && bytes.get(at + 1).is_some_and(u8::is_ascii_digit);
+        if between_digits {
+            continue;
         }
+        out.push(&text[start..at]);
+        start = at + 1;
     }
     if start < text.len() {
         out.push(&text[start..]);
