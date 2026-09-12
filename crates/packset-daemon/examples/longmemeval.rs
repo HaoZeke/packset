@@ -201,7 +201,11 @@ fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)], limit: usize) -> Vec<
 }
 
 /// The same fusion with the fused score kept, for arms that scale it.
-fn fused_scored(lexical: &[(usize, f64)], dense: &[(usize, f64)], limit: usize) -> Vec<(usize, f64)> {
+fn fused_scored(
+    lexical: &[(usize, f64)],
+    dense: &[(usize, f64)],
+    limit: usize,
+) -> Vec<(usize, f64)> {
     let ballot = |ranked: &[(usize, f64)]| -> Vec<Value> {
         ranked
             .iter()
@@ -228,11 +232,7 @@ fn fused_scored(lexical: &[(usize, f64)], dense: &[(usize, f64)], limit: usize) 
 /// benchmark can see: a knowledge-update question wants the latest
 /// session, a single-session question does not care, and the table by type
 /// says what recency buys and costs.
-fn recency(
-    question: &Question,
-    docs: &[Document],
-    fused: &[(usize, f64)],
-) -> Vec<(usize, f64)> {
+fn recency(question: &Question, docs: &[Document], fused: &[(usize, f64)]) -> Vec<(usize, f64)> {
     let panel = Panel::named("combmnz", "none", "on").expect("a shipped panel");
     let asked = days_of(&question.date);
     let age_of: BTreeMap<&str, f64> = question
@@ -249,7 +249,10 @@ fn recency(
     let mut scaled: Vec<(usize, f64)> = fused
         .iter()
         .map(|(i, s)| {
-            let age = age_of.get(docs[*i].session.as_str()).copied().unwrap_or(0.0);
+            let age = age_of
+                .get(docs[*i].session.as_str())
+                .copied()
+                .unwrap_or(0.0);
             (*i, s * panel.decay_weight("session", age, 1.0))
         })
         .collect();
