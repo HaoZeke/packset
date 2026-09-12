@@ -222,6 +222,29 @@ DPP, 917 µs under MMR.
 | 10,000 | 13 ms | 41 ms | **2.3 ms** | 55 ms |
 | 100,000 | 95 ms | 438 ms | **53 ms** | 795 ms |
 
+## LongMemEval
+
+Session retrieval on LongMemEval_S (doi:10.48550/arXiv.2410.10813): 500
+questions, about fifty chat sessions each, the answer sessions labelled; the
+30 abstention questions are excluded. Turns loaded as atoms, BM25+ only, no
+model in the loop. `hit@k` is any answer session in the top k; `recall@k`
+is the fraction of answer sessions there. `cargo run --release -p
+packset-daemon --example longmemeval -- longmemeval_s.json`, 44 s for 470
+questions.
+
+| arm | hit@1 | recall@5 | recall@10 |
+|---|---|---|---|
+| turns, read as sessions | 0.864 | 0.906 | 0.948 |
+| passage windows of six turns | 0.851 | 0.907 | 0.951 |
+| session documents | 0.855 | 0.914 | 0.952 |
+
+By question type the protocols agree within two points except
+`single-session-preference` (30 questions), where turns reach 0.300 hit@1
+and windows or sessions 0.467: a preference is stated across a session, not
+in one turn, and it is the type a lexical scorer serves worst. Multi-session
+questions reach 0.87 recall@5 under every protocol. The dense and fused
+arms on this benchmark are the next row.
+
 ## What did not work
 
 Pseudo-relevance feedback, and the way it fails is the useful part.

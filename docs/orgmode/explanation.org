@@ -38,6 +38,12 @@ for it: a diversifier is for not answering the same claim four ways, and
 LoCoMo has nothing to suppress. The full table with every arm is in the
 repository README.
 
+On LongMemEval_S (doi:10.48550/arXiv.2410.10813), 470 answerable questions
+over about fifty sessions each, BM25+ alone reaches 0.91 recall@5 at session
+granularity under all three document protocols, and 0.86 hit@1. Preference
+questions are the weak type at 0.30 to 0.47 hit@1; the dense arm is the
+next measurement there.
+
 * Forgetting is a feature
 
 A claim that is never used should not weigh as much as one that is. The
