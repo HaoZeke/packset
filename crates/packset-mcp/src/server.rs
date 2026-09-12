@@ -1,22 +1,5 @@
-//! The pack as an agent surface.
-//!
-//! The pack already speaks JSON over a local daemon, so this is the thinnest
-//! of the four: a reader in front of a writer that already exists. It is not a
-//! second store, and the distinction matters more here than anywhere else in
-//! the stack, because the daemon can be down.
-//!
-//! A pack with no daemon is not an empty pack. Answering "no results" when the
-//! writer is not running would be the same error as a tracker answering "no
-//! issues" from a directory that holds none, or a scheduler answering "nothing
-//! claimable" when there is no graph. Every verb here says which of the two it
-//! met, and the difference is the whole reason a wrapper is worth writing
-//! rather than letting an agent curl the port.
-//!
-//! What the pack knows and what it cites are different questions and both are
-//! here. `search` and `recall` answer the first. `accessions` and `citers`
-//! answer the second, and they are how an agent crosses from a claim the seat
-//! remembers to the deed that backs it, which is the join this whole stack is
-//! built around.
+//! The pack over MCP: a reader over the daemon, not a second store.
+//! A writer that is down is reported as down, never as an empty pack.
 
 use packset_client::PacksetClient;
 use rmcp::{
@@ -62,10 +45,7 @@ fn client(port: u16) -> PacksetClient {
     PacksetClient::new(format!("http://127.0.0.1:{port}"))
 }
 
-/// A pack that is not running is a state, not an empty answer.
-///
-/// The message names the verb that starts one, because an agent that is told
-/// "down" and not told what to do about it will report an empty pack instead.
+/// The writer did not answer. The message names the verb that starts one.
 fn down(e: impl std::fmt::Display) -> McpError {
     McpError::internal_error(
         format!(
@@ -253,9 +233,7 @@ impl PacksetServer {
         Parameters(args): Parameters<WorkspaceArgs>,
     ) -> Result<Json<PackState>, McpError> {
         let workspace = self.workspace_for(args.workspace.as_deref());
-        // The one verb that answers rather than failing when the writer is
-        // down, because "is it up" is the question a caller asks after
-        // something else said no.
+        // The one verb that answers when the writer is down.
         match client(self.port).status(Some(&workspace)) {
             Ok(detail) => Ok(Json(PackState {
                 up: true,
@@ -297,8 +275,7 @@ impl ServerHandler for PacksetServer {
 mod tests {
     use super::*;
 
-    /// Every tool reads. The pack's writer is the daemon, and a surface that
-    /// could write it would be a second writer over one store.
+    /// Every tool reads; the daemon is the only writer.
     #[test]
     fn the_surface_only_reads() {
         let tools = PacksetServer::tool_router().list_all();
@@ -318,12 +295,10 @@ mod tests {
         }
     }
 
-    /// A pack with no writer is a state a caller is told about, not an empty
-    /// answer they mistake for knowledge.
+    /// A dead writer fails search and is reported by `state`.
     #[tokio::test]
     async fn a_writer_that_is_not_running_is_not_an_empty_pack() {
-        // A port nothing listens on, which is what a seat without a running
-        // writer looks like from here.
+        // A port nothing listens on.
         let server = PacksetServer::at(1, "sample");
 
         let Err(err) = server
@@ -340,11 +315,8 @@ mod tests {
         };
         let said = format!("{err:?}");
         assert!(said.contains("not an empty pack"), "{said}");
-        // And it names the way out rather than leaving the caller to guess.
         assert!(said.contains("packset ensure"), "{said}");
 
-        // The one verb that answers instead of failing, because it is the
-        // question you ask after something else said no.
         let state = server
             .packset_state(Parameters(WorkspaceArgs { workspace: None }))
             .await
@@ -354,8 +326,7 @@ mod tests {
         assert!(state.0.detail.is_none());
     }
 
-    /// The workspace falls back to the seat's own rather than making a caller
-    /// repeat it, which is how the wrong one gets passed.
+    /// An absent or empty workspace is the seat's own.
     #[test]
     fn a_missing_workspace_is_the_seats_own() {
         let server = PacksetServer::at(1, "sample");
