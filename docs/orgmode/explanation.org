@@ -73,6 +73,19 @@ is by review, retrievability from the clock of what was recalled and when,
 which a chat log without reviews cannot exercise and which this arm was
 the closest public proxy for.
 
+A window is the right shape of time for retrieval, and it is small here.
+The window arm reads the time a question names (a date, a month, a count
+of units ago, last week or month) into a window over the sessions and
+scores those inside twice: the pack's as-of read over the benchmark, a
+filter the question asks for. Fifteen of the 470 questions name a time
+the parser reads; on temporal-reasoning questions hit@1 moves from 0.811
+to 0.835 and recall@5 from 0.899 to 0.878, the rest are unchanged. Most
+temporal questions in this benchmark ask how long after one event another
+came, which names no time to window on; there the work is the reader's,
+and the answer-accuracy harness hands it the seat's reading of time
+(every session's distance from the question in days, and the supersession
+rule) rather than raw timestamps.
+
 On LoCoMo at turn granularity, where the unit is the dialogue turn the
 benchmark marks as evidence, the fused panel finds an evidence turn first
 0.414 of the time and within ten 0.759, against 0.318 and 0.647 for the

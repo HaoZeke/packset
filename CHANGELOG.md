@@ -4,6 +4,9 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- The window arm measured: fifteen of 470 questions name a time the parser
+  reads; on temporal reasoning hit@1 0.811 to 0.835, recall@5 0.899 to
+  0.878, the rest unchanged.
 - A window arm on LongMemEval: the time a question names (a date, a month,
   a count of units ago, last week or month) read into a window over the
   sessions and those inside scored twice, a filter the question asks for
