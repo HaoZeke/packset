@@ -221,6 +221,7 @@ pub fn validate(atom: &mut Map<String, Value>) -> Result<(), AtomError> {
         let shown = atom.get("kind").map_or("None".into(), value_repr);
         return Err(AtomError(format!("unknown atom kind: {shown}")));
     }
+    let trust = kind == "trust";
     let level = atom
         .get("level")
         .and_then(Value::as_str)
@@ -274,7 +275,7 @@ pub fn validate(atom: &mut Map<String, Value>) -> Result<(), AtomError> {
         }
     }
 
-    if kind == "trust" {
+    if trust {
         check_trust(atom)?;
     }
 
