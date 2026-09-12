@@ -60,11 +60,7 @@ impl Service {
         &self.store
     }
 
-    /// Store one atom, or return the live one that already says it.
-    ///
-    /// Deduplication is on text, kind and set together, and it is what makes
-    /// `Remember:` safe to send twice: a client that retries does not get two
-    /// atoms saying one thing.
+    /// Store one atom, or return the live one with the same text, kind and set.
     ///
     /// # Errors
     ///
@@ -122,13 +118,8 @@ impl Service {
             .to_string();
         let named = atom.get("set").and_then(Value::as_str).map(str::to_string);
 
-        // A set-scoped atom is compared against its own set; an unscoped one
-        // against the unscoped atoms, so pinning a set does not make a claim
-        // look like a duplicate of one in another scope.
-        // The shared snapshot, narrowed only when a scope actually excludes
-        // something. Copying the whole workspace to compare against it is the
-        // most expensive thing a write could do, and usually nothing is
-        // excluded at all.
+        // Compared within its own scope; the shared snapshot is narrowed only
+        // when the scope excludes something.
         let snapshot = self.store.live(&workspace)?;
         let narrowed: Vec<Record>;
         let live: &[Record] = match named.as_deref() {
@@ -221,11 +212,7 @@ impl Service {
         Ok(atom)
     }
 
-    /// Fill the vector slot, when this seat has an encoder.
-    ///
-    /// Silent on every failure, because the slot has always been allowed to be
-    /// null: a seat without a model stores what it always stored, and the
-    /// dense ballot simply does not appear in a search.
+    /// Fill the vector slot when this seat has an encoder; null otherwise.
     fn encode_into(&self, atom: &mut Record) {
         let text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
         let Some(vector) = crate::embed::encode_document(text) else {
@@ -446,10 +433,8 @@ impl Service {
     pub fn set_user(&self, text: &str) -> Result<(), cards::WriteError> {
         match cards::write_capped(&self.home.user_path(), text, USER_CAP) {
             Err(cards::WriteError::Overflow(o)) => {
-                // Archived first, so the text is refused rather than lost and
-                // the day file is what the miner reads. An archive that itself
-                // fails is reported instead of the overflow, which is what the
-                // writer being replaced does.
+                // Archived first, so refused text is not lost; an archive
+                // failure is reported over the overflow.
                 self.archive("global", text)?;
                 Err(cards::WriteError::Overflow(o))
             }
@@ -506,10 +491,7 @@ impl Service {
         json!({"workspace": workspace, "text": slot.text, "label": slot.label})
     }
 
-    /// Take the held body, leaving the slot empty.
-    ///
-    /// It is one-shot because an attachment is context for the next turn, and a
-    /// body that stayed would be spliced into every turn after it.
+    /// Take the held body, leaving the slot empty: an attachment is one turn's.
     pub fn take_attach(&self, workspace: &str) -> Option<Attachment> {
         let mut held = self.attach.lock().expect("attach lock");
         held.remove(workspace)
@@ -521,11 +503,8 @@ impl Service {
         held.get(workspace).cloned()
     }
 
-    /// Keep the projection level with a write.
-    ///
-    /// A live atom is upserted and one that has left the live set is deleted,
-    /// so a search never ranks something a reader can no longer be shown. With
-    /// no search binary on the seat this is a no-op.
+    /// Keep the projection level with a write: upsert a live atom, delete one
+    /// that left the live set. No-op without a search binary.
     fn project_atoms(&self, atoms: &[Record]) {
         let dir = self.home.milli_dir();
         let now = clock::utcnow();
@@ -565,11 +544,7 @@ impl Service {
         }
     }
 
-    /// The atoms that were live at `at`.
-    ///
-    /// Live-now is the snapshot. This is the dated retrieve over the same
-    /// `valid_from` / `valid_to` window search already uses to drop a closed
-    /// atom from "now".
+    /// The atoms that were live at `at`, over the `valid_from` / `valid_to` window.
     ///
     /// # Errors
     ///
@@ -581,19 +556,10 @@ impl Service {
         Ok(json!({ "atoms": atoms, "as_of": at }))
     }
 
-    /// Ranked hits, and which engine produced them.
-    ///
-    /// The projection answers when it is there and the linear scan otherwise,
-    /// and every failure in the projection falls back rather than returning a
-    /// partial answer: a wrong answer that looks complete is worse than a
-    /// slower one that is right.
-    ///
-    /// `as_of` is the dated retrieve: the atoms whose window was open then,
-    /// not the live snapshot. A parseable stamp is rewritten to the store form
-    /// so the window compare is the same as live-now. Omit it for live-now.
-    /// `rerank` is the measured cross-encoder second stage. Off unless the
-    /// caller asked: the stage is a forward pass a candidate, and the default
-    /// first-stage ranking is what a seat already gets.
+    /// Ranked hits, and which engine produced them: the projection when
+    /// present, else the linear scan; any projection failure falls back whole.
+    /// `as_of` retrieves the atoms live then; `rerank` runs the cross-encoder
+    /// second stage.
     ///
     /// # Errors
     ///

@@ -1,10 +1,6 @@
-//! Atoms in LMDB.
-//!
-//! The key is `workspace\0id` and the value is the record as JSON. The layout
-//! is part of the contract rather than an internal choice: a seat's existing
-//! `memory.lmdb` opens here and reads back identically. The NUL separator is
-//! what makes a workspace scan a prefix scan, since no workspace name can
-//! carry one.
+//! Atoms in LMDB: key `workspace\0id`, value the record as JSON. A seat's
+//! existing `memory.lmdb` opens here unchanged; the NUL makes a workspace
+//! scan a prefix scan.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -25,18 +21,11 @@ pub const MAP_SIZE: usize = 256 * 1024 * 1024;
 /// One atom record.
 pub type Record = Map<String, Value>;
 
-/// One workspace's live set at a write count: as stored, and as shown.
-///
-/// The two differ because links are narrowed to the ids actually present, and
-/// that narrowing only ever removes. Patching the narrowed copy would lose a
-/// link for good the moment the id it names came back, so the stored form is
-/// what a write is folded into and the shown form is derived from it.
+/// One workspace's live set at a write count: as stored (what a write folds
+/// into) and as shown (links narrowed to ids present).
 type Snapshot = (u64, Vec<Record>, Arc<Vec<Record>>);
 
-/// A workspace's live atoms and the index over them, at one generation.
-/// One generation's snapshot, its inverted index, and the tokens the index
-/// was built from. The tokens stay because the scan scores by them too, and
-/// tokenising the pack again per question was most of what the scan cost.
+/// A workspace's [`SearchSet`] at one generation.
 type Searchable = (u64, SearchSet);
 
 /// What a search runs over: the snapshot, the inverted index, and the tokens
@@ -71,19 +60,9 @@ pub struct Store {
     /// Bumped by every write, so a reader can tell a stale snapshot.
     generation: AtomicU64,
     /// One parsed live set per workspace, shared by concurrent readers.
-    ///
-    /// Reads dominate and each one would otherwise parse the whole workspace
-    /// out of the database again, so several callers asking at once pay for
-    /// the same work several times. One writer means one obvious way to know
-    /// a snapshot is current.
     live: RwLock<HashMap<String, Snapshot>>,
-    /// The inverted index over one workspace's live atoms, per generation.
-    ///
-    /// The postings change only when the pack does, and building them inside a
-    /// query made a search cost what a write costs while a search happens far
-    /// more often. The snapshot is kept beside the index rather than looked up
-    /// again, because an ordinal in the index means a position in that exact
-    /// snapshot and in no other.
+    /// The inverted index over one workspace's live atoms, per generation,
+    /// kept beside the snapshot its ordinals index.
     terms: RwLock<HashMap<String, Searchable>>,
 }
 
@@ -177,10 +156,7 @@ impl Store {
         self.upsert_many(std::slice::from_ref(atom))
     }
 
-    /// Write several records in one transaction.
-    ///
-    /// A link rewrite touches an atom and its peers together, and a reader must
-    /// not be able to see one side of that.
+    /// Write several records in one transaction, so a link rewrite lands whole.
     ///
     /// # Errors
     ///
@@ -213,15 +189,7 @@ impl Store {
     }
 
     /// Fold a committed write into the cached snapshot instead of dropping it.
-    ///
-    /// A write knows exactly which records it touched, and re-deriving the
-    /// whole live set from the database means parsing every atom in the
-    /// workspace again. That is most of what a write costs once the corpus is
-    /// large, and it is paid by whoever reads next rather than by the writer.
-    ///
-    /// Only workspaces already cached are patched: this never builds a
-    /// snapshot that nobody asked for. The result has to equal a fresh scan,
-    /// which is what the test beside it checks.
+    /// Only cached workspaces are patched; the result equals a fresh scan.
     fn patch_live(&self, written: &[Record], generation: u64) {
         let now = packset_core::clock::utcnow();
         let Ok(mut cache) = self.live.write() else {
@@ -258,10 +226,8 @@ impl Store {
         }
     }
 
-    /// The live and due records in one workspace, parsed once per write.
-    ///
-    /// Callers that only read should take this rather than [`Store::current`]:
-    /// it hands back the shared snapshot instead of a copy of it.
+    /// The live and due records in one workspace, parsed once per write and
+    /// shared; readers take this over [`Store::current`].
     ///
     /// # Errors
     ///
@@ -284,10 +250,7 @@ impl Store {
             .filter(|atom| record::is_live(atom, &now) || record::is_due(atom, &now))
             .collect();
         let shared = Arc::new(shown_from(&stored));
-        // Cached only if nothing committed while the scan ran. A write that
-        // landed halfway through is not in this snapshot, and storing it under
-        // the newer generation would serve it as though it were: the next
-        // reader would be told a committed write does not exist.
+        // Cached only if nothing committed while the scan ran.
         if self.generation.load(Ordering::Acquire) == generation {
             if let Ok(mut cache) = self.live.write() {
                 cache.insert(
@@ -299,12 +262,8 @@ impl Store {
         Ok(shared)
     }
 
-    /// One workspace's live atoms and the index over them, as a matched pair.
-    ///
-    /// The corpus is the atoms, and card paragraphs are scored against it: both
-    /// are short written claims, and "how rare is this word in the pack" is the
-    /// question either way. Keeping one corpus is also what makes a card hit
-    /// and an atom hit comparable at all.
+    /// One workspace's live atoms and the index over them, as a matched pair;
+    /// cards are scored against the same corpus.
     ///
     /// # Errors
     ///
@@ -347,11 +306,8 @@ impl Store {
         Ok((atoms, index, documents))
     }
 
-    /// The atoms that were live at `at`, including ones whose window later closed.
-    ///
-    /// The live snapshot is "now" and drops a closed window. A dated retrieve
-    /// has to scan the store, because that is where the closed record stays.
-    /// The review clock is a different question and is not consulted.
+    /// The atoms that were live at `at`, from a store scan since the snapshot
+    /// drops closed windows.
     ///
     /// # Errors
     ///
@@ -440,10 +396,7 @@ fn push_record(out: &mut Vec<Record>, raw: &[u8]) {
     }
 }
 
-/// Take the exclusive lock, or say who has it.
-///
-/// One writer is the whole design: two processes on one `memory.lmdb` is how a
-/// pack ends up with two answers to the same question.
+/// Take the exclusive lock, or say who has it. One writer per `memory.lmdb`.
 fn take_lock(path: &Path) -> anyhow::Result<File> {
     use std::os::fd::AsRawFd;
     let file = fs::OpenOptions::new()
@@ -860,10 +813,8 @@ mod snapshot_tests {
 
     #[test]
     fn readers_racing_a_writer_never_see_a_snapshot_that_skips_a_write() {
-        // The generation is read before the scan and bumped before the write,
-        // so a snapshot built across a write is stale rather than labelled as
-        // including it. What must never happen is a later read seeing fewer
-        // atoms than an earlier one.
+        // Generation read before the scan, bumped before the write: a snapshot
+        // built across a write is stale, never mislabelled.
         let (dir, store) = store();
         let store = Arc::new(store);
         let _ = dir;
