@@ -62,9 +62,26 @@ of one arm to a reader model with the benchmark's own reading prompt, then
 to a judge with the benchmark's type-specific question, and reports
 accuracy by type beside an =oracle= arm that reads the labelled sessions.
 The reader and judge are any OpenAI-compatible endpoint, named in the
-report; a row there is that model's as much as the retriever's. Until such
-a row is run, the pack does not claim to beat either system at answering,
-and neither of them settles a panel.
+report; a row there is that model's as much as the retriever's.
+
+The first such row, on the first hundred questions (64 single-session-user,
+36 multi-session), with Qwen2.5-7B-Instruct Q5_K_M as reader and judge on
+one 12 GB GPU and the top five sessions handed to the reader:
+
+| arm | single-session-user | multi-session | all |
+|---+---+---+---|
+| labelled sessions (oracle) | 0.938 | 0.250 | 0.690 |
+| sessions, fused panel | 0.875 | 0.194 | 0.630 |
+| sessions, lexical alone | 0.797 | 0.167 | 0.570 |
+
+The fused panel buys six points at the answer over the lexical ballot and
+reaches 91% of the oracle ceiling; what remains is the reader's, and a 7B
+reader is weak on multi-session questions even when handed the right
+sessions. Zep's LongMemEval rows use frontier readers, so the absolute
+numbers do not compare across papers; the comparison this table supports
+is between retrievers under one reader, which is how the retrieval half of
+those systems is measured too. The full-question run with every type is
+the next row.
 
 * Forgetting is a feature
 

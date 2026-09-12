@@ -7,6 +7,10 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 - LongMemEval_S with an encoder: the fused panel over session documents
   reaches 0.920 hit@1 and 0.968 recall@5 on the first hundred questions,
   against 0.840 and 0.904 for the lexical ballot alone.
+- The first answer-accuracy row: with Qwen2.5-7B-Instruct Q5_K_M as
+  reader and judge and LongMemEval's own prompts, the fused panel answers
+  0.630 of the first hundred questions, the lexical ballot 0.570, the
+  labelled sessions 0.690.
 - `examples/longmemeval` writes the sessions each arm retrieved to
   `PACKSET_LME_DUMP`, and `scripts/longmemeval_qa.py` turns that into
   LongMemEval answer accuracy with the benchmark's reading and judge
