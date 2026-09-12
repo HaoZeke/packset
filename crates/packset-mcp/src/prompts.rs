@@ -1,12 +1,4 @@
-//! What the seat knows, asked as a sequence rather than a lookup.
-//!
-//! A prompt carries what a tool description cannot: an order, and the reason
-//! for it. The one sequence this pack is the authority for is crossing from
-//! what the seat concluded to what those conclusions stand on, because the
-//! accession is the only identifier that leaves this store.
-//!
-//! Nothing here tells an agent how to read a deed or check a proof. Those are
-//! the deed store's formats and it has its own prompts for them.
+//! Prompts: from a remembered claim to the deed it cites.
 
 use rmcp::{
     handler::server::wrapper::Parameters, model::*, prompt, prompt_router, ErrorData as McpError,
@@ -77,6 +69,24 @@ impl PacksetServer {
 mod tests {
     use super::*;
 
+    fn text(message: &PromptMessage) -> &str {
+        &message.content.as_text().expect("a text prompt").text
+    }
+
+    fn ordered(said: &str, verbs: &[&str]) {
+        let at: Vec<usize> = verbs
+            .iter()
+            .map(|v| {
+                said.find(v)
+                    .unwrap_or_else(|| panic!("{v} missing: {said}"))
+            })
+            .collect();
+        assert!(
+            at.windows(2).all(|w| w[0] < w[1]),
+            "{verbs:?} out of order: {said}"
+        );
+    }
+
     /// Every declared prompt renders, from the arguments it says it takes.
     #[tokio::test]
     async fn every_prompt_renders_from_what_it_declares() {
@@ -105,11 +115,18 @@ mod tests {
             }))
             .await
             .expect("renders");
-        let said = format!("{:?}", known[0].content);
+        let said = text(&known[0]);
         assert!(said.contains("how the lease works"), "{said}");
         assert!(said.contains("workspace seat"), "{said}");
-        // The distinction the whole surface exists for survives into the text.
-        assert!(said.contains("absent writer"), "{said}");
+        ordered(
+            &said,
+            &[
+                "`packset_search`",
+                "`packset_state`",
+                "`packset_accessions`",
+                "`packset_citers`",
+            ],
+        );
 
         let default = server
             .what_does_the_seat_know_prompt(Parameters(QuestionArgs {
@@ -118,7 +135,8 @@ mod tests {
             }))
             .await
             .expect("renders");
-        assert!(format!("{:?}", default[0].content).contains("this seat is running"));
+        let said = text(&default[0]);
+        assert!(!said.contains("Some(") && !said.contains("None"), "{said}");
 
         let err = server
             .what_does_the_seat_know_prompt(Parameters(QuestionArgs {
@@ -127,6 +145,6 @@ mod tests {
             }))
             .await
             .expect_err("an empty question rendered");
-        assert!(format!("{err:?}").contains("no words in it"), "{err:?}");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     }
 }
