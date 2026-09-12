@@ -51,13 +51,7 @@ pub struct Hit {
     pub kind: String,
 }
 
-/// A refusal, with the reason the writer gave.
-///
-/// The writer answers a bad claim with a status and a body that says why:
-/// "atom has 6 sentences; one claim is at most 2". Passing the transport error
-/// through kept the status and dropped the body, so a seat saw "status code
-/// 400" and had to guess what about its claim was wrong. The reason is the
-/// message; the status is the least useful part of it.
+/// A refusal, carrying the reason the writer gave in its body.
 fn refused(url: &str, e: ureq::Error) -> Error {
     match e {
         ureq::Error::Status(code, response) => {

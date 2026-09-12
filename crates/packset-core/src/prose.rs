@@ -108,16 +108,11 @@ fn words_of(text: &str) -> Vec<&str> {
 }
 
 /// Split on runs of `.`, `!` and `?`, keeping only pieces carrying a word.
-/// The sentences of a text, split where a terminator ends one.
+/// Sentences, split where a terminator is followed by space or the end.
 ///
-/// A terminator ends a sentence when what follows it is space or the end of
-/// the text. Splitting on every full stop counted "0.635 vs 0.615" as three
-/// sentences and "v0.9.3" as three more, and the writer then refused the
-/// claim as too long. A memory pack for a seat that measures things is full
-/// of numbers and versions, so that gate was refusing exactly the lessons
-/// worth keeping. An abbreviation followed by a space still splits, which is
-/// the rarer error and the cheaper one: it over-counts a sentence rather than
-/// refusing a number.
+/// A full stop inside a number or a version is not a boundary. An
+/// abbreviation followed by a space still splits: over-counting a sentence is
+/// cheaper than refusing a number.
 fn sentences_of(text: &str) -> Vec<&str> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();

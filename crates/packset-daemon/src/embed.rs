@@ -391,14 +391,9 @@ fn sparse_slot() -> &'static Slot {
     SPARSE.get_or_init(|| Mutex::new(None))
 }
 
-/// Learned term weights from a model trained to produce them.
-///
-/// BGE-M3's sparse head, which [`encode_late`] also returns, is a side output
-/// of a dense model and measured below BM25. SPLADE
-/// (doi:10.1145/3404835.3463098) is trained for the weights, with a
-/// regularizer that keeps them sparse enough for an inverted index. The two
-/// are both "learned sparse" and they are not the same measurement. Nothing in
-/// the writer reads this; it exists so the benchmark can ask the right one.
+/// Learned term weights from SPLADE (doi:10.1145/3404835.3463098), a model
+/// trained for the weights, as opposed to the sparse head [`encode_late`]
+/// returns beside a dense vector. Read by the benchmark, not the writer.
 #[must_use]
 pub fn encode_sparse(text: &str) -> Option<Sparse> {
     if text.trim().is_empty() {
@@ -515,27 +510,12 @@ fn rerank_slot() -> &'static Slot {
     RERANK.get_or_init(|| Mutex::new(None))
 }
 
-/// Score every candidate against the question, reading the pair together.
+/// Score every candidate against the question with a cross-encoder, which
+/// reads the pair together (doi:10.48550/arXiv.1901.04085). A forward pass per
+/// candidate, so a second stage over a ranking, not a scorer over a pack. Not
+/// the panel's `rerank`, which is diversification.
 ///
-/// Not the panel's `rerank`, which is maximal marginal relevance over a
-/// ranking the panel already has and answers "which of these are redundant".
-/// This one asks a model "does this answer the question", which is the thing
-/// nothing in the first stage can be asked.
-///
-/// This is the second stage the first-stage scorers cannot be. Every other
-/// path here embeds a text without the question, so what it compares is two
-/// vectors made in ignorance of each other; a cross-encoder reads the pair in
-/// one forward pass and can answer whether this text answers this question
-/// rather than whether the two are about the same subject
-/// (doi:10.48550/arXiv.1901.04085).
-///
-/// The cost is the reason it is a stage and not a scorer. A bi-encoder embeds
-/// a corpus once and answers every question from the stored vectors; this runs
-/// a forward pass per candidate per question, so it is run over the top of a
-/// ranking that has already thrown most of the corpus away.
-///
-/// Scores come back in the caller's order, unsorted, because what the panel
-/// wants is a ballot rather than a decision.
+/// Scores come back in the caller's order: a ballot, not a decision.
 #[must_use]
 pub fn rerank(question: &str, candidates: &[String]) -> Option<Vec<f32>> {
     if question.trim().is_empty() {

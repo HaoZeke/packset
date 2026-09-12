@@ -268,19 +268,11 @@ fn file_hits(field: &str, text: &str, qtoks: &[String], bias: f64) -> Vec<Value>
 }
 
 /// Sort by score descending, then field, then id, so the order is total.
-/// The `k` best candidates, decided before anything is built for them.
+/// The `k` best candidates, chosen before a hit is built for any of them.
 ///
-/// Scoring a pack touches every atom that carries a query term, and for a
-/// common term that is most of the pack. Building a hit for each one and
-/// sorting them all to keep twenty made a question cost the whole pack in
-/// allocations: thirty-four milliseconds against ten thousand atoms, half a
-/// second against a hundred thousand, for an inverted index that had found the
-/// candidates in a fraction of that. A bounded heap keeps the winners as a
-/// score and an ordinal, and the JSON is made for the survivors only.
-///
-/// The order is the one `sort_hits` produces: score descending, then id
-/// ascending. Ties at the boundary therefore fall the same way they did, and a
-/// caller reading the top of the list sees what it always saw.
+/// A common query term matches most of the pack; a bounded heap keeps the
+/// winners as a score and an ordinal and the JSON is made for the survivors
+/// only. Order matches `sort_hits`: score descending, then id ascending.
 struct TopK<'a> {
     k: usize,
     // A min-heap on (score, id) through `Reverse`, so the root is the weakest
@@ -308,8 +300,7 @@ impl PartialOrd for Candidate<'_> {
     }
 }
 impl Ord for Candidate<'_> {
-    /// Greater is better: a higher score, and on a tie the id that sorts
-    /// first, which is what `sort_hits` puts first.
+    /// Greater is better: higher score, then the id that sorts first.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.score
             .partial_cmp(&other.score)
@@ -351,7 +342,7 @@ impl<'a> TopK<'a> {
     }
 }
 
-/// The hit a caller reads, built once the atom has earned a place.
+/// The hit a caller reads.
 fn atom_hit(atom: &Record, score: f64) -> Value {
     json!({
         "field": "atom",
@@ -363,7 +354,7 @@ fn atom_hit(atom: &Record, score: f64) -> Value {
     })
 }
 
-/// The id an atom sorts by on a tie, which is the same string the hit carries.
+/// The id an atom sorts by on a tie.
 fn id_of(atom: &Record) -> &str {
     atom.get("id").and_then(Value::as_str).unwrap_or("")
 }
@@ -421,18 +412,9 @@ pub fn search_linear(ask: &Ask<'_>) -> Vec<Value> {
 
 /// [`search_linear`] over atoms the caller has already tokenised.
 ///
-/// The scan tokenised every atom again on every question, lowercasing and
-/// stemming a text the writer had already tokenised to build the inverted
-/// index a moment before, and formatting the entities into it first. That
-/// was most of what the scan cost: about five microseconds an atom, twenty
-/// times the indexed scorer at ten thousand atoms. The tokens an atom scores
-/// by are the ones [`atom_tokens`] returns, text and entities, which is the
-/// same set a caller has in hand from building the index, so the writer
-/// passes those and the scan pays for the comparison alone.
-///
-/// `documents[i]` is the token list for `ask.atoms[i]`; an atom past the end
-/// of `documents` is tokenised here, so a caller with a partial list still
-/// gets the whole answer.
+/// `documents[i]` is [`atom_tokens`] of `ask.atoms[i]`, the same list the
+/// writer holds from building the index; an atom past the end of `documents`
+/// is tokenised here. The scan then pays for the comparison alone.
 #[must_use]
 pub fn search_linear_with(ask: &Ask<'_>, documents: &[Vec<String>]) -> Vec<Value> {
     let Ask {
@@ -526,19 +508,13 @@ pub fn search_bm25(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
     search_lexical(ask, index, crate::bm25::Scorer::default())
 }
 
-/// Plain Okapi BM25, for a caller comparing against the formula rather than
-/// asking the best question the seat can answer.
+/// Plain Okapi BM25, for a caller measuring against the formula.
 #[must_use]
 pub fn search_bm25_plain(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
     search_lexical(ask, index, crate::bm25::Scorer::Bm25)
 }
 
 /// The same, in the scoring family the caller names.
-///
-/// One lexical ballot is a formula, not an opinion. BM25, BM25+ and query
-/// likelihood disagree about different questions, which is the reason the
-/// panel exists, and the panel had never been given two lexical ballots to
-/// fuse because there had only ever been one lexical scorer.
 #[must_use]
 pub fn search_lexical(
     ask: &Ask<'_>,
@@ -632,11 +608,9 @@ fn bm25_hits(
         }
     }
 
-    // Only the atoms carrying a query term, straight from the postings, and
-    // only the best `limit` of those are ever built. The cards above are few
-    // and already built; the final sort over cards plus survivors is the same
-    // order a sort over cards plus every candidate would give, because no
-    // candidate below the top `limit` could have made the cut.
+    // Atoms carrying a query term, from the postings; only the best `limit`
+    // are built. Cards are few and already built, and nothing below the top
+    // `limit` atoms could outrank them into the final cut.
     let mut best = TopK::new(limit);
     for (ordinal, relevance) in index.score_weighted_by(scorer, query) {
         let Some(atom) = atoms.get(ordinal) else {
@@ -866,8 +840,8 @@ pub fn front_due(due: Vec<Value>, ranked: Vec<Value>, limit: usize) -> Vec<Value
 mod tests {
     use super::*;
 
-    /// Scoring from the tokens the index was built from gives the answer the
-    /// scan gave when it tokenised every atom itself, entities included.
+    /// The scan over cached tokens is the scan, entities and a partial list
+    /// included.
     #[test]
     fn the_scan_over_cached_tokens_is_the_scan() {
         let atoms: Vec<Record> = (0..60)
@@ -901,9 +875,7 @@ mod tests {
         assert!(!fresh.is_empty());
     }
 
-    /// Keeping the k best before building anything gives the same list, in
-    /// the same order, as building everything and sorting it. Ties are the
-    /// case worth forcing: many atoms at one score, and the id decides.
+    /// The bounded heap gives the list the full sort gives, ties included.
     #[test]
     fn the_bounded_heap_agrees_with_the_full_sort() {
         let atoms: Vec<Record> = (0..200)

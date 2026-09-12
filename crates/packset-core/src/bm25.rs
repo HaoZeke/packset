@@ -25,68 +25,31 @@ const K1: f64 = 1.2;
 /// How much length normalisation applies. 0 is none, 1 is full.
 const B: f64 = 0.75;
 
-/// The floor an occurrence is worth, past which length cannot push it.
+/// Lower bound on a term's contribution (BM25+).
 ///
-/// BM25's length normalisation has a defect that shows up on long documents.
-/// The contribution of one occurrence is divided by the document's length, so
-/// past a length it approaches zero, which is exactly what a non-occurrence is
-/// worth. Containing the term stops being distinguishable from not containing
-/// it, and the gap between a long relevant document and a short irrelevant one
-/// closes from the wrong side.
-///
-/// Lv and Zhai state this as a constraint the scorer should satisfy and does
-/// not: an occurrence has to be worth some fixed amount more than an absence,
-/// whatever the length. Their fix is one constant holding every occurrence
-/// above a floor, and the value is theirs
-/// (doi:10.1145/2063576.2063584).
+/// Length normalisation drives one occurrence in a long document toward zero,
+/// the value of an absence. The floor keeps an occurrence worth a fixed amount
+/// more than none, whatever the length. Lv and Zhai, doi:10.1145/2063576.2063584.
 const DELTA: f64 = 1.0;
 
-/// The Dirichlet prior for the query-likelihood scorer, in tokens.
+/// Dirichlet prior for query likelihood, in pseudo-tokens from the collection.
 ///
-/// This is the weight given to the collection when estimating a document's
-/// language model, read as a count of pseudo-tokens drawn from the corpus. A
-/// document shorter than this is smoothed mostly toward the collection and a
-/// much longer one mostly toward itself, which is where the length behaviour
-/// comes from: nothing normalises by length here, the prior stops mattering
-/// as a document gets long enough to speak for itself.
-///
-/// Zhai and Lafferty (doi:10.1145/984321.984322) report this range as the one
-/// that holds across collections. Set from the paper rather than fitted here,
-/// because a constant tuned on the questions being reported is a constant that
-/// has read them.
+/// A document shorter than this is smoothed toward the collection, a longer
+/// one toward itself; that is the whole length behaviour. Zhai and Lafferty,
+/// doi:10.1145/984321.984322. Taken from the paper, not fitted here.
 const MU: f64 = 2000.0;
 
-/// Which scoring family a query is answered by.
+/// Which scoring family answers a query.
 ///
-/// Three derivations of the same quantity, not three settings of one. BM25 is
-/// the probabilistic model with saturation and length normalisation; BM25+ is
-/// that with a floor under an occurrence; query likelihood with Dirichlet
-/// smoothing is a different derivation entirely, where a document is a
-/// language model and the score is how likely it was to have produced the
-/// query.
-///
-/// They are here together because they disagree, and disagreeing scorers are
-/// what a fusion panel is for. One lexical ballot is not a lexical opinion,
-/// it is a formula.
+/// Three derivations, not three settings: BM25, BM25 with a floor under an
+/// occurrence, and query likelihood under a Dirichlet prior. They disagree,
+/// which is what a fusion panel is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Scorer {
     /// Okapi BM25, with no floor.
     Bm25,
-    /// BM25 with lower-bounded term frequency normalisation.
-    ///
-    /// The default, because it wins. On ten LoCoMo conversations it leads
-    /// plain BM25 at every granularity measured: 0.635 hit@1 against 0.615 on
-    /// turns, 0.638 against 0.633 on sessions, 0.668 against 0.660 on
-    /// passages.
-    ///
-    /// The largest gain is on turns, which are the shortest documents, and
-    /// that was not the prediction. The defect the floor fixes is a
-    /// long-document one, so the expectation was that a corpus of
-    /// concatenated sessions would gain most and single turns least. What
-    /// happens on short documents is a different effect of the same constant:
-    /// the floor is paid once per matching term, so it rewards a document that
-    /// matches more of the query, and that separates documents most when each
-    /// carries few terms to begin with.
+    /// BM25 with a floor under each occurrence. The default; it leads plain
+    /// BM25 at every granularity measured, see the README.
     #[default]
     Bm25Plus,
     /// Query likelihood with a Dirichlet prior.
@@ -126,12 +89,8 @@ pub struct Index {
     postings: HashMap<String, Vec<Posting>>,
     lengths: Vec<u32>,
     total_length: u64,
-    /// How often each term occurs in the corpus, counting repeats.
-    ///
-    /// Document frequency answers how many documents carry a term, which is
-    /// what tells you how much it narrows things down. It does not tell you
-    /// how likely the corpus was to say the word, and that is the quantity a
-    /// language model smooths toward.
+    /// Collection frequency per term, counting repeats: what a language model
+    /// smooths toward, where document frequency says how much a term narrows.
     occurrences: HashMap<String, u64>,
 }
 
@@ -232,18 +191,14 @@ impl Index {
                 self.idf(term) * (count * (K1 + 1.0))
                     / (K1 * self.norm(ordinal)).mul_add(1.0, count)
             }
-            // The floor sits inside the idf weighting rather than outside it,
-            // so a term nothing narrows down does not get a free point for
-            // appearing.
+            // The floor is inside the idf weight: a term that narrows nothing
+            // earns nothing for appearing.
             Scorer::Bm25Plus => {
                 self.idf(term)
                     * ((count * (K1 + 1.0)) / (K1 * self.norm(ordinal)).mul_add(1.0, count) + DELTA)
             }
-            // Lucene and Anserini both decompose the query likelihood per
-            // matching term this way, which is what lets the postings answer
-            // it: the prior's share of the score rides along with each term
-            // rather than being a constant over the whole query that only a
-            // full scan could apply.
+            // Per matching term, as Lucene and Anserini do, so the postings
+            // can answer it.
             Scorer::Dirichlet => {
                 let background = self.background(term);
                 if background <= 0.0 {
@@ -290,12 +245,8 @@ impl Index {
         self.score_weighted_by(Scorer::default(), query)
     }
 
-    /// Score a weighted query in the family the caller named.
-    ///
-    /// The scorer is a parameter rather than a build-time choice because the
-    /// index is the same either way: postings, lengths and occurrences are
-    /// what all three read, and which formula runs over them is a question
-    /// asked per query.
+    /// Score a weighted query in the family the caller named. The index is the
+    /// same for all three; the formula is chosen per query.
     #[must_use]
     pub fn score_weighted_by(&self, scorer: Scorer, query: &[(String, f64)]) -> Vec<(usize, f64)> {
         let mut totals: HashMap<u32, f64> = HashMap::new();
@@ -431,12 +382,8 @@ impl Index {
         self.score_foreign_weighted_by(Scorer::default(), query, document)
     }
 
-    /// A text outside the corpus, scored in the family the caller named.
-    ///
-    /// The seat and workspace cards are ranked beside the atoms in one list,
-    /// so they have to be scored by the same formula. A hit list mixing two
-    /// scoring families is one where the comparison between two of its rows is
-    /// meaningless, and nothing downstream can tell which two.
+    /// A text outside the corpus, scored in the family the caller named, so a
+    /// card ranked beside atoms is scored the way they are.
     #[must_use]
     pub fn score_foreign_weighted_by(
         &self,
@@ -491,14 +438,8 @@ mod scorers {
         text.split_whitespace().map(str::to_string).collect()
     }
 
-    /// The defect BM25+ exists to fix, on a corpus that shows it.
-    ///
-    /// A long document containing the query term, in a corpus of short ones
-    /// that do not. BM25 drives its single occurrence toward zero, which is
-    /// what an absence is worth, so containing the term stops distinguishing
-    /// it. This is not a contrived corpus: a session document is the
-    /// concatenation of dozens of turns and it is what the benchmark's leading
-    /// arms index.
+    /// One long document carrying the term among many short ones without it:
+    /// BM25 leaves the occurrence worth almost nothing, BM25+ does not.
     #[test]
     fn a_long_document_stops_being_punished_for_its_length() {
         let filler = "alpha beta gamma delta epsilon zeta eta theta ".repeat(400);
@@ -519,9 +460,6 @@ mod scorers {
         assert_eq!(plain.len(), 1);
         assert_eq!(floored.len(), 1);
 
-        // What changed is how much carrying it is worth. Under BM25 the length
-        // has eaten nearly all of it, leaving a score that says almost the
-        // same thing as not carrying the term.
         let (_, thin) = plain[0];
         let (_, held) = floored[0];
         assert!(held > thin, "the floor took a point away: {held} vs {thin}");
@@ -529,16 +467,14 @@ mod scorers {
             thin < 0.25 * index.idf("lease"),
             "this corpus does not show the defect: {thin}"
         );
-        // The floor is worth a whole occurrence's idf, which is what puts the
-        // document back above one that does not contain the term.
         assert!(
             held > index.idf("lease"),
             "the floor did not restore the occurrence: {held}"
         );
     }
 
-    /// Query likelihood ranks by a different quantity, and says so by
-    /// disagreeing with BM25 rather than by reproducing it.
+    /// Query likelihood agrees with BM25 on the best document and disagrees on
+    /// the numbers, which is the reason to fuse rather than pick.
     #[test]
     fn the_language_model_is_a_different_opinion() {
         let corpus: Vec<Vec<String>> = vec![
@@ -556,13 +492,9 @@ mod scorers {
                 .expect("a hit")
                 .0
         };
-        // Both put the document that is about the query first; they are
-        // scorers, not opposites.
         assert_eq!(best(index.score_weighted_by(Scorer::Bm25, &query)), 0);
         assert_eq!(best(index.score_weighted_by(Scorer::Dirichlet, &query)), 0);
 
-        // And they do not agree about the numbers, which is the whole reason
-        // to fuse them rather than pick one.
         let by_bm25 = index.score_weighted_by(Scorer::Bm25, &query);
         let by_lm = index.score_weighted_by(Scorer::Dirichlet, &query);
         assert_eq!(by_bm25.len(), by_lm.len());
@@ -575,9 +507,7 @@ mod scorers {
         );
     }
 
-    /// A name that is not a scorer is refused rather than falling back to one,
-    /// because a run reporting the wrong formula under the right label is a
-    /// result nobody can catch.
+    /// An unknown scorer name is refused, not defaulted.
     #[test]
     fn a_scorer_is_named_or_refused() {
         for (name, want) in [
