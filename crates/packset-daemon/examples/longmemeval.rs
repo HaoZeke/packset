@@ -300,8 +300,10 @@ impl Tally {
 
 const PROTOCOLS: &[&str] = &["turns", "windows", "sessions"];
 
-/// The protocols the dense and fused arms run on; turns are too many to encode.
-const DENSE_PROTOCOLS: &[&str] = &["windows", "sessions"];
+/// The protocol the dense and fused arms run on. Turns and windows are too
+/// many to encode on a CPU: a hundred questions of windows did not finish in
+/// four hours, fifty session documents a question do.
+const DENSE_PROTOCOLS: &[&str] = &["sessions"];
 
 fn main() -> anyhow::Result<()> {
     let path = std::env::args()
@@ -321,7 +323,7 @@ fn main() -> anyhow::Result<()> {
     println!(
         "encoder: {}",
         if encoder {
-            "present, dense and fused arms run on windows and sessions"
+            "present, dense and fused arms run on session documents"
         } else {
             "absent, lexical arms only"
         }
