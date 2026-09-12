@@ -301,10 +301,7 @@ fn route(
             Err(a) => a,
             Ok(workspace) => {
                 let apply = body.get("apply").and_then(Value::as_bool).unwrap_or(false);
-                match service.consolidate(workspace, apply) {
-                    Ok(v) => Answer::ok(v),
-                    Err(e) => Answer::bad(&e.to_string()),
-                }
+                answer(service.consolidate(&workspace, apply))
             }
         },
         (Method::Post, "/v1/fire") => match required(body, "workspace") {
