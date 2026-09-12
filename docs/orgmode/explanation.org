@@ -70,6 +70,20 @@ not recalled. LoCoMo carries no review history, so this slot cannot be
 measured there and stays off by default. A longitudinal benchmark is the
 open work.
 
+* Islands
+
+Every claim links to the claims it shares names with, at most eight,
+chosen by relative-neighbourhood pruning so a neighbourhood spreads over
+the directions a claim is about instead of piling into one. That graph has
+natural clusters. =packset islands= lists them by label propagation
+(doi:10.1103/PhysRevE.76.036106), and =packset island CUE= finds the one a
+task activates: the top five search hits seed a spread, half the
+activation crosses each hop divided by fan-out, two hops, strongest first.
+The construction is spreading activation over a semantic network (Collins
+and Loftus, doi:10.1037/0033-295X.82.6.407). An island is not a set or a
+persona: a set is a slice a person pinned, a persona colours everything,
+an island is what one piece of work touches, found from the work itself.
+
 * One writer
 
 The store is one Lightning Memory-Mapped Database (LMDB) file and one

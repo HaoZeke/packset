@@ -68,6 +68,16 @@ is memory, so it has a validity window and can be superseded, and `export`
 carries it with the rest. The seat reads the live rows into a consensus; the
 pack does not settle anything itself.
 
+## Islands
+
+`packset islands WS` lists the link graph's communities, largest first,
+by label propagation (doi:10.1103/PhysRevE.76.036106). `packset island CUE`
+returns the memories a task activates: the top five hits seed a two-hop
+spread along the links, half lost per hop and divided by fan-out
+(spreading activation, doi:10.1037/0033-295X.82.6.407). `GET /v1/islands`
+and `GET /v1/activate` are the endpoints; the seat's `ljos island` reads
+the second.
+
 ## Forgetting
 
 Every claim carries a review clock: `due_at`, and a `review` block with

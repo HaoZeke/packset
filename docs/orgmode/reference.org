@@ -13,6 +13,8 @@
 | =packset prefer [--workspace WS] TEXT= | one standing preference |
 | =packset search [--workspace WS] QUERY= | ranked claims: score, kind, id, text |
 | =packset due [WS]= | claims whose review clock has run out, soonest first |
+| =packset islands [WS]= | the link graph's clusters, largest first: size and first claim |
+| =packset island [--workspace WS] CUE= | the memories a cue activates: activation, seed mark, id, text |
 | =packset grade ID [--lapsed] [WS]= | mark a review recalled, or lapsed |
 | =packset pin [NAME]= | read or set the pinned set; an empty name clears it |
 | =packset accessions [WS]= | deed accessions the live claims cite |
@@ -39,6 +41,8 @@ The writer listens on =127.0.0.1= only. Bodies are JSON.
 | =POST /v1/atoms/delete= | tombstone; =why= names the deed that withdrew it |
 | =POST /v1/grade= | =recalled= true or false; moves =due_at= |
 | =GET /v1/search?workspace=&q=&limit=&as_of=&rerank== | ranked hits, the engine, the stage |
+| =GET /v1/islands?workspace== | the link graph's communities, largest first |
+| =GET /v1/activate?workspace=&q=&limit== | the cluster a cue activates: top hits as seeds, two hops along the links |
 | =GET /v1/accessions?workspace== | accessions the live claims cite |
 | =GET /v1/citers?workspace=&accession== | claims citing one accession |
 | =GET/POST /v1/pin= | the pinned set |
