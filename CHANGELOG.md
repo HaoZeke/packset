@@ -2,7 +2,7 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
-## Unreleased
+## 0.7.0 (2026-09-12)
 
 - Search hits and island rows carry `ts`, when the memory was written, so
   a reader can lay what it recalls on a timeline; a hit from the index
