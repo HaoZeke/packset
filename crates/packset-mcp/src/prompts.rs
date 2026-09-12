@@ -119,7 +119,7 @@ mod tests {
         assert!(said.contains("how the lease works"), "{said}");
         assert!(said.contains("workspace seat"), "{said}");
         ordered(
-            &said,
+            said,
             &[
                 "`packset_search`",
                 "`packset_state`",
