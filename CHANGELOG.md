@@ -2,7 +2,7 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
-## Unreleased
+## 0.6.0 (2026-09-12)
 
 - The writer keeps two query encoders (`PACKSET_EMBED_QUERY_WORKERS`), so
   agents asking at once are answered side by side instead of one behind
