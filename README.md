@@ -245,6 +245,26 @@ in one turn, and it is the type a lexical scorer serves worst. Multi-session
 questions reach 0.87 recall@5 under every protocol. The dense and fused
 arms on this benchmark are the next row.
 
+## Many clients on one writer
+
+`cargo run --release -p packset-daemon --example hammer -- CLIENTS OPS`
+runs that many clients against one writer, each remembering unique claims
+and searching twice per claim. Four workers on four cores, 100 operations a
+client, 300 requests each:
+
+| clients | encoder present, req/s | remember p50 / p99 | search p50 / p99 | encoder absent, req/s | remember p50 / p99 | search p50 / p99 |
+|---|---|---|---|---|---|---|
+| 1 | 45 | 12 ms / 0.9 s | 4.5 ms / 6.5 ms | 42 | 10 ms / 71 ms | 4.9 ms / 19 ms |
+| 4 | 145 | 29 ms / 0.4 s | 11 ms / 26 ms | 228 | 15 ms / 117 ms | 16 ms / 25 ms |
+| 16 | 177 | 62 ms / 1.1 s | 65 ms / 0.2 s | 220 | 60 ms / 0.4 s | 65 ms / 89 ms |
+| 32 | 147 | 158 ms / 2.3 s | 154 ms / 2.0 s | 181 | 144 ms / 1.9 s | 138 ms / 1.5 s |
+
+No request failed. One logical write runs at a time and the encoder runs
+before that lock; with the encoder present every remember and search pays
+one encode, which is where the two columns part. Latency past four clients
+is queueing on four workers: `PACKSET_WORKERS` sets the pool. A second
+host is a client over the network or its own pack, not a second writer.
+
 ## What did not work
 
 Pseudo-relevance feedback, and the way it fails is the useful part.

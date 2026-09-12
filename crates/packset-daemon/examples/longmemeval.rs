@@ -186,6 +186,9 @@ fn collapse(order: impl Iterator<Item = usize>, docs: &[Document]) -> Vec<String
     out
 }
 
+/// One protocol's documents and their lexical ranking, kept for the dense arms.
+type Scored = (Vec<Document>, Vec<(usize, f64)>);
+
 /// How many documents each ballot hands the fuse.
 const FUSE_DEPTH: usize = 50;
 
@@ -342,7 +345,7 @@ fn main() -> anyhow::Result<()> {
                 .or_insert_with(|| arms.iter().map(|_| Tally::new()).collect())[slot]
                 .add(ranked, &question.answers);
         };
-        let mut kept: BTreeMap<&str, (Vec<Document>, Vec<(usize, f64)>)> = BTreeMap::new();
+        let mut kept: BTreeMap<&str, Scored> = BTreeMap::new();
         for protocol in PROTOCOLS {
             let docs = documents(question, protocol);
             let lex = lexical(question, &docs);
