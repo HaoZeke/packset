@@ -147,9 +147,9 @@
   {
    "text": "packsetd listens on 127.0.0.1 only and never on localhost.",
    "words": 8,
-   "sentences": 2,
-   "grade": 4.12,
-   "ease": 54.73,
+   "sentences": 1,
+   "grade": 6.12,
+   "ease": 50.67,
    "adverbs": 0,
    "adverb_ratio": 0.0,
    "passives": 0,
