@@ -51,6 +51,32 @@ pub struct Hit {
     pub kind: String,
 }
 
+/// A refusal, with the reason the writer gave.
+///
+/// The writer answers a bad claim with a status and a body that says why:
+/// "atom has 6 sentences; one claim is at most 2". Passing the transport error
+/// through kept the status and dropped the body, so a seat saw "status code
+/// 400" and had to guess what about its claim was wrong. The reason is the
+/// message; the status is the least useful part of it.
+fn refused(url: &str, e: ureq::Error) -> Error {
+    match e {
+        ureq::Error::Status(code, response) => {
+            let text = response.into_string().unwrap_or_default();
+            let reason = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|r| r.as_str()).map(str::to_string))
+                .unwrap_or(text);
+            let reason = reason.trim();
+            if reason.is_empty() {
+                Error::Bad(format!("{url}: status code {code}"))
+            } else {
+                Error::Bad(format!("{url}: {code}: {reason}"))
+            }
+        }
+        other => Error::Http(Box::new(other)),
+    }
+}
+
 impl PacksetClient {
     pub fn new(base: impl Into<String>) -> Self {
         let mut base = base.into();
@@ -116,7 +142,7 @@ impl PacksetClient {
         let body = ureq::get(&format!("{}/health", self.base))
             .timeout(TIMEOUT)
             .call()
-            .map_err(|e| Error::Http(Box::new(e)))?
+            .map_err(|e| refused(&url, e))?
             .into_string()?;
         Ok(body)
     }
@@ -159,10 +185,7 @@ impl PacksetClient {
         if let Some(at) = as_of {
             req = req.query("as_of", at);
         }
-        let body: serde_json::Value = req
-            .call()
-            .map_err(|e| Error::Http(Box::new(e)))?
-            .into_json()?;
+        let body: serde_json::Value = req.call().map_err(|e| refused(&url, e))?.into_json()?;
         let atoms = body
             .get("atoms")
             .cloned()
@@ -223,10 +246,7 @@ impl PacksetClient {
         if rerank {
             req = req.query("rerank", "1");
         }
-        let body: serde_json::Value = req
-            .call()
-            .map_err(|e| Error::Http(Box::new(e)))?
-            .into_json()?;
+        let body: serde_json::Value = req.call().map_err(|e| refused(&url, e))?.into_json()?;
         let hits = body
             .get("hits")
             .cloned()
@@ -245,10 +265,7 @@ impl PacksetClient {
         if let Some(workspace) = workspace {
             req = req.query("workspace", workspace);
         }
-        Ok(req
-            .call()
-            .map_err(|e| Error::Http(Box::new(e)))?
-            .into_json()?)
+        Ok(req.call().map_err(|e| refused(&url, e))?.into_json()?)
     }
 
     /// The set a workspace is pinned to.
@@ -262,7 +279,7 @@ impl PacksetClient {
             .query("workspace", workspace)
             .timeout(TIMEOUT)
             .call()
-            .map_err(|e| Error::Http(Box::new(e)))?
+            .map_err(|e| refused(&url, e))?
             .into_json()?)
     }
 
@@ -276,7 +293,7 @@ impl PacksetClient {
         Ok(ureq::put(&url)
             .timeout(TIMEOUT)
             .send_json(serde_json::json!({ "workspace": workspace, "name": name }))
-            .map_err(|e| Error::Http(Box::new(e)))?
+            .map_err(|e| refused(&url, e))?
             .into_json()?)
     }
 
@@ -294,7 +311,7 @@ impl PacksetClient {
             .query("workspace", workspace)
             .timeout(TIMEOUT)
             .call()
-            .map_err(|e| Error::Http(Box::new(e)))?
+            .map_err(|e| refused(&url, e))?
             .into_json()?;
         let found = body
             .get("accessions")
@@ -330,7 +347,7 @@ impl PacksetClient {
             .query("accession", accession)
             .timeout(TIMEOUT)
             .call()
-            .map_err(|e| Error::Http(Box::new(e)))?
+            .map_err(|e| refused(&url, e))?
             .into_json()?;
         let found = body
             .get("atoms")
@@ -344,7 +361,7 @@ impl PacksetClient {
         let body: serde_json::Value = ureq::post(&url)
             .timeout(TIMEOUT)
             .send_json(atom.clone())
-            .map_err(|e| Error::Http(Box::new(e)))?
+            .map_err(|e| refused(&url, e))?
             .into_json()?;
         Ok(body)
     }

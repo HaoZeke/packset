@@ -108,8 +108,36 @@ fn words_of(text: &str) -> Vec<&str> {
 }
 
 /// Split on runs of `.`, `!` and `?`, keeping only pieces carrying a word.
+/// The sentences of a text, split where a terminator ends one.
+///
+/// A terminator ends a sentence when what follows it is space or the end of
+/// the text. Splitting on every full stop counted "0.635 vs 0.615" as three
+/// sentences and "v0.9.3" as three more, and the writer then refused the
+/// claim as too long. A memory pack for a seat that measures things is full
+/// of numbers and versions, so that gate was refusing exactly the lessons
+/// worth keeping. An abbreviation followed by a space still splits, which is
+/// the rarer error and the cheaper one: it over-counts a sentence rather than
+/// refusing a number.
 fn sentences_of(text: &str) -> Vec<&str> {
-    text.split(['.', '!', '?'])
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for (at, &b) in bytes.iter().enumerate() {
+        if !matches!(b, b'.' | b'!' | b'?') {
+            continue;
+        }
+        let ends_here = bytes
+            .get(at + 1)
+            .is_none_or(|next| next.is_ascii_whitespace());
+        if ends_here {
+            out.push(&text[start..at]);
+            start = at + 1;
+        }
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    out.into_iter()
         .filter(|piece| !words_of(piece).is_empty())
         .collect()
 }
@@ -272,6 +300,23 @@ pub fn refuse(text: &str, role: Role) -> Result<Report, ProseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A number is not the end of a sentence, and neither is a version.
+    #[test]
+    fn a_decimal_point_does_not_end_a_sentence() {
+        assert_eq!(
+            sentences_of("BM25+ beats BM25: 0.635 vs 0.615 hit@1 on turns. It is the default.")
+                .len(),
+            2
+        );
+        assert_eq!(
+            sentences_of("the tracker has 0.9.3 now, but keep at it.").len(),
+            1
+        );
+        assert_eq!(sentences_of("One. Two! Three?").len(), 3);
+        assert_eq!(sentences_of("no terminator at all").len(), 1);
+        assert_eq!(sentences_of("...").len(), 0);
+    }
 
     #[test]
     fn a_plain_claim_passes_as_an_atom() {
