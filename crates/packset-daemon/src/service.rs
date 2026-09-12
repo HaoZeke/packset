@@ -326,7 +326,7 @@ impl Service {
         let why = match why.map(str::trim).filter(|w| !w.is_empty()) {
             Some(w) if !packset_core::atom::is_accession(w) => {
                 return Err(anyhow::Error::new(AtomError(format!(
-                    "{w} is not a deed accession; a retraction cites                      deed-<kind>-<slug> or sha256:<hash>"
+                    "{w} is not a deed accession; a retraction cites deed-<kind>-<slug> or sha256:<hash>"
                 ))))
             }
             other => other,
