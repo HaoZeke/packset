@@ -107,22 +107,23 @@ fn words_of(text: &str) -> Vec<&str> {
     out
 }
 
-/// Split on runs of `.`, `!` and `?`, keeping only pieces carrying a word.
-/// Sentences, split at `.`, `!` and `?`, except a full stop between two digits:
-/// a decimal or a version is not a sentence boundary.
+/// Sentences, split at a `.`, `!` or `?` that ends a run of terminators and
+/// is followed by whitespace or the end of the text. A full stop inside a
+/// token (`0.9.3`, `127.0.0.1`, `Cargo.lock`) is not a boundary.
 fn sentences_of(text: &str) -> Vec<&str> {
     let bytes = text.as_bytes();
+    let terminator = |b: u8| matches!(b, b'.' | b'!' | b'?');
     let mut out = Vec::new();
     let mut start = 0usize;
     for (at, &b) in bytes.iter().enumerate() {
-        if !matches!(b, b'.' | b'!' | b'?') {
+        if !terminator(b) {
             continue;
         }
-        let between_digits = b == b'.'
-            && at > 0
-            && bytes[at - 1].is_ascii_digit()
-            && bytes.get(at + 1).is_some_and(u8::is_ascii_digit);
-        if between_digits {
+        let ends = match bytes.get(at + 1) {
+            None => true,
+            Some(&next) => next.is_ascii_whitespace(),
+        };
+        if !ends {
             continue;
         }
         out.push(&text[start..at]);
@@ -303,6 +304,15 @@ mod tests {
                 .len(),
             2
         );
+        assert_eq!(
+            sentences_of("Cargo.lock pins the client. Bump it with cargo update.").len(),
+            2
+        );
+        assert_eq!(
+            sentences_of("packsetd listens on 127.0.0.1 only and never on localhost.").len(),
+            1
+        );
+        assert_eq!(sentences_of("Really?! Yes. No").len(), 3);
         assert_eq!(
             sentences_of("the tracker has 0.9.3 now, but keep at it.").len(),
             1
