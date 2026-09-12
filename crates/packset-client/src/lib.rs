@@ -415,6 +415,37 @@ impl PacksetClient {
         Ok(body)
     }
 
+    /// The link graph's communities, largest first.
+    pub fn islands(&self, workspace: &str) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/islands", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .timeout(timeout())
+            .call()
+            .map_err(|e| refused(&url, e))?
+            .into_json()?;
+        Ok(body)
+    }
+
+    /// The memories a cue activates, strongest first.
+    pub fn activate(
+        &self,
+        workspace: &str,
+        q: &str,
+        limit: u32,
+    ) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/activate", self.base);
+        let body: serde_json::Value = ureq::get(&url)
+            .query("workspace", workspace)
+            .query("q", q)
+            .query("limit", &limit.to_string())
+            .timeout(timeout())
+            .call()
+            .map_err(|e| refused(&url, e))?
+            .into_json()?;
+        Ok(body)
+    }
+
     pub fn post_atom(&self, atom: &serde_json::Value) -> Result<serde_json::Value, Error> {
         let url = format!("{}/v1/atoms", self.base);
         let body: serde_json::Value = ureq::post(&url)

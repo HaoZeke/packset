@@ -297,6 +297,24 @@ fn route(
             let cwd = query.get("cwd").cloned().unwrap_or_else(|| ".".into());
             Answer::ok(crate::context::repo_map(std::path::Path::new(&cwd)))
         }
+        (Method::Get, "/v1/islands") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => answer(service.islands(&workspace)),
+        },
+        (Method::Get, "/v1/activate") => match required(query, "workspace") {
+            Err(a) => a,
+            Ok(workspace) => {
+                let limit = query
+                    .get("limit")
+                    .and_then(|l| l.parse::<usize>().ok())
+                    .unwrap_or(24);
+                let q = query.get("q").cloned().unwrap_or_default();
+                if q.trim().is_empty() {
+                    return Answer::err(400, "q required: the cue that activates");
+                }
+                answer(service.activate(&workspace, &q, limit, panel))
+            }
+        },
         (Method::Get, "/v1/search") => match required(query, "workspace") {
             Err(a) => a,
             Ok(workspace) => {

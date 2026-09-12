@@ -21,6 +21,7 @@ pub mod dowdall;
 pub mod dpp;
 pub mod extract;
 pub mod identity;
+pub mod island;
 pub mod kemeny;
 pub mod mmr;
 pub mod panel;

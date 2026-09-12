@@ -10,6 +10,8 @@
 //! packset prefer [--workspace WS] TEXT...
 //! packset search [--workspace WS] QUERY...
 //! packset due [WORKSPACE]
+//! packset islands [WORKSPACE]
+//! packset island [--workspace WS] CUE
 //! packset grade ID [--lapsed] [WORKSPACE]
 //! packset pin [NAME]
 //! packset accessions [WORKSPACE]
@@ -93,6 +95,8 @@ fn run() -> anyhow::Result<()> {
         "prefer" => write(port, "preference", rest),
         "search" => search(port, rest),
         "due" => due(port, rest.first().map(String::as_str)),
+        "islands" => islands(port, rest.first().map(String::as_str)),
+        "island" => island(port, rest),
         "grade" => grade(port, rest),
         "pin" => pin(port, rest.first().map(String::as_str)),
         "accessions" => accessions(port, rest.first().map(String::as_str)),
@@ -130,6 +134,8 @@ fn usage() -> String {
          prefer [--workspace WS] TEXT     one standing preference\n\
          search [--workspace WS] QUERY    ranked claims, score kind id text\n\
          due [WORKSPACE]        claims whose review clock has run out\n\
+         islands [WORKSPACE]    the link graph's clusters, largest first\n\
+         island [--workspace WS] CUE   the memories a cue activates\n\
          grade ID [--lapsed] [WS]  mark a review recalled, or lapsed\n\
          pin [NAME]             read, or set, the pinned set\n\
          accessions [WORKSPACE] deed accessions live atoms cite\n\
@@ -494,6 +500,42 @@ fn due(port: u16, given: Option<&str>) -> anyhow::Result<()> {
         println!(
             "{}\t{}\t{}",
             atom["due_at"].as_str().unwrap_or(""),
+            atom["id"].as_str().unwrap_or("-"),
+            atom["text"].as_str().unwrap_or("")
+        );
+    }
+    Ok(())
+}
+
+/// One line per island: size, then the first claim in it.
+fn islands(port: u16, given: Option<&str>) -> anyhow::Result<()> {
+    let workspace = workspace(given)?;
+    let body = client(port).islands(&workspace)?;
+    for island in body["islands"].as_array().into_iter().flatten() {
+        let first = island["atoms"][0]["text"].as_str().unwrap_or("");
+        println!("{}\t{}", island["size"], first);
+    }
+    Ok(())
+}
+
+/// The memories a cue activates: activation, seed mark, id, text.
+fn island(port: u16, args: &[String]) -> anyhow::Result<()> {
+    let (given, words) = split_workspace(args);
+    let cue = words.join(" ").trim().to_string();
+    if cue.is_empty() {
+        anyhow::bail!("island: pass the cue, the task or question at hand");
+    }
+    let workspace = workspace(given.as_deref())?;
+    let body = client(port).activate(&workspace, &cue, 24)?;
+    for atom in body["island"].as_array().into_iter().flatten() {
+        println!(
+            "{:.3}\t{}\t{}\t{}",
+            atom["activation"].as_f64().unwrap_or(0.0),
+            if atom["seed"].as_bool().unwrap_or(false) {
+                "seed"
+            } else {
+                "    "
+            },
             atom["id"].as_str().unwrap_or("-"),
             atom["text"].as_str().unwrap_or("")
         );

@@ -27,6 +27,11 @@ pub struct Attachment {
 }
 
 /// The writer: the store, the cards, and the one-shot attach slots.
+/// How many search hits seed an activation.
+const ACTIVATION_SEEDS: usize = 5;
+/// How far activation spreads along the links.
+const ACTIVATION_HOPS: usize = 2;
+
 pub struct Service {
     home: Home,
     store: Store,
@@ -861,6 +866,83 @@ impl Service {
         let atom_id = stored.get("id").and_then(Value::as_str).unwrap_or("");
         crate::proposals::mark_accepted(&self.home, workspace, &rec, atom_id)?;
         Ok(stored)
+    }
+
+    /// The islands of a workspace: the link graph's communities, largest
+    /// first, each as the atoms it holds.
+    ///
+    /// # Errors
+    ///
+    /// The store's.
+    pub fn islands(&self, workspace: &str) -> anyhow::Result<Value> {
+        let atoms = self.store.live(workspace)?;
+        let graph = packset_core::island::Graph::from_atoms(&atoms);
+        let islands: Vec<Value> = packset_core::island::islands(&graph)
+            .into_iter()
+            .map(|members| {
+                let atoms: Vec<Value> = members
+                    .iter()
+                    .map(|&i| {
+                        json!({
+                            "id": atoms[i].get("id").cloned().unwrap_or(Value::Null),
+                            "kind": atoms[i].get("kind").cloned().unwrap_or(Value::Null),
+                            "text": atoms[i].get("text").cloned().unwrap_or(Value::Null),
+                        })
+                    })
+                    .collect();
+                json!({"size": members.len(), "atoms": atoms})
+            })
+            .collect();
+        Ok(json!({"islands": islands, "atoms": atoms.len()}))
+    }
+
+    /// The memories a cue activates: the top search hits as seeds, spread
+    /// two hops along the links, strongest first.
+    ///
+    /// # Errors
+    ///
+    /// As [`Service::search`], else the store's.
+    pub fn activate(
+        &self,
+        workspace: &str,
+        query: &str,
+        limit: usize,
+        panel: &packset_core::Panel,
+    ) -> anyhow::Result<Value> {
+        let seeds = self.search(workspace, query, ACTIVATION_SEEDS, None, panel, None, false)?;
+        let atoms = self.store.live(workspace)?;
+        let graph = packset_core::island::Graph::from_atoms(&atoms);
+        let weighted: Vec<(usize, f64)> = seeds["hits"]
+            .as_array()
+            .map(|hits| {
+                hits.iter()
+                    .filter_map(|hit| {
+                        let id = hit["id"].as_str()?;
+                        let at = graph.position(id)?;
+                        Some((
+                            at,
+                            hit["score"].as_f64().unwrap_or(1.0).max(f64::MIN_POSITIVE),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let lit = packset_core::island::activate(&graph, &weighted, ACTIVATION_HOPS);
+        let strongest = lit.first().map_or(1.0, |(_, a)| *a);
+        let island: Vec<Value> = lit
+            .iter()
+            .take(limit)
+            .map(|(at, activation)| {
+                json!({
+                    "id": atoms[*at].get("id").cloned().unwrap_or(Value::Null),
+                    "kind": atoms[*at].get("kind").cloned().unwrap_or(Value::Null),
+                    "text": atoms[*at].get("text").cloned().unwrap_or(Value::Null),
+                    "activation": activation / strongest,
+                    "seed": weighted.iter().any(|(s, _)| s == at),
+                })
+            })
+            .collect();
+        Ok(json!({"island": island, "seeds": weighted.len(), "hops": ACTIVATION_HOPS}))
     }
 
     /// The open proposals for a workspace.
