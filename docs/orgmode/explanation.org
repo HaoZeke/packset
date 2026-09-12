@@ -45,7 +45,14 @@ questions are the weak type at 0.30 to 0.47 hit@1. With an encoder, the
 dense ballot alone is worse than the lexical one at session granularity
 (0.63 hit@1 against 0.84 on the first hundred questions) and the fusion
 of the two is better than either: 0.920 hit@1 and 0.968 recall@5, so the
-fused panel is the default a seat with an encoder gets. A cross-encoder
+fused panel is the default a seat with an encoder gets. Over every
+answerable question (470) the fused panel reaches 0.889 hit@1, 0.949
+recall@5 and 0.981 recall@10 against the lexical ballot's 0.855, 0.914
+and 0.952; by type the gain is largest where the lexical ballot is weakest,
+preference questions (0.667 against 0.467 hit@1, thirty of them) and
+multi-session questions (0.934 against 0.851), and knowledge-update
+questions are the one type where lexical alone ranks first slightly more
+often (0.972 against 0.944 hit@1) with the same recall@5. A cross-encoder
 second stage does not help here: bge-reranker-base over the windows of the
 fused top twenty sessions, sessions reordered by their best window, falls
 to 0.780 hit@1 and 0.940 recall@5 on the same hundred questions. A window

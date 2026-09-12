@@ -42,9 +42,10 @@ $ packset island fusing two ballots     # the memories a task activates
   for a recency half-life (`examples/forgetting.rs`).
 - Search fuses a prefix-and-edit scan, BM25+ over an index, and a dense
   ballot when an encoder is present. Measured on LoCoMo: 0.736 hit@1 fused
-  against 0.752 published; on LongMemEval_S, 0.91 recall@5 at session level
-  with BM25+ alone, and 0.968 recall@5 (0.920 hit@1) with the dense ballot
-  fused in over session documents, on the first hundred questions. Mem0 and Zep publish answer accuracy on the same
+  against 0.752 published; on LongMemEval_S over every answerable question
+  (470), 0.914 recall@5 at session level with BM25+ alone and 0.949
+  recall@5 (0.889 hit@1, 0.981 recall@10) with the dense ballot fused in
+  over session documents. Mem0 and Zep publish answer accuracy on the same
   benchmarks (doi:10.48550/arXiv.2504.19413, doi:10.48550/arXiv.2501.13956);
   the same metric measured here with a local reader (Qwen2.5-7B-Instruct
   Q5_K_M as reader and judge, LongMemEval's own prompts, top five sessions)
