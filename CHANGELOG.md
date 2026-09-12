@@ -2,7 +2,7 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
-## Unreleased
+## 0.5.0 (2026-09-12)
 
 - LongMemEval_S with an encoder: the fused panel over session documents
   reaches 0.920 hit@1 and 0.968 recall@5 on the first hundred questions,
