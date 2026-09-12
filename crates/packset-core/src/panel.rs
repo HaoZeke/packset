@@ -193,8 +193,9 @@ impl Decay {
 }
 
 impl Panel {
+    /// A fuse and a diversifier with the shipped decay slot.
     pub fn parse(fuse: &str, diversify: &str) -> Result<Self, UnknownVoter> {
-        Self::named(fuse, diversify, "off")
+        Self::named(fuse, diversify, Decay::default().as_str())
     }
 
     pub fn named(fuse: &str, diversify: &str, decay: &str) -> Result<Self, UnknownVoter> {
@@ -409,7 +410,7 @@ mod tests {
         assert_eq!(panel.diversify.as_str(), "mmr");
         assert_eq!(panel.decay.as_str(), "fsrs");
         assert_eq!(Panel::parse("combmnz", "mmr").unwrap(), panel);
-        assert_eq!(Panel::named("combmnz", "mmr", "off").unwrap(), panel);
+        assert_eq!(Panel::named("combmnz", "mmr", "fsrs").unwrap(), panel);
         // Nothing set is the default, and an empty value still fails closed.
         assert_eq!(Panel::from_env_vars(None, None, None).unwrap(), panel);
         assert!(Panel::from_env_vars(Some(""), None, None).is_err());
@@ -650,7 +651,7 @@ mod tests {
 
     #[test]
     fn decay_off_is_one_on_uses_temporal() {
-        let off = Panel::default();
+        let off = Panel::named("combmnz", "mmr", "off").unwrap();
         assert_eq!(off.decay_weight("session", 14.0, 1.0), 1.0);
         let on = Panel::named("borda", "mmr", "on").unwrap();
         let w = on.decay_weight("session", 14.0, 1.0);
