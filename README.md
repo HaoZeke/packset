@@ -49,9 +49,11 @@ $ packset island fusing two ballots     # the memories a task activates
   benchmarks (doi:10.48550/arXiv.2504.19413, doi:10.48550/arXiv.2501.13956);
   the same metric measured here with a local reader (Qwen2.5-7B-Instruct
   Q5_K_M as reader and judge, LongMemEval's own prompts, top five sessions)
-  on the first hundred questions: the fused panel answers 0.630, the
-  lexical ballot alone 0.570, and the labelled sessions (the ceiling for
-  any retriever) 0.690. `scripts/longmemeval_qa.py` runs it over the
+  over all 470 answerable questions: the fused panel answers 0.549, the
+  lexical ballot alone 0.532, and the labelled sessions (the ceiling for
+  any retriever) 0.634; the fused panel leads where retrieval decides
+  (multi-session, single-session-user, preference) and the reader decides
+  the rest. `scripts/longmemeval_qa.py` runs it over the
   harness's retrieval dump with any OpenAI-compatible reader and judge; the
   explanation page says how to read the result.
 - Claims link by shared names; links carry weights that use strengthens and
