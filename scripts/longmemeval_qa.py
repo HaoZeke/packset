@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""Answer accuracy on LongMemEval_S from the harness's retrieval dump.
+
+Two measurements, one seam. `examples/longmemeval` ranks sessions and, with
+`PACKSET_LME_DUMP` set, writes one JSON line a question with the session ids
+each arm retrieved. This script hands the top sessions of one arm to a reader
+model with the benchmark's own reading prompt, then asks a judge model the
+benchmark's own type-specific question, and reports accuracy by type. The
+reader and the judge are any OpenAI-compatible chat endpoint; the report
+names them, because the number is theirs as much as the retriever's.
+
+    export QA_BASE_URL=https://.../v1 QA_API_KEY=... QA_MODEL=...
+    python3 scripts/longmemeval_qa.py longmemeval_s.json dump.jsonl --arm "sessions fused" --top 5
+
+The prompts are LongMemEval's (doi:10.48550/arXiv.2410.10813), reproduced
+from its evaluation code so a row here is read the way the paper's rows are.
+An `oracle` arm hands the reader the labelled answer sessions: the ceiling
+the retriever is measured against.
+"""
+import argparse
+import concurrent.futures as cf
+import json
+import os
+import sys
+import urllib.request
+
+READ = (
+    "I will give you several history chats between you and a user. Please answer "
+    "the question based on the relevant chat history.\n\n\nHistory Chats:\n\n{}\n\n"
+    "Current Date: {}\nQuestion: {}\nAnswer:"
+)
+SESSION = "\n### Session {}:\nSession Date: {}\nSession Content:\n{}\n"
+
+JUDGE_BASE = (
+    "I will give you a question, a correct answer, and a response from a model. "
+    "Please answer yes if the response contains the correct answer. Otherwise, "
+    "answer no. If the response is equivalent to the correct answer or contains "
+    "all the intermediate steps to get the correct answer, you should also answer "
+    "yes. If the response only contains a subset of the information required by "
+    "the answer, answer no. \n\nQuestion: {}\n\nCorrect Answer: {}\n\nModel Response: {}\n\n"
+    "Is the model response correct? Answer yes or no only."
+)
+JUDGE_TEMPORAL = (
+    "I will give you a question, a correct answer, and a response from a model. "
+    "Please answer yes if the response contains the correct answer. Otherwise, "
+    "answer no. If the response is equivalent to the correct answer or contains "
+    "all the intermediate steps to get the correct answer, you should also answer "
+    "yes. If the response only contains a subset of the information required by "
+    "the answer, answer no. In addition, do not penalize off-by-one errors for the "
+    "number of days. If the question asks for the number of days/weeks/months, etc., "
+    "and the model makes off-by-one errors (e.g., predicting 19 days when the answer "
+    "is 18), the model's response is still correct. \n\nQuestion: {}\n\nCorrect "
+    "Answer: {}\n\nModel Response: {}\n\nIs the model response correct? Answer yes or no only."
+)
+JUDGE_UPDATE = (
+    "I will give you a question, a correct answer, and a response from a model. "
+    "Please answer yes if the response contains the correct answer. Otherwise, "
+    "answer no. If the response contains some previous information along with an "
+    "updated answer, the response should be considered as correct as long as the "
+    "updated answer is the required answer.\n\nQuestion: {}\n\nCorrect Answer: {}\n\n"
+    "Model Response: {}\n\nIs the model response correct? Answer yes or no only."
+)
+JUDGE_PREFERENCE = (
+    "I will give you a question, a rubric for desired personalized response, and "
+    "a response from a model. Please answer yes if the response satisfies the "
+    "desired response. Otherwise, answer no. The model does not need to reflect "
+    "all the points in the rubric. The response is correct as long as it recalls "
+    "and utilizes the user's personal information correctly.\n\nQuestion: {}\n\n"
+    "Rubric: {}\n\nModel Response: {}\n\nIs the model response correct? Answer yes or no only."
+)
+
+
+def judge_prompt(kind, question, answer, response):
+    if kind == "temporal-reasoning":
+        t = JUDGE_TEMPORAL
+    elif kind == "knowledge-update":
+        t = JUDGE_UPDATE
+    elif kind == "single-session-preference":
+        t = JUDGE_PREFERENCE
+    else:
+        t = JUDGE_BASE
+    return t.format(question, answer, response)
+
+
+def chat(base, key, model, prompt, max_tokens):
+    body = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0,
+    }).encode()
+    req = urllib.request.Request(
+        f"{base.rstrip('/')}/chat/completions",
+        data=body,
+        headers={"content-type": "application/json", "authorization": f"Bearer {key}"},
+    )
+    with urllib.request.urlopen(req, timeout=600) as r:
+        out = json.load(r)
+    return out["choices"][0]["message"]["content"].strip()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("dataset")
+    ap.add_argument("dump")
+    ap.add_argument("--arm", default="sessions fused")
+    ap.add_argument("--top", type=int, default=5)
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--out", default="")
+    a = ap.parse_args()
+    base = os.environ["QA_BASE_URL"]
+    key = os.environ.get("QA_API_KEY", "")
+    reader = os.environ.get("QA_MODEL", "")
+    judge = os.environ.get("QA_JUDGE_MODEL", reader)
+    data = {q["question_id"]: q for q in json.load(open(a.dataset))}
+    rows = [json.loads(l) for l in open(a.dump) if l.strip()]
+    if a.limit:
+        rows = rows[: a.limit]
+
+    def one(row):
+        q = data[row["question_id"]]
+        ids = q["haystack_session_ids"]
+        if a.arm == "oracle":
+            chosen = row["answer_session_ids"]
+        else:
+            chosen = row["retrieved"][a.arm][: a.top]
+        # Sessions in date order, as the benchmark's reader gets them.
+        picked = sorted(
+            (ids.index(s) for s in chosen if s in ids),
+            key=lambda i: q["haystack_dates"][i],
+        )
+        history = "".join(
+            SESSION.format(
+                n + 1,
+                q["haystack_dates"][i],
+                "\n".join(f"{t['role']}: {t['content']}" for t in q["haystack_sessions"][i]),
+            )
+            for n, i in enumerate(picked)
+        )
+        response = chat(base, key, reader, READ.format(history, q["question_date"], q["question"]), 512)
+        verdict = chat(base, key, judge, judge_prompt(q["question_type"], q["question"], q["answer"], response), 8)
+        return {
+            "question_id": q["question_id"],
+            "question_type": q["question_type"],
+            "correct": "yes" in verdict.lower(),
+            "response": response,
+        }
+
+    results = []
+    with cf.ThreadPoolExecutor(a.workers) as pool:
+        for n, r in enumerate(pool.map(one, rows), 1):
+            results.append(r)
+            if n % 25 == 0:
+                print(f"{n} questions", file=sys.stderr)
+    if a.out:
+        with open(a.out, "w") as f:
+            for r in results:
+                f.write(json.dumps(r) + "\n")
+    by = {}
+    for r in results:
+        t = by.setdefault(r["question_type"], [0, 0])
+        t[0] += r["correct"]
+        t[1] += 1
+    total = sum(r["correct"] for r in results)
+    print(f"\nLongMemEval_S answer accuracy, arm {a.arm!r} top {a.top}, reader {reader}, judge {judge}\n")
+    print("| type | asked | accuracy |\n|---|---|---|")
+    for kind, (c, n) in sorted(by.items()):
+        print(f"| {kind} | {n} | {c / n:.3f} |")
+    print(f"| all | {len(results)} | {total / max(len(results), 1):.3f} |")
+
+
+if __name__ == "__main__":
+    main()

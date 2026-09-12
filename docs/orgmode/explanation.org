@@ -55,9 +55,16 @@ latency than full context; Zep (doi:10.48550/arXiv.2501.13956) reports
 18.5% higher accuracy on LongMemEval. Both numbers are answer accuracy
 through a model over an extracted transcript memory. The pack's rows are
 retrieval recall over claims a person or agent wrote on purpose: same
-benchmark, a different job, and no shared metric yet. A reader over the
-retrieved sessions would give one; until it exists the pack does not claim
-to beat either system at answering, and neither of them settles a panel.
+benchmark, a different job. The shared metric is answer accuracy, and the
+harness now has the seam for it: =PACKSET_LME_DUMP= writes the sessions
+each arm retrieved, and =scripts/longmemeval_qa.py= hands the top sessions
+of one arm to a reader model with the benchmark's own reading prompt, then
+to a judge with the benchmark's type-specific question, and reports
+accuracy by type beside an =oracle= arm that reads the labelled sessions.
+The reader and judge are any OpenAI-compatible endpoint, named in the
+report; a row there is that model's as much as the retriever's. Until such
+a row is run, the pack does not claim to beat either system at answering,
+and neither of them settles a panel.
 
 * Forgetting is a feature
 

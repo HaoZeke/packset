@@ -46,8 +46,9 @@ $ packset island fusing two ballots     # the memories a task activates
   with BM25+ alone, and 0.968 recall@5 (0.920 hit@1) with the dense ballot
   fused in over session documents, on the first hundred questions. Mem0 and Zep publish answer accuracy on the same
   benchmarks (doi:10.48550/arXiv.2504.19413, doi:10.48550/arXiv.2501.13956);
-  that is a different metric over a different memory, and the explanation
-  page says why there is no head-to-head yet.
+  that is a different metric over a different memory; `scripts/longmemeval_qa.py`
+  runs it over the harness's retrieval dump with any OpenAI-compatible reader
+  and judge, and the explanation page says how to read the result.
 - Claims link by shared names; links carry weights that use strengthens and
   disuse decays; `island` returns the cluster a task activates.
 - A `trust` atom is one weighted edge of an influence graph, scoped to

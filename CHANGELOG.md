@@ -7,6 +7,10 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 - LongMemEval_S with an encoder: the fused panel over session documents
   reaches 0.920 hit@1 and 0.968 recall@5 on the first hundred questions,
   against 0.840 and 0.904 for the lexical ballot alone.
+- `examples/longmemeval` writes the sessions each arm retrieved to
+  `PACKSET_LME_DUMP`, and `scripts/longmemeval_qa.py` turns that into
+  LongMemEval answer accuracy with the benchmark's reading and judge
+  prompts over any OpenAI-compatible reader and judge.
 - The writer reads `PACKSET_FUSE`, `PACKSET_DIVERSIFY` and `PACKSET_DECAY`
   when the flag of the same name is absent. It read only the flags, so a
   writer started with `PACKSET_DECAY=fsrs` in its environment ran with

@@ -25,8 +25,11 @@ const WINDOW: usize = 6;
 const STRIDE: usize = 3;
 
 struct Question {
+    id: String,
     kind: String,
     text: String,
+    date: String,
+    answer: String,
     /// Session id, then its turns in order.
     sessions: Vec<(String, Vec<String>)>,
     answers: BTreeSet<String>,
@@ -67,8 +70,11 @@ fn questions(raw: &Value) -> Vec<Question> {
                 .filter_map(|a| a.as_str().map(str::to_string))
                 .collect();
             Some(Question {
+                id: id.to_string(),
                 kind: q["question_type"].as_str().unwrap_or("?").to_string(),
                 text: q["question"].as_str()?.to_string(),
+                date: q["question_date"].as_str().unwrap_or("").to_string(),
+                answer: q["answer"].as_str().unwrap_or("").to_string(),
                 sessions,
                 answers,
             })
@@ -335,17 +341,27 @@ fn main() -> anyhow::Result<()> {
             arms.push(format!("{p} fused"));
         }
     }
+    // `PACKSET_LME_DUMP` names a JSONL file: one line a question with the
+    // session ids each arm retrieved, for a reader model to answer from.
+    // Retrieval and reading are two measurements; this file is the seam.
+    let mut dump = std::env::var_os("PACKSET_LME_DUMP")
+        .map(|p| std::fs::File::create(p).expect("dump file"));
     let started = std::time::Instant::now();
     let mut overall: Vec<Tally> = arms.iter().map(|_| Tally::new()).collect();
     let mut by_kind: BTreeMap<String, Vec<Tally>> = BTreeMap::new();
     for (nth, question) in asked.iter().enumerate() {
         let mut slot = 0usize;
+        let mut retrieved: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut record = |ranked: &[String], slot: usize| {
             overall[slot].add(ranked, &question.answers);
             by_kind
                 .entry(question.kind.clone())
                 .or_insert_with(|| arms.iter().map(|_| Tally::new()).collect())[slot]
                 .add(ranked, &question.answers);
+            retrieved.insert(
+                arms[slot].clone(),
+                ranked.iter().take(10).cloned().collect(),
+            );
         };
         let mut kept: BTreeMap<&str, Scored> = BTreeMap::new();
         for protocol in PROTOCOLS {
@@ -369,6 +385,18 @@ fn main() -> anyhow::Result<()> {
                 );
                 slot += 1;
             }
+        }
+        if let Some(file) = dump.as_mut() {
+            let line = json!({
+                "question_id": question.id,
+                "question_type": question.kind,
+                "question": question.text,
+                "question_date": question.date,
+                "answer": question.answer,
+                "answer_session_ids": question.answers,
+                "retrieved": retrieved,
+            });
+            writeln!(file, "{line}").expect("dump line");
         }
         if (nth + 1) % 50 == 0 {
             eprintln!(
