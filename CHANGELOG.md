@@ -2,10 +2,16 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
+## 0.7.2 (2026-09-12)
+
+- The lockfile follows the version bump. The release builds of v0.7.0 and
+  v0.7.1 refused `--locked`: the crates' path dependencies still required
+  0.6.0, so the lock could not move. They now require the workspace
+  version.
+
 ## 0.7.1 (2026-09-12)
 
-- The lockfile follows the version bump. v0.7.0's release build refused
-  `--locked` because the lock still named 0.6.0.
+- The version bump alone; its release build was refused (see 0.7.2).
 
 ## 0.7.0 (2026-09-12)
 
