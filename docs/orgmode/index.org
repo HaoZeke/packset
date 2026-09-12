@@ -25,11 +25,12 @@
    </div>
 #+end_export
 
-A pack holds what a seat has decided to keep: one claim per atom, written
-on purpose, never mined from a transcript. Search ranks the claims by a
+A pack is what a seat has decided to keep: one claim per atom, written on
+purpose, never mined from a transcript. Search ranks the claims by a
 measured panel of scorers. A review clock brings each claim back before it
 is forgotten, and a claim that is not reviewed decays in the ranking. The
-writer is one daemon over one LMDB file, and every other tool is a client.
+writer is one daemon over one Lightning Memory-Mapped Database (LMDB) file,
+and every other tool is a client.
 
 * Install
 
@@ -67,4 +68,5 @@ own verbs and ends with a handover another machine can open.
    howto
    reference
    explanation
+   architecture
 #+end_export
