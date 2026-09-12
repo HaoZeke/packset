@@ -78,6 +78,12 @@ pub struct Hit {
     /// on card paragraphs, which have no clock.
     #[serde(default)]
     pub ts: Option<String>,
+    /// How many of the panel's ballots named this hit, and how many ran.
+    /// Two of three is agreement; one of three is one scorer's opinion.
+    #[serde(default)]
+    pub ballots: Option<u32>,
+    #[serde(default)]
+    pub of: Option<u32>,
 }
 
 /// A refusal, carrying the reason the writer gave in its body.

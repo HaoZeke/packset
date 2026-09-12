@@ -4,6 +4,8 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- Every fused hit says how many ballots named it (`ballots`) out of how
+  many ran (`of`), so a reader can keep to what the scorers agree on.
 - A MemoryAgentBench harness (`examples/memoryagentbench.rs`): the
   accurate-retrieval and conflict-resolution records chunked as the
   benchmark chunks them (facts one a document), lexical, dense and fused

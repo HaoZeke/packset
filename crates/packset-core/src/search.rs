@@ -1315,6 +1315,21 @@ pub fn merge_ballots(
         })
         .collect();
     let order = panel.rerank(&items, 0.7);
+    // How many ballots named each hit, out of how many ran: two lists
+    // agreeing is the panel's reason to exist, and a reader that wants
+    // only what the ballots agree on can ask for `ballots >= 2`.
+    let named: std::collections::HashMap<&String, usize> = keys
+        .iter()
+        .flat_map(|list| {
+            list.iter()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+        })
+        .fold(std::collections::HashMap::new(), |mut m, k| {
+            *m.entry(k).or_insert(0) += 1;
+            m
+        });
+    let of = ballots.len();
     // The score a caller reads is the panel's, on one scale; the ballot's own
     // score stays beside it.
     order
@@ -1326,6 +1341,11 @@ pub fn merge_ballots(
                     object.insert("ballot_score".into(), own);
                 }
                 object.insert("score".into(), json!(weights[&key]));
+                object.insert(
+                    "ballots".into(),
+                    json!(named.get(&key).copied().unwrap_or(0)),
+                );
+                object.insert("of".into(), json!(of));
             }
             Some(hit)
         })
@@ -1388,6 +1408,18 @@ mod merge_tests {
     /// The score on a returned hit is the panel's fused weight, so two hits
     /// from different ballots read on one scale; the ballot's own score is
     /// kept beside it.
+    #[test]
+    fn a_hit_says_how_many_ballots_named_it() {
+        let a = vec![hit("atom", "both", "alpha"), hit("atom", "solo", "beta")];
+        let b = vec![hit("atom", "both", "alpha")];
+        let merged = merge_ballots(&[a, b], 10, &default_panel(), NOW);
+        let both = merged.iter().find(|h| h["id"] == "both").unwrap();
+        let solo = merged.iter().find(|h| h["id"] == "solo").unwrap();
+        assert_eq!(both["ballots"], json!(2));
+        assert_eq!(solo["ballots"], json!(1));
+        assert_eq!(both["of"], json!(2));
+    }
+
     #[test]
     fn a_returned_score_is_the_panels() {
         let a = vec![hit("atom", "both", "alpha"), hit("atom", "solo", "beta")];
