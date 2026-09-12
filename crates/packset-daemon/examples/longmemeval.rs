@@ -215,23 +215,19 @@ fn read_rows(path: &std::path::Path, expected: usize) -> Option<Vec<Vec<f32>>> {
         .read_to_end(&mut bytes)
         .ok()?;
     let mut at = 0usize;
-    let mut next_u64 = |bytes: &[u8]| -> Option<u64> {
-        let v = u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?);
-        at += 8;
-        Some(v)
-    };
-    let count = next_u64(&bytes)? as usize;
+    let count = u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?) as usize;
+    at += 8;
     if count != expected {
         return None;
     }
     let mut rows = Vec::with_capacity(count);
     for _ in 0..count {
-        let len = next_u64(&bytes)? as usize;
+        let len = u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?) as usize;
+        at += 8;
         let mut row = Vec::with_capacity(len);
         for _ in 0..len {
-            let v = f32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?);
+            row.push(f32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
             at += 4;
-            row.push(v);
         }
         rows.push(row);
     }
