@@ -262,6 +262,106 @@ fn file_hits(field: &str, text: &str, qtoks: &[String], bias: f64) -> Vec<Value>
 }
 
 /// Sort by score descending, then field, then id, so the order is total.
+/// The `k` best candidates, decided before anything is built for them.
+///
+/// Scoring a pack touches every atom that carries a query term, and for a
+/// common term that is most of the pack. Building a hit for each one and
+/// sorting them all to keep twenty made a question cost the whole pack in
+/// allocations: thirty-four milliseconds against ten thousand atoms, half a
+/// second against a hundred thousand, for an inverted index that had found the
+/// candidates in a fraction of that. A bounded heap keeps the winners as a
+/// score and an ordinal, and the JSON is made for the survivors only.
+///
+/// The order is the one `sort_hits` produces: score descending, then id
+/// ascending. Ties at the boundary therefore fall the same way they did, and a
+/// caller reading the top of the list sees what it always saw.
+struct TopK<'a> {
+    k: usize,
+    // A min-heap on (score, id) through `Reverse`, so the root is the weakest
+    // survivor and is what a stronger candidate displaces.
+    heap: std::collections::BinaryHeap<std::cmp::Reverse<Candidate<'a>>>,
+}
+
+/// One scored atom, ordered the way the final list is.
+#[derive(Debug, Clone, Copy)]
+struct Candidate<'a> {
+    score: f64,
+    id: &'a str,
+    ordinal: usize,
+}
+
+impl PartialEq for Candidate<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+impl Eq for Candidate<'_> {}
+impl PartialOrd for Candidate<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Candidate<'_> {
+    /// Greater is better: a higher score, and on a tie the id that sorts
+    /// first, which is what `sort_hits` puts first.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score
+            .partial_cmp(&other.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| other.id.cmp(self.id))
+            .then_with(|| other.ordinal.cmp(&self.ordinal))
+    }
+}
+
+impl<'a> TopK<'a> {
+    fn new(k: usize) -> Self {
+        Self {
+            k,
+            heap: std::collections::BinaryHeap::with_capacity(k + 1),
+        }
+    }
+
+    fn offer(&mut self, candidate: Candidate<'a>) {
+        if self.k == 0 {
+            return;
+        }
+        if self.heap.len() < self.k {
+            self.heap.push(std::cmp::Reverse(candidate));
+            return;
+        }
+        if let Some(std::cmp::Reverse(weakest)) = self.heap.peek() {
+            if candidate > *weakest {
+                self.heap.pop();
+                self.heap.push(std::cmp::Reverse(candidate));
+            }
+        }
+    }
+
+    /// Best first.
+    fn into_sorted(self) -> Vec<Candidate<'a>> {
+        let mut out: Vec<Candidate<'a>> = self.heap.into_iter().map(|r| r.0).collect();
+        out.sort_by(|a, b| b.cmp(a));
+        out
+    }
+}
+
+/// The hit a caller reads, built once the atom has earned a place.
+fn atom_hit(atom: &Record, score: f64) -> Value {
+    json!({
+        "field": "atom",
+        "id": atom.get("id").cloned().unwrap_or(Value::Null),
+        "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
+        "text": atom.get("text").cloned().unwrap_or(Value::Null),
+        "due_at": atom.get("due_at").cloned().unwrap_or(Value::Null),
+        "score": score,
+    })
+}
+
+/// The id an atom sorts by on a tie, which is the same string the hit carries.
+fn id_of(atom: &Record) -> &str {
+    atom.get("id").and_then(Value::as_str).unwrap_or("")
+}
+
 fn sort_hits(hits: &mut [Value]) {
     hits.sort_by(|a, b| {
         let sa = a["score"].as_f64().unwrap_or(0.0);
@@ -507,7 +607,12 @@ fn bm25_hits(
         }
     }
 
-    // Only the atoms carrying a query term, straight from the postings.
+    // Only the atoms carrying a query term, straight from the postings, and
+    // only the best `limit` of those are ever built. The cards above are few
+    // and already built; the final sort over cards plus survivors is the same
+    // order a sort over cards plus every candidate would give, because no
+    // candidate below the top `limit` could have made the cut.
+    let mut best = TopK::new(limit);
     for (ordinal, relevance) in index.score_weighted_by(scorer, query) {
         let Some(atom) = atoms.get(ordinal) else {
             continue;
@@ -516,14 +621,14 @@ fn bm25_hits(
             continue;
         }
         let ts = atom.get("ts").and_then(Value::as_str);
-        hits.push(json!({
-            "field": "atom",
-            "id": atom.get("id").cloned().unwrap_or(Value::Null),
-            "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
-            "text": atom.get("text").cloned().unwrap_or(Value::Null),
-            "due_at": atom.get("due_at").cloned().unwrap_or(Value::Null),
-            "score": relevance + 0.1 * trust_of(atom) + recency(ts, now),
-        }));
+        best.offer(Candidate {
+            score: relevance + 0.1 * trust_of(atom) + recency(ts, now),
+            id: id_of(atom),
+            ordinal,
+        });
+    }
+    for candidate in best.into_sorted() {
+        hits.push(atom_hit(&atoms[candidate.ordinal], candidate.score));
     }
 
     sort_hits(&mut hits);
@@ -638,8 +743,8 @@ pub fn search_dense(ask: &Ask<'_>, query: &[f32]) -> Vec<Value> {
     if query.is_empty() {
         return Vec::new();
     }
-    let mut hits: Vec<Value> = Vec::new();
-    for atom in atoms {
+    let mut best = TopK::new(limit);
+    for (ordinal, atom) in atoms.iter().enumerate() {
         if !record::is_live_at(atom, now) || !atom_in_set(atom, set) {
             continue;
         }
@@ -651,15 +756,17 @@ pub fn search_dense(ask: &Ask<'_>, query: &[f32]) -> Vec<Value> {
             continue;
         }
         let ts = atom.get("ts").and_then(Value::as_str);
-        hits.push(json!({
-            "field": "atom",
-            "id": atom.get("id").cloned().unwrap_or(Value::Null),
-            "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
-            "text": atom.get("text").cloned().unwrap_or(Value::Null),
-            "due_at": atom.get("due_at").cloned().unwrap_or(Value::Null),
-            "score": relevance + 0.1 * trust_of(atom) + recency(ts, now),
-        }));
+        best.offer(Candidate {
+            score: relevance + 0.1 * trust_of(atom) + recency(ts, now),
+            id: id_of(atom),
+            ordinal,
+        });
     }
+    let mut hits: Vec<Value> = best
+        .into_sorted()
+        .into_iter()
+        .map(|c| atom_hit(&atoms[c.ordinal], c.score))
+        .collect();
     sort_hits(&mut hits);
     hits.truncate(limit);
     hits
@@ -733,6 +840,52 @@ pub fn front_due(due: Vec<Value>, ranked: Vec<Value>, limit: usize) -> Vec<Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keeping the k best before building anything gives the same list, in
+    /// the same order, as building everything and sorting it. Ties are the
+    /// case worth forcing: many atoms at one score, and the id decides.
+    #[test]
+    fn the_bounded_heap_agrees_with_the_full_sort() {
+        let atoms: Vec<Record> = (0..200)
+            .map(|n| {
+                json!({
+                    "id": format!("atom-{:03}", (n * 37) % 200),
+                    "kind": "conclusion",
+                    "text": "lease token holder",
+                })
+                .as_object()
+                .expect("object")
+                .clone()
+            })
+            .collect();
+        // Scores with plenty of ties, and a few negatives that must lose.
+        let score_of = |n: usize| ((n % 7) as f64) - 1.0;
+        for k in [0usize, 1, 5, 20, 199, 200, 500] {
+            let mut best = TopK::new(k);
+            for (ordinal, atom) in atoms.iter().enumerate() {
+                best.offer(Candidate {
+                    score: score_of(ordinal),
+                    id: id_of(atom),
+                    ordinal,
+                });
+            }
+            let mut fast: Vec<Value> = best
+                .into_sorted()
+                .into_iter()
+                .map(|c| atom_hit(&atoms[c.ordinal], c.score))
+                .collect();
+            sort_hits(&mut fast);
+
+            let mut slow: Vec<Value> = atoms
+                .iter()
+                .enumerate()
+                .map(|(ordinal, atom)| atom_hit(atom, score_of(ordinal)))
+                .collect();
+            sort_hits(&mut slow);
+            slow.truncate(k);
+            assert_eq!(fast, slow, "k = {k}");
+        }
+    }
 
     /// The point of late interaction: a question whose terms are answered in
     /// different parts of one document, which pooling averages away.
