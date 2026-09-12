@@ -1,9 +1,5 @@
-//! One atom as it sits in the store: a JSON object.
-//!
-//! The record is a `serde_json` object rather than a struct because the store
-//! is shared with a writer that may carry fields this one does not model, and
-//! dropping a field on a round trip would lose somebody's data. Every rule
-//! here reads the fields it knows and leaves the rest alone.
+//! One atom as it sits in the store: a JSON object. Fields this module does
+//! not model round-trip untouched.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,12 +19,7 @@ pub const MEMORY_CAP: usize = 2200;
 pub const TEXT_SOFT_CAP: usize = 500;
 /// Jaccard at or above which two atoms link.
 pub const LINK_THRESHOLD: f64 = 0.3;
-/// The most peers one atom names.
-///
-/// Without a cap the graph is quadratic: every atom sharing an entity links to
-/// every other, so each entity becomes a clique. That is not only a cost, it is
-/// a neighbourhood that has stopped meaning anything, because a one-hop walk
-/// from a seed then returns more than any caller asked for.
+/// The most peers one atom names; without a cap every shared entity is a clique.
 pub const LINK_MAX: usize = 8;
 /// Review interval when nothing has been graded yet.
 pub const DEFAULT_REVIEW_INTERVAL_S: i64 = 86_400;
@@ -57,18 +48,10 @@ pub const KINDS: &[&str] = &[
 /// Whether the claim was stated or inferred.
 pub const LEVELS: &[&str] = &["explicit", "derived"];
 
-/// Prefixes a deed accession can open with.
-///
-/// deedar mints `deed-<kind>-<slug>` and answers `get` for a `sha256:` of the
-/// canonical deed or of one product path. Those two forms are the whole
-/// vocabulary, and the tracker enforces the same pair, so an entity in neither
-/// is a topic word rather than a citation.
+/// Prefixes a deed accession can open with: `deed-<kind>-<slug>` or a `sha256:`.
 const DEED_PREFIXES: &[&str] = &["deed-", "sha256:"];
 
-/// Whether an entity could name a deed.
-///
-/// The shape rather than the store: a pack cites deeds and never opens one, so
-/// this cannot ask whether the deed exists.
+/// Whether an entity has the shape of a deed accession. The store is not asked.
 #[must_use]
 pub fn is_accession(value: &str) -> bool {
     let value = value.trim();
@@ -82,13 +65,9 @@ pub fn is_accession(value: &str) -> bool {
     })
 }
 
-/// A string quoted the way the error messages quote one.
-///
-/// Single quotes, switching to double only when the value carries a single
-/// quote and no double, with a backslash escape when it carries both. The rule
-/// is arbitrary, and that is the reason to state it here: the strings cross the
-/// wire to clients that read them, so quoting a set name or an entity
-/// differently would be a change in the API rather than in the prose.
+/// Quote as the error messages do: single quotes; double when the value has a
+/// single quote and no double; backslash escapes when it has both. Clients
+/// parse these, so the rule is part of the API.
 #[must_use]
 pub fn quoted(value: &str) -> String {
     let has_single = value.contains('\'');
@@ -143,12 +122,8 @@ const SECRET_KEYS: &[&str] = &[
     "api_key", "api-key", "apikey", "secret", "password", "token",
 ];
 
-/// Whether the text carries something credential-shaped.
-///
-/// A key assigned to a name, a bearer token, or the `sk-` prefix the common
-/// model APIs mint.
-/// The pack is pasted into a model's context, so this is the one place the
-/// paste is automatic rather than a person deciding.
+/// Whether the text carries something credential-shaped: a key assigned to a
+/// name, a bearer token, or an `sk-` prefix.
 #[must_use]
 pub fn looks_like_a_secret(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
@@ -363,12 +338,8 @@ pub fn is_live(atom: &Map<String, Value>, now: &str) -> bool {
     )
 }
 
-/// Live at `at` over the validity window.
-///
-/// `valid_from` is the start when it is set; otherwise `ts` is, so an atom
-/// written after `at` is not returned as if it had always been there. A
-/// missing start is open from the beginning, which is what the atoms already
-/// on disk look like. `valid_to` is the exclusive end, same as [`is_live`].
+/// Live at `at`: start is `valid_from`, else `ts`, else open; `valid_to` is
+/// the exclusive end as in [`is_live`].
 #[must_use]
 pub fn is_live_at(atom: &Map<String, Value>, at: &str) -> bool {
     crate::atom::is_live_at(
@@ -391,11 +362,8 @@ pub fn is_due(atom: &Map<String, Value>, now: &str) -> bool {
     }
 }
 
-/// The names an atom is about.
-///
-/// A declared `entities` list wins. Without one, capitalised runs and backtick
-/// names are the fallback, which is what makes an atom nobody annotated still
-/// link to its neighbours.
+/// The names an atom is about: the declared `entities`, else capitalised runs
+/// and backtick names.
 #[must_use]
 pub fn entities_of(atom: &Map<String, Value>) -> BTreeSet<String> {
     if let Some(Value::Array(items)) = atom.get("entities") {
@@ -465,9 +433,7 @@ struct Candidate<'a> {
     entities: BTreeSet<String>,
 }
 
-/// FNV-1a, written out because the order it decides is part of the stored
-/// graph: a hasher whose seed or algorithm may change between toolchains would
-/// make two builds disagree about a pack neither of them wrote.
+/// FNV-1a, written out: the order it decides is part of the stored graph.
 fn fnv1a(parts: &[&str]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for (index, part) in parts.iter().enumerate() {
@@ -481,32 +447,14 @@ fn fnv1a(parts: &[&str]) -> u64 {
     hash
 }
 
-/// How many candidates the diversifying selection looks at.
-///
-/// The selection is quadratic in what it considers, so considering everything
-/// above the threshold would make a write quadratic in the workspace. Sorting
-/// first means the pool holds the best candidates there are, and a neighbour
-/// that would have been chosen from outside it was, by construction, less
-/// alike than sixty-four that were not chosen.
+/// How many sorted candidates the diversifying selection looks at; the
+/// selection is quadratic in this.
 const LINK_POOL: usize = LINK_MAX * 8;
 
-/// Keep the most alike, dropping any that is more alike a kept neighbour than
-/// it is the atom itself.
-///
-/// Taking the top [`LINK_MAX`] by similarity is the obvious rule and it builds
-/// the wrong graph: every atom sharing an entity is alike every other, so the
-/// eight kept neighbours are eight restatements of one another and a one-hop
-/// walk returns the same claim eight times. The relative-neighbourhood
-/// condition is what proximity graphs use instead (it is the neighbour
-/// heuristic in HNSW, and the pruning rule of a relative neighbourhood graph):
-/// a candidate earns an edge only when the atom is its closest kept point, so
-/// the neighbourhood spreads over the directions an atom is about rather than
-/// piling into one of them.
-///
-/// Candidates must arrive sorted by decreasing overlap. When the condition
-/// rejects more than it keeps, the rejected fill the remaining places in
-/// similarity order, so a dense corner of the corpus does not leave an atom
-/// with one neighbour.
+/// Relative-neighbourhood pruning (the HNSW neighbour heuristic): a candidate
+/// earns an edge only when no kept neighbour is closer to it than the atom is.
+/// Candidates arrive sorted by decreasing overlap; rejected ones fill any
+/// places left, in order.
 fn diversified(candidates: &[Candidate<'_>], cap: usize) -> Vec<String> {
     let mut kept: Vec<&Candidate<'_>> = Vec::with_capacity(cap);
     let mut rejected: Vec<&Candidate<'_>> = Vec::new();
@@ -536,17 +484,9 @@ fn diversified(candidates: &[Candidate<'_>], cap: usize) -> Vec<String> {
     out
 }
 
-/// Rank peers by overlap with `mine`, best first.
-///
-/// Ties are settled by a hash of the pair, not by the id alone, and that is
-/// load bearing rather than cosmetic. Entity sets are small, so equal overlap
-/// is the common case rather than the rare one, and a tie-break on the id
-/// alone means the same few atoms win every tie in the whole workspace: they
-/// are chosen by every newcomer, and then each of them, over its own bound,
-/// drops the newcomer in favour of the others. The graph collapses onto
-/// whichever atoms happen to sort first and everything written afterwards ends
-/// up with no neighbours at all. Hashing the pair gives each atom its own
-/// order over the same candidates, which is still the same on every machine.
+/// Rank peers by overlap with `mine`, best first. Ties break on a hash of the
+/// pair, not the id: an id tie-break lets the first-sorting atoms win every
+/// tie and the graph collapses onto them.
 fn ranked<'a>(
     base: &str,
     mine: &BTreeSet<String>,
@@ -579,11 +519,8 @@ fn ranked<'a>(
     scored
 }
 
-/// The live peers this atom is most about, at most [`LINK_MAX`] of them.
-///
-/// Similarity decides which and the id breaks a tie, so the same corpus gives
-/// the same neighbourhood on every machine. See `diversified` for why the
-/// most alike eight are not the answer.
+/// The live peers this atom is most about, at most [`LINK_MAX`], chosen by
+/// [`diversified`]; deterministic over a corpus.
 #[must_use]
 pub fn link_targets(
     atom: &Map<String, Value>,
@@ -608,20 +545,9 @@ pub fn link_targets(
     diversified(&candidates, LINK_MAX)
 }
 
-/// Set overlap links on `atom` and rewrite the peers that changed.
-///
-/// A link is symmetric, so adding one to an atom means adding it to the peer,
-/// and dropping one means dropping it on both sides. The returned peers are the
-/// ones the caller has to write back.
-///
-/// Symmetry is also why the degree bound is enforced here rather than only in
-/// [`link_targets`]: an atom chooses at most [`LINK_MAX`] neighbours, but every
-/// atom that chooses the same peer adds an edge to it, so a peer everything is
-/// about would otherwise collect one from every write. A neighbourhood that
-/// grows without bound is not only a cost, it has stopped meaning anything,
-/// because a one-hop walk from it returns most of the workspace. A peer past
-/// the bound is re-selected by the same rule its own links were chosen by, and
-/// each edge that goes is dropped from both ends.
+/// Set overlap links on `atom`, symmetrically, and return the peers to write
+/// back. A peer pushed past [`LINK_MAX`] by incoming edges is re-selected by
+/// the same rule, and each dropped edge goes from both ends.
 pub fn apply_links(
     atom: &mut Map<String, Value>,
     live: &[Map<String, Value>],
@@ -633,9 +559,7 @@ pub fn apply_links(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    // Borrowed, not copied: a write already reads the whole live set, and
-    // copying it as well made what a write costs grow with the pack. Only the
-    // peers that actually change are cloned, at the end.
+    // Borrowed; only the peers that change are cloned.
     let peers: Vec<&Map<String, Value>> = live
         .iter()
         .filter(|other| {
@@ -673,9 +597,7 @@ pub fn apply_links(
         }
     }
 
-    // A peer past the bound keeps the neighbours the rule would have chosen.
-    // An id nothing in the live set answers to is left alone: it is already
-    // half an edge, and [`filter_live_links`] is what drops those.
+    // An id nothing live answers to is left for [`filter_live_links`].
     let mut cut: Vec<(String, String)> = Vec::new();
     for (id, links) in &after {
         if links.len() <= LINK_MAX {
@@ -852,12 +774,8 @@ pub fn close_valid_to(atom: &mut Map<String, Value>, now: &str) {
     atom.insert("valid_to".into(), Value::String(now.to_string()));
 }
 
-/// Set `due_at` from stability and difficulty. `valid_to` is left alone.
-///
-/// A lapse halves stability and nudges difficulty up; a recall grows stability
-/// by how overdue the atom was, so an atom that survived a long gap earns a
-/// longer one. The live set and the review clock are separate questions, which
-/// is why this never touches `valid_to`.
+/// Set `due_at` from stability and difficulty: a lapse halves stability, a
+/// recall grows it by how overdue the atom was. `valid_to` is left alone.
 pub fn schedule_review(
     atom: &mut Map<String, Value>,
     now: &str,
@@ -1177,9 +1095,7 @@ mod tests {
         links_of(atom).into_iter().collect()
     }
 
-    /// Taking the eight most alike would take eight from the larger cluster and
-    /// none from the smaller, because everything in a cluster is alike
-    /// everything else in it. The neighbourhood has to reach both.
+    /// The neighbourhood reaches both clusters, not eight from the larger.
     #[test]
     fn a_neighbourhood_spreads_over_what_an_atom_is_about() {
         let mut subject = about("mine", &["parser", "overlay"]);
