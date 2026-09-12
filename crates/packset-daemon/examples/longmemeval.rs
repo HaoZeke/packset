@@ -344,8 +344,8 @@ fn main() -> anyhow::Result<()> {
     // `PACKSET_LME_DUMP` names a JSONL file: one line a question with the
     // session ids each arm retrieved, for a reader model to answer from.
     // Retrieval and reading are two measurements; this file is the seam.
-    let mut dump = std::env::var_os("PACKSET_LME_DUMP")
-        .map(|p| std::fs::File::create(p).expect("dump file"));
+    let mut dump =
+        std::env::var_os("PACKSET_LME_DUMP").map(|p| std::fs::File::create(p).expect("dump file"));
     let started = std::time::Instant::now();
     let mut overall: Vec<Tally> = arms.iter().map(|_| Tally::new()).collect();
     let mut by_kind: BTreeMap<String, Vec<Tally>> = BTreeMap::new();
