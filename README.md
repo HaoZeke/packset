@@ -36,7 +36,10 @@ $ packset island fusing two ballots     # the memories a task activates
   that withdrew the claim.
 - Every claim has a validity window and a review clock (FSRS,
   doi:10.1145/3534678.3539081). `PACKSET_DECAY=fsrs` lets retrievability
-  scale search.
+  scale search: on a longitudinal corpus where one early claim is kept
+  recalled and three late paraphrases never are, it ranks the kept claim
+  first 0.947 of the time against 0.230 for lexical scoring alone and 0.270
+  for a recency half-life (`examples/forgetting.rs`).
 - Search fuses a prefix-and-edit scan, BM25+ over an index, and a dense
   ballot when an encoder is present. Measured on LoCoMo: 0.736 hit@1 fused
   against 0.752 published; on LongMemEval_S, 0.91 recall@5 at session level
