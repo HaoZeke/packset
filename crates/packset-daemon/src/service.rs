@@ -960,6 +960,92 @@ impl Service {
         Ok(json!({"fired": fired.len(), "changed": changed.len()}))
     }
 
+    /// Consolidate the live set: in the order they were written, every
+    /// claim that replaces an earlier one (`record::replaces`: an explicit
+    /// `supersedes`, a correction sharing an entity, a rewrite, or a new
+    /// object under the same head) closes the earlier one's window and
+    /// names it. What a write does on arrival, run over what is already
+    /// held, for a pack written before the rule or filled by import. With
+    /// `apply` false nothing is written; the pairs are reported.
+    ///
+    /// # Errors
+    ///
+    /// The store's.
+    pub fn consolidate(&self, workspace: &str, apply: bool) -> anyhow::Result<Value> {
+        let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+        let live = self.store.live(workspace)?;
+        let mut atoms: Vec<Record> = live.iter().cloned().collect();
+        atoms.sort_by(|a, b| {
+            a.get("ts")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .cmp(b.get("ts").and_then(Value::as_str).unwrap_or(""))
+        });
+        let now = clock::utcnow();
+        let mut open = vec![true; atoms.len()];
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        for i in 0..atoms.len() {
+            if !record::is_live(&atoms[i], &now) {
+                open[i] = false;
+                continue;
+            }
+            for j in 0..i {
+                if open[j] && record::replaces(&atoms[i], &atoms[j]) {
+                    open[j] = false;
+                    pairs.push((i, j));
+                }
+            }
+        }
+        let closed: Vec<Value> = pairs
+            .iter()
+            .map(|(i, j)| {
+                json!({
+                    "old": atoms[*j].get("id").cloned().unwrap_or(Value::Null),
+                    "old_text": atoms[*j].get("text").cloned().unwrap_or(Value::Null),
+                    "new": atoms[*i].get("id").cloned().unwrap_or(Value::Null),
+                    "new_text": atoms[*i].get("text").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+        if apply && !pairs.is_empty() {
+            let mut touched: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+            for (i, j) in &pairs {
+                record::close_valid_to(&mut atoms[*j], &now);
+                let old_id = atoms[*j]
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let supersedes = atoms[*i]
+                    .entry("supersedes")
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Value::Array(ids) = supersedes {
+                    if !ids.iter().any(|v| v.as_str() == Some(old_id.as_str())) {
+                        ids.push(Value::String(old_id));
+                    }
+                }
+                touched.insert(*i);
+                touched.insert(*j);
+            }
+            let batch: Vec<Record> = touched
+                .into_iter()
+                .map(|k| {
+                    let mut atom = atoms[k].clone();
+                    atom.insert("ts".into(), Value::String(now.clone()));
+                    atom
+                })
+                .collect();
+            self.store.upsert_many(&batch)?;
+            self.project_atoms(&batch);
+        }
+        Ok(json!({
+            "live": live.len(),
+            "closed": closed.len(),
+            "applied": apply,
+            "pairs": closed,
+        }))
+    }
+
     /// The memories a cue activates: the top search hits as seeds, spread
     /// two hops along the links, strongest first. With `fire`, the top
     /// [`FIRE_TOP`] of them fire together.

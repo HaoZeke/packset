@@ -500,6 +500,19 @@ impl PacksetClient {
         Ok(body)
     }
 
+    /// Consolidate the workspace: every claim that replaces an earlier one
+    /// closes it (the write-time rule, run over what is held). `apply`
+    /// false reports the pairs and writes nothing.
+    pub fn consolidate(&self, workspace: &str, apply: bool) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/consolidate", self.base);
+        let body: serde_json::Value = ureq::post(&url)
+            .timeout(timeout())
+            .send_json(serde_json::json!({"workspace": workspace, "apply": apply}))
+            .map_err(|e| refused(&url, e))?
+            .into_json()?;
+        Ok(body)
+    }
+
     /// The memories a cue activates, strongest first; with `fire`, the top
     /// of them fire together.
     pub fn activate(

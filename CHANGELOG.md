@@ -4,6 +4,10 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- `POST /v1/consolidate`: the write-time replacement rule run over the
+  live set in the order it was written, so a pack written before the
+  rule, or filled by import, closes what it should have; `apply` false
+  reports the pairs and writes nothing.
 - A claim replaces an earlier one of the same kind when the two share a
   head and differ in the object (`The default fuse is Borda` to `The
   default fuse is CombMNZ`; `Roy Rogers is married to Dale Evans` to
