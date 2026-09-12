@@ -76,8 +76,18 @@ fn civil_of(days: f64) -> (i64, i64, i64) {
 }
 
 const MONTHS: &[&str] = &[
-    "january", "february", "march", "april", "may", "june", "july", "august",
-    "september", "october", "november", "december",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
 ];
 
 /// The window of days a question points at, when it names a time: an
@@ -148,13 +158,20 @@ fn window_of(question: &str, asked: f64) -> Option<(f64, f64)> {
     }
     // A month, with a day and a year when given.
     for (i, t) in tokens.iter().enumerate() {
-        let Some(m) = MONTHS.iter().position(|name| name == t || (t.len() >= 3 && name.starts_with(t) && t.len() == 3)) else {
+        let Some(m) = MONTHS
+            .iter()
+            .position(|name| name == t || (t.len() >= 3 && name.starts_with(t) && t.len() == 3))
+        else {
             continue;
         };
         let m = m as i64 + 1;
         let day = tokens
             .get(i + 1)
-            .and_then(|d| d.trim_end_matches(|c: char| c.is_alphabetic()).parse::<i64>().ok())
+            .and_then(|d| {
+                d.trim_end_matches(|c: char| c.is_alphabetic())
+                    .parse::<i64>()
+                    .ok()
+            })
             .filter(|d| (1..=31).contains(d));
         let year = tokens
             .iter()
@@ -166,7 +183,11 @@ fn window_of(question: &str, asked: f64) -> Option<(f64, f64)> {
             Some(d) => (civil_days(year, m, d), civil_days(year, m, d) + 1.0),
             None => {
                 let start = civil_days(year, m, 1);
-                let end = if m == 12 { civil_days(year + 1, 1, 1) } else { civil_days(year, m + 1, 1) };
+                let end = if m == 12 {
+                    civil_days(year + 1, 1, 1)
+                } else {
+                    civil_days(year, m + 1, 1)
+                };
                 (start, end)
             }
         });
@@ -193,7 +214,11 @@ fn windowed(question: &Question, docs: &[Document], fused: &[(usize, f64)]) -> V
     let mut scaled: Vec<(usize, f64)> = fused
         .iter()
         .map(|(i, s)| {
-            let boost = if inside.contains(docs[*i].session.as_str()) { 2.0 } else { 1.0 };
+            let boost = if inside.contains(docs[*i].session.as_str()) {
+                2.0
+            } else {
+                1.0
+            };
             (*i, s * boost)
         })
         .collect();
