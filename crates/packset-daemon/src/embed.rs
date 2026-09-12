@@ -290,12 +290,39 @@ fn slot(query: bool) -> &'static Slot {
 /// Encode one text, or nothing when this seat has no working encoder. A dead
 /// child is replaced once and the text retried.
 #[must_use]
+/// How many query encoders the writer keeps. One encoder answers one query
+/// at a time, so with many agents asking at once the second waits behind
+/// the first; a pool answers them side by side at the cost of one model in
+/// memory per encoder. `PACKSET_EMBED_QUERY_WORKERS`, default 2, floor 1.
+fn query_workers() -> usize {
+    std::env::var("PACKSET_EMBED_QUERY_WORKERS")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .filter(|n: &usize| *n >= 1)
+        .unwrap_or(2)
+}
+
+/// The query encoders: the first one free answers; when all are busy the
+/// caller waits on the first, which keeps every slot warm and none idle.
+fn query_slot() -> &'static Slot {
+    static POOL: OnceLock<Vec<Slot>> = OnceLock::new();
+    let pool = POOL.get_or_init(|| (0..query_workers()).map(|_| Mutex::new(None)).collect());
+    for s in pool {
+        if let Ok(guard) = s.try_lock() {
+            drop(guard);
+            return s;
+        }
+    }
+    &pool[0]
+}
+
 pub fn encode(text: &str, query: bool) -> Option<Vec<f32>> {
     if text.trim().is_empty() {
         return None;
     }
     let binary = binary()?;
-    let mut held = slot(query).lock().ok()?;
+    let chosen = if query { query_slot() } else { slot(false) };
+    let mut held = chosen.lock().ok()?;
     for attempt in 0..2 {
         if held.as_mut().is_none_or(|running| !running.alive()) {
             *held = Encoder::start(&binary, query);
