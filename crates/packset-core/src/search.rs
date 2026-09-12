@@ -1383,7 +1383,7 @@ mod merge_tests {
                 "review": {"last": last, "stability": 1.0}
             })
         };
-        let stale = hit("stale", "2026-01-01T00:00:00.000Z");
+        let stale = hit("stale", "2025-10-01T00:00:00.000Z");
         let fresh = hit("fresh", NOW);
         let ballot = vec![stale, fresh];
         let off = merge_ballots(&[ballot.clone()], 2, &default_panel(), NOW);
