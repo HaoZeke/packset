@@ -1,18 +1,7 @@
-//! The dense projection, driven as a kept process.
-//!
-//! Same arrangement as the search projection next door, for the same reason. A
-//! model and the runtime under it are a native dependency with a download
-//! behind them, and most machines that build the writer will never hold one.
-//! So the encoder is its own binary, an absent one is a supported state, and
-//! every failure here falls back to the scorers the pack already has rather
-//! than to a partial answer.
-//!
-//! Kept rather than spawned, because loading the model costs about a second
-//! and a search cannot pay that. One child per direction, since a question and
-//! a document are encoded differently and the flag is set at startup.
-//!
-//! A vector is a projection and never the store: it is derivable from the
-//! text, so a missing or stale one costs ranking quality and nothing else.
+//! The dense projection as a kept child process (`packset-embed`), one per
+//! direction. An absent encoder is a supported state: every failure falls
+//! back to the lexical scorers. A vector is derivable from the text, never
+//! the store.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -24,11 +13,8 @@ use serde_json::{json, Value};
 /// Environment variables naming the encoder.
 pub const BIN_VARS: &[&str] = &["PACKSET_EMBED"];
 
-/// The encoder this seat would run, if it has one.
-///
-/// The same shape as the search projection's discovery, and deliberately not
-/// the workspace target directory: a seat that builds there names the binary
-/// with `PACKSET_EMBED`.
+/// The encoder binary this seat would run: `PACKSET_EMBED`, else beside the
+/// writer, else on `PATH`.
 #[must_use]
 pub fn binary() -> Option<PathBuf> {
     for var in BIN_VARS {
@@ -119,12 +105,8 @@ impl Encoder {
         })
     }
 
-    /// One question against many candidates, one score each.
-    ///
-    /// The whole pairing goes in one line because the model reads the question
-    /// and a candidate together; sending a candidate at a time would be a
-    /// round trip a candidate for no gain, and the batch is what lets the
-    /// child pack them into one forward pass.
+    /// One question against many candidates in one line, one score each; the
+    /// child packs the batch into one forward pass.
     fn rerank(&mut self, question: &str, candidates: &[String]) -> Option<Vec<f32>> {
         let asked = serde_json::json!({ "id": "q", "q": question, "d": candidates });
         let reply = self.ask_json(&asked.to_string())?;
@@ -305,12 +287,8 @@ fn slot(query: bool) -> &'static Slot {
     }
 }
 
-/// Encode one text, or nothing when this seat has no working encoder.
-///
-/// A child that has died is replaced once and the text retried, because the
-/// common way for one to die is the machine reclaiming memory rather than
-/// anything about the request. A second failure is reported as no encoder,
-/// which is a state every caller already handles.
+/// Encode one text, or nothing when this seat has no working encoder. A dead
+/// child is replaced once and the text retried.
 #[must_use]
 pub fn encode(text: &str, query: bool) -> Option<Vec<f32>> {
     if text.trim().is_empty() {
@@ -352,16 +330,8 @@ fn late_slot() -> &'static Slot {
     LATE.get_or_init(|| Mutex::new(None))
 }
 
-/// Encode one text three ways from one pass: a vector per token, the model's
-/// own pooled vector, and its learned term weights.
-///
-/// A different binary mode rather than a model name, because the shape it
-/// returns is different: a caller that asked for one and got the other would
-/// score nonsense rather than fail. All three come back so a caller can compare
-/// the scorings with the model held fixed, and because the pass has already
-/// been paid for by the time any one of them is wanted. Nothing in the writer
-/// reads this; it exists so the retrieval benchmark can ask which of the three
-/// is the gap.
+/// Encode one text three ways from one pass: a vector per token, the pooled
+/// vector, and learned term weights. Read by the retrieval benchmark only.
 #[must_use]
 pub fn encode_late(text: &str) -> Option<(Vec<Vec<f32>>, Vec<f32>, Sparse)> {
     if text.trim().is_empty() {
@@ -417,30 +387,17 @@ pub fn encode_sparse(text: &str) -> Option<Sparse> {
     None
 }
 
-/// How deep the second stage reads.
-///
-/// Reranking the whole first-stage ranking would cost the whole ranking, and
-/// the point of a two-stage system is that the second one reads few. Twenty is
-/// the deepest cut-off the locomo table scores, so every rank that table
-/// reports is inside the window and nothing below it can be promoted into view.
+/// How deep the second stage reads: the deepest cut-off the locomo table scores.
 pub const RERANK_DEPTH: usize = 20;
 
-/// Whether the live search path should run the second stage.
-///
-/// Off unless asked. The first stage embeds a corpus once and answers every
-/// question from what it stored; a cross-encoder runs a forward pass per
-/// candidate per question. The same three spellings `/v1/search?rerank=`
-/// accepts, so a host env and a query flag cannot disagree about what "on" is.
+/// Whether the live search path runs the second stage by default. Off unless
+/// asked; the same spellings `/v1/search?rerank=` accepts.
 #[must_use]
 pub fn wanted() -> bool {
     flag_on(&std::env::var("PACKSET_RERANK").unwrap_or_default())
 }
 
-/// Whether one request should run the stage.
-///
-/// A query flag overrides the host default so a seat can spend the cost on
-/// one question without restarting. The same three spellings as the other
-/// `/v1` flags; anything else, including empty, is off.
+/// Whether one request runs the stage: the query flag over the host default.
 #[must_use]
 pub fn requested(query: Option<&str>) -> bool {
     match query.map(str::trim).filter(|s| !s.is_empty()) {
@@ -456,12 +413,8 @@ fn flag_on(raw: &str) -> bool {
     )
 }
 
-/// Reorder the head of a ranking by cross-encoder scores.
-///
-/// `scores` must cover the head (`RERANK_DEPTH.min(hits.len())`). A length
-/// mismatch is refused rather than padded, the same way a short child reply is.
-/// The tail keeps its first-stage order. Ties are stable so the first stage
-/// breaks them rather than a sort order nobody chose.
+/// Reorder the head of a ranking by cross-encoder scores. `scores` must cover
+/// `RERANK_DEPTH.min(hits.len())`; the tail keeps its order; ties are stable.
 #[must_use]
 pub fn apply_rerank(hits: &[Value], scores: &[f32]) -> Option<Vec<Value>> {
     let depth = RERANK_DEPTH.min(hits.len());
@@ -479,12 +432,8 @@ pub fn apply_rerank(hits: &[Value], scores: &[f32]) -> Option<Vec<Value>> {
     Some(out)
 }
 
-/// Reorder the top of a ranking by what a cross-encoder makes of it.
-///
-/// The same stage the locomo arm measures and `/v1/search` runs when asked.
-/// An absent or broken reranker is `None` so the caller can leave the ranking
-/// as it was and say so, rather than silently reordering by a stage that did
-/// not run.
+/// Reorder the top of a ranking by a cross-encoder; `None` when there is no
+/// working reranker, so the caller keeps the ranking and says so.
 #[must_use]
 pub fn rerank_hits(question: &str, hits: &[Value]) -> Option<Vec<Value>> {
     if hits.is_empty() {
@@ -510,12 +459,9 @@ fn rerank_slot() -> &'static Slot {
     RERANK.get_or_init(|| Mutex::new(None))
 }
 
-/// Score every candidate against the question with a cross-encoder, which
-/// reads the pair together (doi:10.48550/arXiv.1901.04085). A forward pass per
-/// candidate, so a second stage over a ranking, not a scorer over a pack. Not
-/// the panel's `rerank`, which is diversification.
-///
-/// Scores come back in the caller's order: a ballot, not a decision.
+/// Cross-encoder scores for every candidate against the question
+/// (doi:10.48550/arXiv.1901.04085), in the caller's order. Not the panel's
+/// `rerank`, which is diversification.
 #[must_use]
 pub fn rerank(question: &str, candidates: &[String]) -> Option<Vec<f32>> {
     if question.trim().is_empty() {
@@ -574,13 +520,7 @@ mod tests {
         assert!(encode("   ", true).is_none());
     }
 
-    /// A question the first stage answered with nothing costs no model call
-    /// and is not an error.
-    ///
-    /// The two are different answers and the caller acts on them differently:
-    /// an empty ballot leaves the ranking alone, and `None` means there is no
-    /// reranker, which the arm reports rather than silently reordering by a
-    /// stage that did not run.
+    /// No candidates is an empty ballot, not a missing reranker.
     #[test]
     fn nothing_to_rerank_is_an_empty_ballot_and_not_a_failure() {
         assert_eq!(rerank("which search tool", &[]), Some(Vec::new()));
@@ -590,11 +530,7 @@ mod tests {
         assert!(rerank("   ", &["a candidate".to_string()]).is_none());
     }
 
-    /// A reply that scores fewer candidates than were asked about is refused.
-    ///
-    /// Padding it would score the tail as zero, which reads as a candidate the
-    /// model rejected rather than one it never saw. The two are indistinguishable
-    /// downstream, which is what makes the short reply worth refusing here.
+    /// A short reply is refused, not padded with zeros.
     #[test]
     fn a_short_reply_is_a_mismatch_rather_than_a_ranking() {
         let Ok(mut child) = Command::new("cat")
@@ -686,10 +622,7 @@ mod tests {
         assert_eq!(rerank_hits("which search tool", &[]), Some(Vec::new()));
     }
 
-    /// A stub child that scores later candidates higher, then apply_rerank.
-    ///
-    /// This is the protocol `/v1/search` and the locomo arm share, without
-    /// loading a model.
+    /// A stub child that scores later candidates higher, then `apply_rerank`.
     #[test]
     fn a_child_that_scores_the_tail_first_reorders_the_head() {
         let script =
