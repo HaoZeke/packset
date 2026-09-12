@@ -73,7 +73,7 @@ writer's environment, not in a client:
 |---+---+---|
 | =PACKSET_FUSE= | =combmnz=, =combsum=, =rrf=, =borda=, =dowdall=, =copeland=, =schulze=, =ranked-pairs=, =kemeny= | =combmnz= |
 | =PACKSET_DIVERSIFY= | =mmr=, =dpp=, =none= | =mmr= |
-| =PACKSET_DECAY= | =off=, =on=, =fsrs= | =off= |
+| =PACKSET_DECAY= | =off=, =on=, =fsrs= | =fsrs= |
 
 =fsrs= scales a score by the claim's retrievability from its review clock;
 =on= is a fourteen-day half-life on age. [[file:explanation.org][Explanation]]

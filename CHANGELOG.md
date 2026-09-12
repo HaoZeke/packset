@@ -2,6 +2,12 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
+## Unreleased
+
+- The decay slot defaults to `fsrs`: retrievability from the review clock,
+  floored at 0.25, cards exempt. `PACKSET_DECAY=off` turns it off. On a
+  corpus with no review history the slot changes nothing.
+
 ## 0.4.0 (2026-09-12)
 
 - `PacksetClient::with_workspace` pins the workspace ahead of

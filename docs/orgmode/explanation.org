@@ -77,7 +77,7 @@ schedules for is the best replicated result in the memory literature
 replicates (doi:10.1371/journal.pone.0120644).
 
 Two consequences. =due= lists what a seat is about to forget, and a
-sitting starts by reading and grading it. With =PACKSET_DECAY=fsrs= the
+sitting starts by reading and grading it. By default (=PACKSET_DECAY=fsrs=) the
 same =R= scales a search score, so an unreviewed claim sinks without
 vanishing: it floors at a quarter of its weight, and a claim nothing else
 answers is still found. Trust rows and cards are exempt; they are weighed,

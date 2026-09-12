@@ -56,7 +56,7 @@ $ packset grade 3f9c... demo
 #+end_src
 
 A recalled claim comes back later; =--lapsed= brings it back sooner. With
-=PACKSET_DECAY=fsrs= on the writer, a claim you have not reviewed also sinks
+By default a claim you have not reviewed also sinks
 in the ranking as its retrievability falls.
 
 * 5. Hand the pack over
