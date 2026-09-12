@@ -4,6 +4,10 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- The timeline reading measured against the raw prompt (350 questions,
+  four types, 7B reader): 0.420 against 0.431 overall, temporal reasoning
+  0.339 against 0.315, multi-session 0.331 against 0.372. Within noise and
+  not a lever for this reader; kept as an option.
 - Test-time learning on LoCoMo: the dump carries the fused list with
   scores, and `scripts/longmemeval_qa.py --learn fsrs` answers each
   conversation's questions in order, grades the turns the reader was

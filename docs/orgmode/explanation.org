@@ -82,9 +82,18 @@ the parser reads; on temporal-reasoning questions hit@1 moves from 0.811
 to 0.835 and recall@5 from 0.899 to 0.878, the rest are unchanged. Most
 temporal questions in this benchmark ask how long after one event another
 came, which names no time to window on; there the work is the reader's,
-and the answer-accuracy harness hands it the seat's reading of time
+and the answer-accuracy harness can hand it the seat's reading of time
 (every session's distance from the question in days, and the supersession
-rule) rather than raw timestamps.
+rule) rather than raw timestamps. Measured against the raw prompt on the
+same 350 questions of the four types the framing is for, with the 7B
+reader: 0.420 against 0.431 overall; temporal reasoning 0.339 against
+0.315, three questions gained; multi-session 0.331 against 0.372, five
+lost; knowledge-update 0.778 against 0.792; preference 0.267 against
+0.300. Within noise for this reader and not a lever: the arithmetic the
+temporal questions ask for is the reader's, and a small reader does not
+do it whether the distances are marked or not. The framing stays as an
+option (`--no-timeline` is the benchmark's own prompt) and the rows are
+in the reproduction package.
 
 On LoCoMo at turn granularity, where the unit is the dialogue turn the
 benchmark marks as evidence, the fused panel finds an evidence turn first
