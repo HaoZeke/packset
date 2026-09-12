@@ -361,10 +361,12 @@ impl PacksetClient {
     /// request's or a body that is not JSON.
     pub fn delete_atom(&self, workspace: &str, id: &str) -> Result<serde_json::Value, Error> {
         let url = format!("{}/v1/atoms/delete", self.base);
-        let resp = match ureq::post(&url).timeout(TIMEOUT).send_json(serde_json::json!({
-            "workspace": workspace,
-            "id": id,
-        })) {
+        let resp = match ureq::post(&url)
+            .timeout(TIMEOUT)
+            .send_json(serde_json::json!({
+                "workspace": workspace,
+                "id": id,
+            })) {
             Ok(resp) => resp,
             Err(ureq::Error::Status(404, _)) => {
                 return Err(Error::Bad(format!("no atom {id}")));
@@ -372,6 +374,26 @@ impl PacksetClient {
             Err(e) => return Err(refused(&url, e)),
         };
         Ok(resp.into_json()?)
+    }
+
+    /// Move one atom along the review clock: recalled, or lapsed.
+    pub fn grade(
+        &self,
+        workspace: &str,
+        id: &str,
+        recalled: bool,
+    ) -> Result<serde_json::Value, Error> {
+        let url = format!("{}/v1/grade", self.base);
+        let body: serde_json::Value = ureq::post(&url)
+            .timeout(TIMEOUT)
+            .send_json(serde_json::json!({
+                "workspace": workspace,
+                "id": id,
+                "recalled": recalled,
+            }))
+            .map_err(|e| refused(&url, e))?
+            .into_json()?;
+        Ok(body)
     }
 
     pub fn post_atom(&self, atom: &serde_json::Value) -> Result<serde_json::Value, Error> {
