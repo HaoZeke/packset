@@ -34,7 +34,10 @@ pub type Record = Map<String, Value>;
 type Snapshot = (u64, Vec<Record>, Arc<Vec<Record>>);
 
 /// A workspace's live atoms and the index over them, at one generation.
-type Searchable = (u64, Arc<Vec<Record>>, Arc<Index>);
+/// One generation's snapshot, its inverted index, and the tokens the index
+/// was built from. The tokens stay because the scan scores by them too, and
+/// tokenising the pack again per question was most of what the scan cost.
+type Searchable = (u64, Arc<Vec<Record>>, Arc<Index>, Arc<Vec<Vec<String>>>);
 
 /// The key for one atom.
 #[must_use]
@@ -302,20 +305,25 @@ impl Store {
     /// # Errors
     ///
     /// Fails when the scan does.
-    pub fn searchable(&self, workspace: &str) -> anyhow::Result<(Arc<Vec<Record>>, Arc<Index>)> {
+    pub fn searchable(
+        &self,
+        workspace: &str,
+    ) -> anyhow::Result<(Arc<Vec<Record>>, Arc<Index>, Arc<Vec<Vec<String>>>)> {
         let generation = self.generation.load(Ordering::Acquire);
         if let Ok(cache) = self.terms.read() {
-            if let Some((seen, atoms, index)) = cache.get(workspace) {
+            if let Some((seen, atoms, index, documents)) = cache.get(workspace) {
                 if *seen == generation {
-                    return Ok((Arc::clone(atoms), Arc::clone(index)));
+                    return Ok((Arc::clone(atoms), Arc::clone(index), Arc::clone(documents)));
                 }
             }
         }
         let atoms = self.live(workspace)?;
-        let documents: Vec<Vec<String>> = atoms
-            .iter()
-            .map(packset_core::search::atom_tokens)
-            .collect();
+        let documents: Arc<Vec<Vec<String>>> = Arc::new(
+            atoms
+                .iter()
+                .map(packset_core::search::atom_tokens)
+                .collect(),
+        );
         let index = Arc::new(Index::build(documents.iter().map(Vec::as_slice)));
         // Same rule as the snapshot: cached only if nothing committed while
         // this was built, since an index over a superseded pack served under
@@ -324,11 +332,16 @@ impl Store {
             if let Ok(mut cache) = self.terms.write() {
                 cache.insert(
                     workspace.to_string(),
-                    (generation, Arc::clone(&atoms), Arc::clone(&index)),
+                    (
+                        generation,
+                        Arc::clone(&atoms),
+                        Arc::clone(&index),
+                        Arc::clone(&documents),
+                    ),
                 );
             }
         }
-        Ok((atoms, index))
+        Ok((atoms, index, documents))
     }
 
     /// The atoms that were live at `at`, including ones whose window later closed.

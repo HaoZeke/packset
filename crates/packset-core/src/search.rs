@@ -219,7 +219,13 @@ pub fn recency(ts: Option<&str>, now: &str) -> f64 {
 /// The best each query token can do against the text, summed.
 #[must_use]
 pub fn text_score(query_tokens: &[String], text: &str) -> f64 {
-    let hay = tokens(text);
+    tokens_score(query_tokens, &tokens(text))
+}
+
+/// [`text_score`] over a text already tokenised: the best each query token
+/// does against any token of the text, summed.
+#[must_use]
+pub fn tokens_score(query_tokens: &[String], hay: &[String]) -> f64 {
     if hay.is_empty() {
         return 0.0;
     }
@@ -409,6 +415,26 @@ pub struct Ask<'a> {
 /// The prefix-and-one-edit scan over a whole pack.
 #[must_use]
 pub fn search_linear(ask: &Ask<'_>) -> Vec<Value> {
+    let documents: Vec<Vec<String>> = ask.atoms.iter().map(atom_tokens).collect();
+    search_linear_with(ask, &documents)
+}
+
+/// [`search_linear`] over atoms the caller has already tokenised.
+///
+/// The scan tokenised every atom again on every question, lowercasing and
+/// stemming a text the writer had already tokenised to build the inverted
+/// index a moment before, and formatting the entities into it first. That
+/// was most of what the scan cost: about five microseconds an atom, twenty
+/// times the indexed scorer at ten thousand atoms. The tokens an atom scores
+/// by are the ones [`atom_tokens`] returns, text and entities, which is the
+/// same set a caller has in hand from building the index, so the writer
+/// passes those and the scan pays for the comparison alone.
+///
+/// `documents[i]` is the token list for `ask.atoms[i]`; an atom past the end
+/// of `documents` is tokenised here, so a caller with a partial list still
+/// gets the whole answer.
+#[must_use]
+pub fn search_linear_with(ask: &Ask<'_>, documents: &[Vec<String>]) -> Vec<Value> {
     let Ask {
         user,
         memory,
@@ -427,37 +453,36 @@ pub fn search_linear(ask: &Ask<'_>) -> Vec<Value> {
     let mut hits = file_hits("user", user, &qtoks, 0.5);
     hits.extend(file_hits("memory", memory, &qtoks, 0.25));
 
-    for atom in atoms {
+    let mut best = TopK::new(limit);
+    let mut owned: Vec<String>;
+    for (ordinal, atom) in atoms.iter().enumerate() {
         if !record::is_live_at(atom, now) || !atom_in_set(atom, set) {
             continue;
         }
-        let entities: Vec<String> = atom
-            .get("entities")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .map(|i| i.as_str().map_or_else(|| i.to_string(), str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let text = atom.get("text").and_then(Value::as_str).unwrap_or("");
-        let blob = format!("{text} {}", entities.join(" "));
-        let relevance = text_score(&qtoks, &blob);
+        let hay: &[String] = match documents.get(ordinal) {
+            Some(tokens) => tokens,
+            None => {
+                owned = atom_tokens(atom);
+                &owned
+            }
+        };
+        let relevance = tokens_score(&qtoks, hay);
         let due = record::is_due(atom, now);
         if relevance == 0.0 && !due {
             continue;
         }
         let ts = atom.get("ts").and_then(Value::as_str);
-        hits.push(json!({
-            "field": "atom",
-            "id": atom.get("id").cloned().unwrap_or(Value::Null),
-            "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
-            "text": text,
-            "due_at": atom.get("due_at").cloned().unwrap_or(Value::Null),
-            "score": relevance + 0.1 * trust_of(atom) + recency(ts, now)
+        best.offer(Candidate {
+            score: relevance
+                + 0.1 * trust_of(atom)
+                + recency(ts, now)
                 + if due { 2.0 } else { 0.0 },
-        }));
+            id: id_of(atom),
+            ordinal,
+        });
+    }
+    for candidate in best.into_sorted() {
+        hits.push(atom_hit(&atoms[candidate.ordinal], candidate.score));
     }
     sort_hits(&mut hits);
     hits.truncate(limit);
@@ -840,6 +865,41 @@ pub fn front_due(due: Vec<Value>, ranked: Vec<Value>, limit: usize) -> Vec<Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Scoring from the tokens the index was built from gives the answer the
+    /// scan gave when it tokenised every atom itself, entities included.
+    #[test]
+    fn the_scan_over_cached_tokens_is_the_scan() {
+        let atoms: Vec<Record> = (0..60)
+            .map(|n| {
+                json!({
+                    "id": format!("atom-{n:02}"),
+                    "kind": "conclusion",
+                    "text": if n % 3 == 0 { "prefer ripgrep for search" } else { "the lease token holder" },
+                    "entities": if n % 4 == 0 { json!(["ripgrep", "Search-Tool"]) } else { json!([]) },
+                    "ts": "2026-09-10T00:00:00Z",
+                })
+                .as_object()
+                .expect("object")
+                .clone()
+            })
+            .collect();
+        let asked = Ask {
+            user: "",
+            memory: "",
+            atoms: &atoms,
+            query: "ripgrp search tool",
+            limit: 15,
+            set: None,
+            now: "2026-09-10T00:00:00Z",
+        };
+        let fresh = search_linear(&asked);
+        let documents: Vec<Vec<String>> = atoms.iter().map(atom_tokens).collect();
+        assert_eq!(search_linear_with(&asked, &documents), fresh);
+        // A partial token list falls back per atom rather than skipping them.
+        assert_eq!(search_linear_with(&asked, &documents[..7]), fresh);
+        assert!(!fresh.is_empty());
+    }
 
     /// Keeping the k best before building anything gives the same list, in
     /// the same order, as building everything and sorting it. Ties are the

@@ -643,17 +643,19 @@ impl Service {
         };
         let now = as_of.clone().unwrap_or_else(clock::utcnow);
         let dated = as_of.as_deref().map(|at| self.store.as_of(workspace, at));
-        let (atoms, index) = match dated {
+        let (atoms, index, documents) = match dated {
             Some(scan) => {
                 let atoms = std::sync::Arc::new(scan?);
-                let documents: Vec<Vec<String>> = atoms
-                    .iter()
-                    .map(packset_core::search::atom_tokens)
-                    .collect();
+                let documents: std::sync::Arc<Vec<Vec<String>>> = std::sync::Arc::new(
+                    atoms
+                        .iter()
+                        .map(packset_core::search::atom_tokens)
+                        .collect(),
+                );
                 let index = std::sync::Arc::new(packset_core::bm25::Index::build(
                     documents.iter().map(Vec::as_slice),
                 ));
-                (atoms, index)
+                (atoms, index, documents)
             }
             None => self.store.searchable(workspace)?,
         };
@@ -725,7 +727,7 @@ impl Service {
                 )
             }
             None => {
-                let lexical = packset_core::search::search_linear(&ask);
+                let lexical = packset_core::search::search_linear_with(&ask, &documents);
                 let mut ballots = vec![lexical, ranked_terms];
                 ballots.extend(ranked_meaning);
                 let engine = if ballots.len() > 2 { "dense" } else { "linear" };
