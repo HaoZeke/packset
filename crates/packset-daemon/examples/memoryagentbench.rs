@@ -122,6 +122,7 @@ fn rows(dir: &Path, split: &str) -> anyhow::Result<Vec<Row>> {
             .unwrap_or_default();
         let kinds = strings(&meta["question_types"]);
         let dates = strings(&meta["question_dates"]);
+        let docs = documents(&source, context);
         out.push(Row {
             split: split.to_string(),
             nth,
@@ -130,7 +131,7 @@ fn rows(dir: &Path, split: &str) -> anyhow::Result<Vec<Row>> {
             answers,
             kinds,
             dates,
-            docs: documents(&source, context),
+            docs,
         });
     }
     Ok(out)
