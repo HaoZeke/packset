@@ -249,6 +249,39 @@ on the writer, or `?rerank=1` on one request, reorders the top 20 of the fused
 list the way the table measured. The locomo cost is why it stays off. It is
 not what the residual to the published number is made of.
 
+## What a question costs
+
+Nothing in this repository had been timed. `cargo bench -p packset-core`
+(criterion, `crates/packset-core/benches/retrieval.rs`) now measures the three
+things a search pays: building the inverted index when the pack changed,
+scoring one question against it, and fusing the ballots. On a shared 32-core
+node, one twelve-word question:
+
+| atoms | index build | BM25+ question, before | after | the pack's own scan |
+|---|---|---|---|---|
+| 1,000 | 1.2 ms | 1.7 ms | **0.23 ms** | 3.8 ms |
+| 10,000 | 13 ms | 41 ms | **2.3 ms** | 55 ms |
+| 100,000 | 95 ms | 438 ms | **53 ms** | 795 ms |
+
+"Before" is what the first measurement found: the scorer built a JSON hit for
+every atom carrying a query term, sorted them all, and kept twenty. For a
+common term that is most of the pack, so a question cost the whole pack in
+allocations after an inverted index had found the candidates in a fraction of
+that. A bounded heap now keeps the k best as a score, an id and an ordinal,
+ordered the way the final sort orders, and the JSON is built for the survivors
+only; a test forces ties and checks the two agree exactly for every k.
+
+Fusing two ballots of twenty costs 79 µs with no diversifier, 655 µs under
+DPP and 917 µs under the shipped MMR. The diversifier is ten times the fusion
+and measured no benefit on the benchmark above, which cannot see what it is
+for. One millisecond a question is acceptable for a seat; the number is here
+so that stays a decision rather than an assumption.
+
+The pack's own scorer, the prefix-and-one-edit scan that makes a typo still
+find an atom, is linear in the pack by design and costs about 5 µs an atom.
+At ten thousand atoms it is the slowest ballot by twenty times and the next
+thing to measure into.
+
 ## What did not work
 
 Pseudo-relevance feedback, and the way it fails is the useful part.
