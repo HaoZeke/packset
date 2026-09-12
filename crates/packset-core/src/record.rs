@@ -971,22 +971,38 @@ mod tests {
     #[test]
     fn predictions_and_rules_are_checked() {
         let ok = |v: Value| validate(&mut atom(v)).is_ok();
-        assert!(ok(json!({"kind": "prediction", "text": "a expects ship.", "workspace": "w",
-            "issue": "p-1", "agent": "a", "expect": "ship"})));
-        assert!(ok(json!({"kind": "prediction", "text": "a expects ship.", "workspace": "w",
-            "issue": "p-1", "agent": "a", "expect": {"ship": 0.7, "hold": 0.3}})));
-        assert!(!ok(json!({"kind": "prediction", "text": "a expects ship.", "workspace": "w",
-            "issue": "p-1", "agent": "a"})));
-        assert!(!ok(json!({"kind": "prediction", "text": "a expects ship.", "workspace": "w",
-            "agent": "a", "expect": "ship"})));
-        assert!(ok(json!({"kind": "rule", "text": "Never outside tmp.", "workspace": "w",
-            "pattern": "rm -rf *", "verdict": "deny"})));
-        assert!(ok(json!({"kind": "rule", "text": "Ask first.", "workspace": "w",
-            "pattern": "git push*", "verdict": "ask"})));
-        assert!(!ok(json!({"kind": "rule", "text": "Ask first.", "workspace": "w",
-            "pattern": "rm *", "verdict": "allow"})));
-        assert!(!ok(json!({"kind": "rule", "text": "Ask first.", "workspace": "w",
-            "verdict": "deny"})));
+        assert!(ok(
+            json!({"kind": "prediction", "text": "a expects ship.", "workspace": "w",
+            "issue": "p-1", "agent": "a", "expect": "ship"})
+        ));
+        assert!(ok(
+            json!({"kind": "prediction", "text": "a expects ship.", "workspace": "w",
+            "issue": "p-1", "agent": "a", "expect": {"ship": 0.7, "hold": 0.3}})
+        ));
+        assert!(!ok(
+            json!({"kind": "prediction", "text": "a expects ship.", "workspace": "w",
+            "issue": "p-1", "agent": "a"})
+        ));
+        assert!(!ok(
+            json!({"kind": "prediction", "text": "a expects ship.", "workspace": "w",
+            "agent": "a", "expect": "ship"})
+        ));
+        assert!(ok(
+            json!({"kind": "rule", "text": "Never outside tmp.", "workspace": "w",
+            "pattern": "rm -rf *", "verdict": "deny"})
+        ));
+        assert!(ok(
+            json!({"kind": "rule", "text": "Ask first.", "workspace": "w",
+            "pattern": "git push*", "verdict": "ask"})
+        ));
+        assert!(!ok(
+            json!({"kind": "rule", "text": "Ask first.", "workspace": "w",
+            "pattern": "rm *", "verdict": "allow"})
+        ));
+        assert!(!ok(
+            json!({"kind": "rule", "text": "Ask first.", "workspace": "w",
+            "verdict": "deny"})
+        ));
     }
     use serde_json::json;
 
