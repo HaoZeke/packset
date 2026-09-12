@@ -4,6 +4,14 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- A MemoryAgentBench harness (`examples/memoryagentbench.rs`): the
+  accurate-retrieval and conflict-resolution records chunked as the
+  benchmark chunks them (facts one a document), lexical, dense and fused
+  arms, and for fact lists a latest-first arm and a live arm in which a
+  later fact with the same head closes the earlier one, the pack's
+  supersession stated as a rule. `scripts/longmemeval_qa.py --bench mab`
+  reads the dump with positions marked and scores by substring match, the
+  LongMemEval rows by their judge.
 - The LongMemEval harness gains an island arm: sessions link to their five
   nearest by dense cosine, the fused top ten seed the writer's own
   spreading activation over that graph, and the cluster is ranked. The

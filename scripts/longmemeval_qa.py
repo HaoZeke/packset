@@ -45,6 +45,53 @@ SESSION_TIMED = (
 )
 
 
+# MemoryAgentBench: the retrieved chunks or facts of one record, each with
+# its position, and the pack's rule that a later position supersedes an
+# earlier one on the same fact. The answer is scored by substring match
+# after normalisation, as the benchmark scores it; its LongMemEval rows are
+# judged with LongMemEval's prompts.
+MAB_READ = (
+    "Below are memory entries retrieved from one long record for a question. Each "
+    "entry is labelled with its position in the record; a later position supersedes "
+    "an earlier one on the same fact.\n\n{}\n{}Question: {}\nAnswer with the answer "
+    "only, no explanation.\nAnswer:"
+)
+MAB_ENTRY = "[position {}] {}\n"
+
+
+def normal(text):
+    return " ".join("".join(c if c.isalnum() else " " for c in text.lower()).split())
+
+
+def substring_match(answers, response):
+    r = normal(response)
+    return any(normal(a) and normal(a) in r for a in answers)
+
+
+def mab_rows(rows, chunks_dir, arm, top):
+    """One prompt per question from the harness's dump and chunk store."""
+    stores = {}
+    for r in rows:
+        key = f"{r['split']}-{r['row']}"
+        if key not in stores:
+            with open(os.path.join(chunks_dir, key + ".json")) as f:
+                stores[key] = json.load(f)
+        chunks = stores[key]
+        picked = r["retrieved"].get(arm)
+        if picked is None:
+            continue
+        entries = "".join(MAB_ENTRY.format(i, chunks[i]) for i in picked[:top])
+        date = f"Current Date: {r['question_date']}\n" if r.get("question_date") else ""
+        yield {
+            "question_id": f"{key}-{r['question_index']}",
+            "question_type": r["source"],
+            "lme_type": r.get("question_type", ""),
+            "question": r["question"],
+            "answers": r["answers"],
+            "prompt": MAB_READ.format(entries, date, r["question"]),
+        }
+
+
 # The reader's context, in characters: about four per token, leaving room
 # for the prompt and the answer under a 32k-token slot. LongMemEval trims
 # its history the same way (max_retrieval_length); here the longest
@@ -192,12 +239,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dataset")
     ap.add_argument("dump")
-    ap.add_argument("--bench", default="longmemeval", choices=["longmemeval", "locomo"])
+    ap.add_argument("--bench", default="longmemeval", choices=["longmemeval", "locomo", "mab"])
     ap.add_argument("--arm", default="sessions fused")
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--types", default="", help="comma list of question types to keep")
     ap.add_argument("--no-timeline", action="store_true", help="raw dates only, the benchmark's own reading prompt")
+    ap.add_argument("--chunks", default="", help="MemoryAgentBench chunk store (PACKSET_MAB_CHUNKS)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", default="")
     a = ap.parse_args()
@@ -205,13 +253,41 @@ def main():
     key = os.environ.get("QA_API_KEY", "")
     reader = os.environ.get("QA_MODEL", "")
     judge = os.environ.get("QA_JUDGE_MODEL", reader)
-    raw = json.load(open(a.dataset))
+    raw = json.load(open(a.dataset)) if a.bench != "mab" else None
     rows = [json.loads(l) for l in open(a.dump) if l.strip()]
     if a.types:
         keep = {t.strip() for t in a.types.split(",") if t.strip()}
         rows = [r for r in rows if str(r.get("question_type", r.get("category", ""))) in keep]
     if a.limit:
         rows = rows[: a.limit]
+    if a.bench == "mab":
+        items = list(mab_rows(rows, a.chunks, a.arm, a.top))
+
+        def one_mab(item):
+            try:
+                response = chat(base, key, reader, item["prompt"][:HISTORY_CHARS], 256)
+                if item["question_type"].startswith("longmemeval") and item["lme_type"]:
+                    verdict = chat(
+                        base, key, judge,
+                        judge_prompt(item["lme_type"], item["question"], item["answers"][0], response), 8,
+                    )
+                    correct = "yes" in verdict.lower()
+                else:
+                    correct = substring_match(item["answers"], response)
+            except Exception as e:
+                return {"question_id": item["question_id"], "question_type": item["question_type"],
+                        "correct": False, "response": f"[error: {e}]"}
+            return {"question_id": item["question_id"], "question_type": item["question_type"],
+                    "correct": correct, "response": response}
+
+        results = []
+        with cf.ThreadPoolExecutor(a.workers) as pool:
+            for n, r in enumerate(pool.map(one_mab, items), 1):
+                results.append(r)
+                if n % 100 == 0:
+                    print(f"{n} questions", file=sys.stderr)
+        report(results, a, reader, judge, "MemoryAgentBench")
+        return
     if a.bench == "locomo":
         items = list(locomo_rows(raw, rows, a.arm, a.top))
 
