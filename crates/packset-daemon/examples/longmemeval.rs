@@ -11,9 +11,11 @@
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Write};
 
 use packset_core::bm25::Index;
-use packset_core::search::{atom_tokens, Record};
+use packset_core::panel::Panel;
+use packset_core::search::{atom_tokens, cosine, merge_ballots, Record};
 use serde_json::{json, Value};
 
 const CUTOFFS: &[usize] = &[1, 5, 10];
@@ -82,24 +84,36 @@ fn tokens(text: &str) -> Vec<String> {
     atom_tokens(&record)
 }
 
-/// Documents for one protocol: each with the session it belongs to.
-fn documents(question: &Question, protocol: &str) -> Vec<(String, Vec<String>)> {
+/// One document: the session it belongs to, its text, its tokens.
+struct Document {
+    session: String,
+    text: String,
+    tokens: Vec<String>,
+}
+
+/// Documents for one protocol.
+fn documents(question: &Question, protocol: &str) -> Vec<Document> {
+    let doc = |sid: &str, text: String| Document {
+        session: sid.to_string(),
+        tokens: tokens(&text),
+        text,
+    };
     let mut out = Vec::new();
     for (sid, turns) in &question.sessions {
         match protocol {
             "turns" => {
                 for turn in turns {
-                    out.push((sid.clone(), tokens(turn)));
+                    out.push(doc(sid, turn.clone()));
                 }
             }
             "windows" => {
                 if turns.len() <= WINDOW {
-                    out.push((sid.clone(), tokens(&turns.join("\n"))));
+                    out.push(doc(sid, turns.join("\n")));
                 } else {
                     let mut start = 0;
                     while start < turns.len() {
                         let end = (start + WINDOW).min(turns.len());
-                        out.push((sid.clone(), tokens(&turns[start..end].join("\n"))));
+                        out.push(doc(sid, turns[start..end].join("\n")));
                         if end == turns.len() {
                             break;
                         }
@@ -107,31 +121,139 @@ fn documents(question: &Question, protocol: &str) -> Vec<(String, Vec<String>)> 
                     }
                 }
             }
-            _ => out.push((sid.clone(), tokens(&turns.join("\n")))),
+            _ => out.push(doc(sid, turns.join("\n"))),
         }
     }
     out
 }
 
-/// Sessions in the order their best document ranks.
-fn ranked_sessions(question: &Question, protocol: &str) -> Vec<String> {
-    let docs = documents(question, protocol);
-    let index = Index::build(docs.iter().map(|(_, t)| t.as_slice()));
+/// BM25+ over the documents: ordinal and score, best first.
+fn lexical(question: &Question, docs: &[Document]) -> Vec<(usize, f64)> {
+    let index = Index::build(docs.iter().map(|d| d.tokens.as_slice()));
     let mut scored = index.score(&tokens(&question.text));
     scored.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
+    scored
+}
+
+/// Cosine over document vectors: ordinal and score, best first.
+fn dense(query: &[f32], vectors: &[Vec<f32>]) -> Vec<(usize, f64)> {
+    let mut scored: Vec<(usize, f64)> = vectors
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(i, v)| (i, cosine(query, v)))
+        .filter(|(_, s)| *s > 0.0)
+        .collect();
+    scored.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    scored
+}
+
+/// Two rankings fused by the shipped panel (CombMNZ), as ordinals.
+fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)], limit: usize) -> Vec<usize> {
+    let ballot = |ranked: &[(usize, f64)]| -> Vec<Value> {
+        ranked
+            .iter()
+            .take(limit)
+            .map(|(i, s)| json!({"field": "atom", "id": i.to_string(), "text": "", "score": s}))
+            .collect()
+    };
+    let panel = Panel::named("combmnz", "none", "off").expect("a shipped panel");
+    let now = packset_core::clock::utcnow();
+    merge_ballots(&[ballot(lexical), ballot(dense)], limit, &panel, &now)
+        .iter()
+        .filter_map(|hit| hit["id"].as_str()?.parse().ok())
+        .collect()
+}
+
+/// Sessions in the order their best document ranks.
+fn collapse(order: impl Iterator<Item = usize>, docs: &[Document]) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
-    for (ordinal, _) in scored {
-        let sid = &docs[ordinal].0;
+    for ordinal in order {
+        let sid = &docs[ordinal].session;
         if seen.insert(sid.clone()) {
             out.push(sid.clone());
         }
     }
     out
+}
+
+/// How many documents each ballot hands the fuse.
+const FUSE_DEPTH: usize = 50;
+
+fn cache_dir() -> Option<std::path::PathBuf> {
+    let dir = std::path::PathBuf::from(std::env::var_os("PACKSET_LME_CACHE")?);
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+fn write_rows(path: &std::path::Path, rows: &[Vec<f32>]) {
+    let Ok(mut file) = std::fs::File::create(path) else {
+        return;
+    };
+    let _ = file.write_all(&(rows.len() as u64).to_le_bytes());
+    for row in rows {
+        let _ = file.write_all(&(row.len() as u64).to_le_bytes());
+        for v in row {
+            let _ = file.write_all(&v.to_le_bytes());
+        }
+    }
+}
+
+fn read_rows(path: &std::path::Path, expected: usize) -> Option<Vec<Vec<f32>>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let mut at = 0usize;
+    let mut next_u64 = |bytes: &[u8]| -> Option<u64> {
+        let v = u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?);
+        at += 8;
+        Some(v)
+    };
+    let count = next_u64(&bytes)? as usize;
+    if count != expected {
+        return None;
+    }
+    let mut rows = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = next_u64(&bytes)? as usize;
+        let mut row = Vec::with_capacity(len);
+        for _ in 0..len {
+            let v = f32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?);
+            at += 4;
+            row.push(v);
+        }
+        rows.push(row);
+    }
+    Some(rows)
+}
+
+/// Document vectors for one question and protocol, from the cache when the
+/// count matches, else encoded and cached.
+fn vectors(nth: usize, protocol: &str, docs: &[Document]) -> Vec<Vec<f32>> {
+    let model = std::env::var("PACKSET_EMBED_MODEL").unwrap_or_else(|_| "default".into());
+    let file = cache_dir().map(|d| d.join(format!("{model}-{protocol}-q{nth}.bin")));
+    if let Some(rows) = file.as_deref().and_then(|p| read_rows(p, docs.len())) {
+        return rows;
+    }
+    let fresh: Vec<Vec<f32>> = docs
+        .iter()
+        .map(|d| packset_daemon::embed::encode_document(&d.text).unwrap_or_default())
+        .collect();
+    if let Some(path) = file.as_deref() {
+        write_rows(path, &fresh);
+    }
+    fresh
 }
 
 #[derive(Default, Clone)]
@@ -179,6 +301,9 @@ impl Tally {
 
 const PROTOCOLS: &[&str] = &["turns", "windows", "sessions"];
 
+/// The protocols the dense and fused arms run on; turns are too many to encode.
+const DENSE_PROTOCOLS: &[&str] = &["windows", "sessions"];
+
 fn main() -> anyhow::Result<()> {
     let path = std::env::args()
         .nth(1)
@@ -193,17 +318,63 @@ fn main() -> anyhow::Result<()> {
         asked.truncate(cap);
         println!("scoring {} questions, as asked", asked.len());
     }
+    let encoder = packset_daemon::embed::binary().is_some();
+    println!(
+        "encoder: {}",
+        if encoder {
+            "present, dense and fused arms run on windows and sessions"
+        } else {
+            "absent, lexical arms only"
+        }
+    );
+    let mut arms: Vec<String> = PROTOCOLS.iter().map(|p| p.to_string()).collect();
+    if encoder {
+        for p in DENSE_PROTOCOLS {
+            arms.push(format!("{p} dense"));
+            arms.push(format!("{p} fused"));
+        }
+    }
     let started = std::time::Instant::now();
-    let mut overall: Vec<Tally> = PROTOCOLS.iter().map(|_| Tally::new()).collect();
+    let mut overall: Vec<Tally> = arms.iter().map(|_| Tally::new()).collect();
     let mut by_kind: BTreeMap<String, Vec<Tally>> = BTreeMap::new();
-    for question in &asked {
-        for (slot, protocol) in PROTOCOLS.iter().enumerate() {
-            let ranked = ranked_sessions(question, protocol);
-            overall[slot].add(&ranked, &question.answers);
+    for (nth, question) in asked.iter().enumerate() {
+        let mut slot = 0usize;
+        let mut record = |ranked: &[String], slot: usize| {
+            overall[slot].add(ranked, &question.answers);
             by_kind
                 .entry(question.kind.clone())
-                .or_insert_with(|| PROTOCOLS.iter().map(|_| Tally::new()).collect())[slot]
-                .add(&ranked, &question.answers);
+                .or_insert_with(|| arms.iter().map(|_| Tally::new()).collect())[slot]
+                .add(ranked, &question.answers);
+        };
+        let mut kept: BTreeMap<&str, (Vec<Document>, Vec<(usize, f64)>)> = BTreeMap::new();
+        for protocol in PROTOCOLS {
+            let docs = documents(question, protocol);
+            let lex = lexical(question, &docs);
+            record(&collapse(lex.iter().map(|(i, _)| *i), &docs), slot);
+            slot += 1;
+            kept.insert(protocol, (docs, lex));
+        }
+        if encoder {
+            let query = packset_daemon::embed::encode_query(&question.text).unwrap_or_default();
+            for protocol in DENSE_PROTOCOLS {
+                let (docs, lex) = &kept[protocol];
+                let vecs = vectors(nth, protocol, docs);
+                let den = dense(&query, &vecs);
+                record(&collapse(den.iter().map(|(i, _)| *i), docs), slot);
+                slot += 1;
+                record(
+                    &collapse(fused(lex, &den, FUSE_DEPTH).into_iter(), docs),
+                    slot,
+                );
+                slot += 1;
+            }
+        }
+        if (nth + 1) % 50 == 0 {
+            eprintln!(
+                "{} questions, {:.0}s",
+                nth + 1,
+                started.elapsed().as_secs_f64()
+            );
         }
     }
     let header = {
@@ -213,17 +384,17 @@ fn main() -> anyhow::Result<()> {
         }
         h
     };
-    println!("\nLongMemEval_S, BM25+ over three document protocols, session granularity\n");
+    println!("\nLongMemEval_S, session granularity\n");
     println!("{header}");
     println!("|---|---|{}", "---|---|".repeat(CUTOFFS.len()));
-    for (slot, protocol) in PROTOCOLS.iter().enumerate() {
-        println!("{}", overall[slot].row(protocol));
+    for (slot, arm) in arms.iter().enumerate() {
+        println!("{}", overall[slot].row(arm));
     }
     for (kind, tallies) in &by_kind {
         println!("\n{kind}\n\n{header}");
         println!("|---|---|{}", "---|---|".repeat(CUTOFFS.len()));
-        for (slot, protocol) in PROTOCOLS.iter().enumerate() {
-            println!("{}", tallies[slot].row(protocol));
+        for (slot, arm) in arms.iter().enumerate() {
+            println!("{}", tallies[slot].row(arm));
         }
     }
     println!(
