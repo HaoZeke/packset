@@ -45,6 +45,8 @@ pub const KINDS: &[&str] = &[
     "belief",
     "trust",
     "persona",
+    "prediction",
+    "rule",
 ];
 
 /// Whether the claim was stated or inferred.
@@ -224,6 +226,8 @@ pub fn validate(atom: &mut Map<String, Value>) -> Result<(), AtomError> {
     }
     let trust = kind == "trust";
     let persona = kind == "persona";
+    let prediction = kind == "prediction";
+    let rule = kind == "rule";
     let level = atom
         .get("level")
         .and_then(Value::as_str)
@@ -283,10 +287,54 @@ pub fn validate(atom: &mut Map<String, Value>) -> Result<(), AtomError> {
     if persona {
         check_persona(atom)?;
     }
+    if prediction {
+        check_prediction(atom)?;
+    }
+    if rule {
+        check_rule(atom)?;
+    }
 
     let report = prose::refuse(&text, prose::Role::Atom)?;
     atom.insert("prose".into(), prose_value(&report));
     Ok(())
+}
+
+/// A `prediction` atom is one voter's forecast on one issue: `issue`,
+/// `agent`, and `expect`, an option name or an object of option to share.
+/// The surprisingly popular rule reads these beside the ballots.
+fn check_prediction(atom: &Map<String, Value>) -> Result<(), AtomError> {
+    for key in ["issue", "agent"] {
+        match atom.get(key).and_then(Value::as_str).map(str::trim) {
+            Some(v) if !v.is_empty() => {}
+            _ => return Err(AtomError(format!("prediction atom needs {key}"))),
+        }
+    }
+    match atom.get("expect") {
+        Some(Value::String(s)) if !s.trim().is_empty() => Ok(()),
+        Some(Value::Object(map))
+            if !map.is_empty() && map.values().all(|v| v.as_f64().is_some_and(|f| f >= 0.0)) =>
+        {
+            Ok(())
+        }
+        _ => Err(AtomError(
+            "prediction atom: expect is an option or an object of option to share".into(),
+        )),
+    }
+}
+
+/// A `rule` atom is argv law in the pack: `pattern`, a glob over the command
+/// line, and `verdict`, `deny` or `ask`. The text is the reason a reader
+/// sees when the rule fires. Rules are memory too: dated, supersedable,
+/// exported with the rest.
+fn check_rule(atom: &Map<String, Value>) -> Result<(), AtomError> {
+    match atom.get("pattern").and_then(Value::as_str).map(str::trim) {
+        Some(p) if !p.is_empty() => {}
+        _ => return Err(AtomError("rule atom needs a pattern".into())),
+    }
+    match atom.get("verdict").and_then(Value::as_str) {
+        Some("deny" | "ask") => Ok(()),
+        _ => Err(AtomError("rule atom: verdict is deny or ask".into())),
+    }
 }
 
 /// A `persona` atom names a voter and its anchor: `name`, and `anchor` in
@@ -917,6 +965,25 @@ pub fn schedule_review(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A prediction names its issue, agent and forecast; a rule names a
+    /// pattern and a verdict that is deny or ask.
+    #[test]
+    fn predictions_and_rules_are_checked() {
+        use serde_json::json;
+        let ok = |v: serde_json::Value| {
+            let mut atom = v.as_object().unwrap().clone();
+            validate(&mut atom).is_ok()
+        };
+        assert!(ok(json!({"kind": "prediction", "text": "x", "issue": "p-1", "agent": "a", "expect": "ship"})));
+        assert!(ok(json!({"kind": "prediction", "text": "x", "issue": "p-1", "agent": "a", "expect": {"ship": 0.7, "hold": 0.3}})));
+        assert!(!ok(json!({"kind": "prediction", "text": "x", "issue": "p-1", "agent": "a"})));
+        assert!(!ok(json!({"kind": "prediction", "text": "x", "agent": "a", "expect": "ship"})));
+        assert!(ok(json!({"kind": "rule", "text": "never outside tmp", "pattern": "rm -rf *", "verdict": "deny"})));
+        assert!(ok(json!({"kind": "rule", "text": "ask first", "pattern": "git push*", "verdict": "ask"})));
+        assert!(!ok(json!({"kind": "rule", "text": "x", "pattern": "rm *", "verdict": "allow"})));
+        assert!(!ok(json!({"kind": "rule", "text": "x", "verdict": "deny"})));
+    }
     use serde_json::json;
 
     fn atom(value: Value) -> Map<String, Value> {
