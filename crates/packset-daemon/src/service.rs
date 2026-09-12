@@ -205,6 +205,18 @@ impl Service {
         } else if !atom.contains_key("links") {
             atom.insert("links".into(), Value::Array(Vec::new()));
         }
+        // A new claim enters the review clock at once; a trust row is not
+        // recalled, it is weighed.
+        if record::is_live(&atom, &now)
+            && atom.get("kind").and_then(Value::as_str) != Some("trust")
+            && atom
+                .get("due_at")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .is_empty()
+        {
+            record::schedule_review(&mut atom, &now, record::Grade::Initial, None);
+        }
         let mut all = vec![atom.clone()];
         all.append(&mut batch);
         self.store.upsert_many(&all)?;
@@ -1201,6 +1213,22 @@ mod tests {
     }
 
     #[test]
+    fn add_seeds_the_review_clock_except_for_trust() {
+        let (_dir, svc) = service();
+        let stored = svc.add(atom("Reviews open with a check.")).unwrap();
+        let due = stored.get("due_at").and_then(Value::as_str).unwrap_or("");
+        assert!(!due.is_empty(), "{stored:?}");
+        assert_eq!(stored["review"]["reps"], 0);
+        let mut row = atom("a weighs b.");
+        row.insert("kind".into(), "trust".into());
+        row.insert("from".into(), "a".into());
+        row.insert("to".into(), "b".into());
+        row.insert("weight".into(), 0.5.into());
+        let stored = svc.add(row).unwrap();
+        assert!(stored.get("due_at").is_none(), "{stored:?}");
+    }
+
+    #[test]
     fn a_dated_retrieve_returns_the_atom_that_was_live_then() {
         let (_dir, svc) = service();
         svc.store()
@@ -1388,7 +1416,9 @@ mod tests {
         let refused = svc.delete_atom("w", &id, Some("because I said so"));
         assert!(refused.is_err(), "free text passed as a citation");
         // Refusing the citation refuses the whole write; the atom is still live.
-        assert!(svc.delete_atom("w", &id, Some("deed-patch-overlay")).is_ok());
+        assert!(svc
+            .delete_atom("w", &id, Some("deed-patch-overlay"))
+            .is_ok());
     }
 
     #[test]
