@@ -33,8 +33,6 @@ use std::time::{Duration, Instant};
 
 use packset_client::PacksetClient;
 
-/// The port a seat uses when it says nothing.
-
 /// How long `start` waits for the daemon to bind.
 const STARTUP: Duration = Duration::from_secs(5);
 
