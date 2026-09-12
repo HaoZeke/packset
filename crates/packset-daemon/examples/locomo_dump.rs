@@ -117,7 +117,10 @@ fn ranked(scored: &mut [(usize, f64)]) {
     });
 }
 
-fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)]) -> Vec<usize> {
+/// The fused ranking with the panel's score on each ordinal, for the
+/// test-time-learning reading, which reweighs the fused hits by a review
+/// clock the reader's own grades move.
+fn fused_scored(lexical: &[(usize, f64)], dense: &[(usize, f64)]) -> Vec<(usize, f64)> {
     let ballot = |r: &[(usize, f64)]| -> Vec<Value> {
         r.iter()
             .take(FUSE_DEPTH)
@@ -128,7 +131,19 @@ fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)]) -> Vec<usize> {
     let now = packset_core::clock::utcnow();
     merge_ballots(&[ballot(lexical), ballot(dense)], FUSE_DEPTH, &panel, &now)
         .iter()
-        .filter_map(|hit| hit["id"].as_str()?.parse().ok())
+        .filter_map(|hit| {
+            Some((
+                hit["id"].as_str()?.parse().ok()?,
+                hit["score"].as_f64().unwrap_or(0.0),
+            ))
+        })
+        .collect()
+}
+
+fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)]) -> Vec<usize> {
+    fused_scored(lexical, dense)
+        .into_iter()
+        .map(|(i, _)| i)
         .collect()
 }
 
@@ -263,13 +278,18 @@ fn main() -> anyhow::Result<()> {
                     .filter(|(_, s)| *s > 0.0)
                     .collect();
                 ranked(&mut den);
-                let fused_ids: Vec<String> = fused(&lex, &den)
-                    .into_iter()
-                    .map(|i| turns[i].id.clone())
-                    .collect();
+                let scored = fused_scored(&lex, &den);
+                let fused_ids: Vec<String> =
+                    scored.iter().map(|(i, _)| turns[*i].id.clone()).collect();
                 fused_tally.add(&fused_ids, &q.evidence);
                 retrieved["turns fused"] =
                     json!(fused_ids.iter().take(DUMP_DEPTH).collect::<Vec<_>>());
+                // The whole fused list with scores: what a reading that
+                // reweighs by a review clock starts from.
+                retrieved["turns fused scored"] = json!(scored
+                    .iter()
+                    .map(|(i, s)| json!([turns[*i].id, s]))
+                    .collect::<Vec<_>>());
             }
             if let Some(file) = dump.as_mut() {
                 let line = json!({

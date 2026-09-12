@@ -20,6 +20,7 @@ the retriever is measured against.
 import argparse
 import concurrent.futures as cf
 import json
+import math
 import os
 import sys
 import urllib.request
@@ -208,6 +209,106 @@ LOCOMO_READ = (
 )
 
 
+# Test-time learning on LoCoMo: the questions of one conversation are
+# answered in order, and every turn the reader was handed is graded by the
+# judge's verdict on that answer (recalled when right, lapsed when wrong),
+# moving the same review clock the pack keeps (stability and difficulty,
+# the FSRS update in packset-core). The next question's fused hits are
+# reweighed by retrievability, so a turn that served right answers stays
+# retrievable and one that served wrong answers or was never used fades.
+# One question is one step of the clock. `oracle` grades by the gold
+# evidence instead: the ceiling the judge-graded loop is measured against.
+RETRIEVABILITY_FLOOR = 0.25
+
+
+def retrievability(elapsed, stability):
+    stability = stability if stability > 0 else 1.0
+    return (1.0 + 19.0 / 81.0 * max(elapsed, 0.0) / stability) ** -0.5
+
+
+def review(state, tid, step, recalled):
+    s = state.setdefault(tid, {"stability": 1.0, "difficulty": 5.0, "last": None})
+    if recalled:
+        elapsed = 0.0 if s["last"] is None else step - s["last"]
+        retr = min(max(0.9 ** (elapsed / s["stability"]) if s["stability"] > 0 else 0.0, 0.01), 0.99)
+        s["difficulty"] = min(max(s["difficulty"] - 0.15, 1.0), 10.0)
+        s["stability"] *= 1.0 + math.exp(1.0 - s["difficulty"] / 10.0) * (1.0 - retr)
+    else:
+        s["difficulty"] = min(max(s["difficulty"] + 0.2, 1.0), 10.0)
+        s["stability"] = max(s["stability"] * 0.5, 0.1)
+    s["last"] = step
+
+
+def reweigh(scored, state, step):
+    """Fused (id, score) pairs scaled by retrievability since last review, or since the start."""
+    out = []
+    for tid, score in scored:
+        s = state.get(tid)
+        last = 0 if s is None else (s["last"] if s["last"] is not None else 0)
+        stability = 1.0 if s is None else s["stability"]
+        out.append((tid, score * max(retrievability(step - last, stability), RETRIEVABILITY_FLOOR)))
+    out.sort(key=lambda x: -x[1])
+    return [tid for tid, _ in out]
+
+
+def locomo_where(sample):
+    conv = sample["conversation"]
+    where = {}
+    for key, val in conv.items():
+        if key.startswith("session_") and isinstance(val, list):
+            date = conv.get(f"{key}_date_time", "")
+            for n, t in enumerate(val):
+                where[t["dia_id"]] = (key, n, date, f"{t.get('speaker', '')}: {t.get('text', '')}")
+    return where
+
+
+def locomo_prompt(where, chosen, question):
+    picked = sorted((where[d] for d in chosen if d in where), key=lambda x: (int(x[0].split("_")[1]), x[1]))
+    excerpts = "\n".join(f"[{date}] {text}" for _, _, date, text in picked)
+    return LOCOMO_READ.format(excerpts, question)
+
+
+def locomo_learn(data, rows, top, mode, base, key, reader, judge):
+    """One conversation at a time, in question order, the clock moved by grades."""
+    by_conv = {}
+    for row in rows:
+        if row["category"] == 5:
+            continue
+        by_conv.setdefault(row["conversation"], []).append(row)
+    results = []
+    for c, conv_rows in sorted(by_conv.items()):
+        conv_rows.sort(key=lambda r: r["question_index"])
+        where = locomo_where(data[c])
+        state = {}
+        for step, row in enumerate(conv_rows):
+            scored = row["retrieved"].get("turns fused scored")
+            if not scored:
+                continue
+            chosen = reweigh(scored, state, step)[:top] if mode != "none" else [t for t, _ in scored[:top]]
+            prompt = locomo_prompt(where, chosen, row["question"])
+            try:
+                response = chat(base, key, reader, prompt[:HISTORY_CHARS], 256)
+                verdict = chat(base, key, judge, JUDGE_BASE.format(row["question"], row["answer"], response), 8)
+                correct = "yes" in verdict.lower()
+            except Exception as e:
+                response, correct = f"[error: {e}]", False
+            gold = set(row["evidence"])
+            for tid in chosen:
+                if mode == "oracle":
+                    review(state, tid, step, tid in gold)
+                elif mode == "fsrs":
+                    review(state, tid, step, correct)
+            results.append({
+                "question_id": f"c{c}-q{row['question_index']}",
+                "question_type": f"category-{row['category']}",
+                "correct": correct,
+                "response": response,
+                "chosen": chosen,
+            })
+        print(f"conversation {c}: {len(conv_rows)} questions", file=sys.stderr)
+    return results
+
+
 def locomo_rows(data, rows, arm, top):
     """LoCoMo: `data` is the list of samples, a row names a conversation and
     the turn ids an arm retrieved. Category 5 (adversarial) is left out, as
@@ -246,6 +347,8 @@ def main():
     ap.add_argument("--types", default="", help="comma list of question types to keep")
     ap.add_argument("--no-timeline", action="store_true", help="raw dates only, the benchmark's own reading prompt")
     ap.add_argument("--chunks", default="", help="MemoryAgentBench chunk store (PACKSET_MAB_CHUNKS)")
+    ap.add_argument("--learn", default="", choices=["", "none", "fsrs", "oracle"],
+                    help="LoCoMo test-time learning: answer in order, grade the turns used, reweigh by the review clock")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", default="")
     a = ap.parse_args()
@@ -287,6 +390,11 @@ def main():
                 if n % 100 == 0:
                     print(f"{n} questions", file=sys.stderr)
         report(results, a, reader, judge, "MemoryAgentBench")
+        return
+    if a.bench == "locomo" and a.learn:
+        results = locomo_learn(raw, rows, a.top, a.learn, base, key, reader, judge)
+        a.arm = f"turns fused, learn {a.learn}"
+        report(results, a, reader, judge, "LoCoMo")
         return
     if a.bench == "locomo":
         items = list(locomo_rows(raw, rows, a.arm, a.top))

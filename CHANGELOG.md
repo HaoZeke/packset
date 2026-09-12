@@ -4,6 +4,13 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- Test-time learning on LoCoMo: the dump carries the fused list with
+  scores, and `scripts/longmemeval_qa.py --learn fsrs` answers each
+  conversation's questions in order, grades the turns the reader was
+  handed by the judge's verdict, and reweighs the next question's hits by
+  the review clock (the FSRS update in packset-core); `--learn oracle`
+  grades by the gold evidence, `--learn none` is the baseline. The review
+  clock measured on public data, moved by feedback rather than labels.
 - `POST /v1/consolidate`: the write-time replacement rule run over the
   live set in the order it was written, so a pack written before the
   rule, or filled by import, closes what it should have; `apply` false
