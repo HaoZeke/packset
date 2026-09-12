@@ -45,7 +45,13 @@ questions are the weak type at 0.30 to 0.47 hit@1. With an encoder, the
 dense ballot alone is worse than the lexical one at session granularity
 (0.63 hit@1 against 0.84 on the first hundred questions) and the fusion
 of the two is better than either: 0.920 hit@1 and 0.968 recall@5, so the
-fused panel is the default a seat with an encoder gets.
+fused panel is the default a seat with an encoder gets. A cross-encoder
+second stage does not help here: bge-reranker-base over the windows of the
+fused top twenty sessions, sessions reordered by their best window, falls
+to 0.780 hit@1 and 0.940 recall@5 on the same hundred questions. A window
+is what fits the reranker's input, and a window without its session is a
+worse witness than the session's own dense vector; the arm stays opt-in
+(=PACKSET_LME_RERANK=) as a measured negative.
 
 Two systems publish on the same benchmarks and do a different job. Mem0
 (doi:10.48550/arXiv.2504.19413) reports a 26% relative gain in an
