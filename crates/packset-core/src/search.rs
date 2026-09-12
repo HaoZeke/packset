@@ -1,9 +1,5 @@
-//! Lexical scoring over a pack.
-//!
-//! Two scorers answer the same question. This one is a prefix-and-one-edit
-//! scan, which is right for the tens of atoms a seat actually holds; the milli
-//! projection takes over when the index is there. Both feed the same merge, so
-//! which one ran is a fact about the machine rather than about the ranking.
+//! Scoring over a pack: the prefix-and-edit scan, BM25 over the index, the
+//! learned ballots, and the fuse that merges them.
 
 use serde_json::{json, Map, Value};
 
@@ -28,17 +24,8 @@ pub type Record = Map<String, Value>;
 
 /// Lowercase tokens with the stopwords dropped.
 #[must_use]
-/// Whether the lexical path folds a word to its stem.
-///
-/// On by default, because a lexical retriever that does not stem is one that
-/// misses a question asking about a wedding on a text that says weddings, and
-/// every serious implementation of this scorer stems. `PACKSET_STEM=off` turns
-/// it back off for a corpus where the trade goes the other way.
-///
-/// It is a trade. Stemming buys recall by conflating forms, and a pack holds
-/// short written claims where two atoms may differ deliberately in a way a
-/// stemmer erases. The default is measured rather than assumed; see the
-/// retrieval section of the README for which way it went and on what.
+/// Whether the lexical path folds a word to its stem. On by default;
+/// `PACKSET_STEM=off` turns it off. Measured in the README's retrieval table.
 fn stemming() -> bool {
     !matches!(
         std::env::var("PACKSET_STEM")
@@ -57,19 +44,13 @@ fn stemmer() -> &'static rust_stemmers::Stemmer {
     ENGLISH.get_or_init(|| rust_stemmers::Stemmer::create(rust_stemmers::Algorithm::English))
 }
 
-/// Fold one token to the form the index and the query agree on.
-///
-/// Applied to both sides or neither: a stemmed index searched with unstemmed
-/// terms matches less than no stemming at all, which is the way this is
-/// usually got wrong.
+/// Fold one token to its stem. Applied to both index and query, or neither.
 #[must_use]
 pub fn fold(token: &str) -> String {
     if !stemming() {
         return token.to_string();
     }
-    // A token carrying a digit or a hyphen is an identifier, a version or an
-    // accession rather than a word, and suffix stripping on one of those turns
-    // two distinct names into one.
+    // Digits or a hyphen mark an identifier, version or accession: not stemmed.
     if token
         .bytes()
         .any(|b| b.is_ascii_digit() || b == b'-' || b == b'_')
@@ -267,12 +248,8 @@ fn file_hits(field: &str, text: &str, qtoks: &[String], bias: f64) -> Vec<Value>
         .collect()
 }
 
-/// Sort by score descending, then field, then id, so the order is total.
-/// The `k` best candidates, chosen before a hit is built for any of them.
-///
-/// A common query term matches most of the pack; a bounded heap keeps the
-/// winners as a score and an ordinal and the JSON is made for the survivors
-/// only. Order matches `sort_hits`: score descending, then id ascending.
+/// The `k` best candidates as (score, ordinal); a hit is built for the
+/// survivors only. Order matches `sort_hits`.
 struct TopK<'a> {
     k: usize,
     // A min-heap on (score, id) through `Reverse`, so the root is the weakest
@@ -381,10 +358,6 @@ fn sort_hits(hits: &mut [Value]) {
 }
 
 /// What a search is asked, apart from how it is scored.
-///
-/// Two scorers take the same question, so it is one value rather than seven
-/// arguments repeated at every call: two strings of the same type next to each
-/// other, then two more, is a swap nobody reads at the call site.
 #[derive(Debug, Clone, Copy)]
 pub struct Ask<'a> {
     /// The seat card.
@@ -490,19 +463,9 @@ pub fn atom_tokens(atom: &Record) -> Vec<String> {
     out
 }
 
-/// The same pack, scored by BM25 over an index rather than by a scan.
-///
-/// A second ballot, not a replacement: the two scorers are strong at different
-/// queries. The pack's own scorer finds an atom through a typo or a prefix and
-/// weighs every word alike; BM25 weighs a word by how much it narrows the pack
-/// down and normalises for length, and finds nothing a typo hides. The panel is
-/// what turns two rankings into one.
-///
-/// `index` must have been built over `ask.atoms` in that order, which is what
-/// lets a score name what was scored without a second lookup.
-///
-/// Cards are scored against the same corpus, because a standing preference
-/// competes with a conclusion for the same place in the answer.
+/// The pack scored by BM25 over `index`, a second ballot beside the scan.
+/// `index` must have been built over `ask.atoms` in that order. Cards are
+/// scored against the same corpus.
 #[must_use]
 pub fn search_bm25(ask: &Ask<'_>, index: &crate::bm25::Index) -> Vec<Value> {
     search_lexical(ask, index, crate::bm25::Scorer::default())
@@ -537,15 +500,9 @@ const RM3_TERMS: usize = 10;
 /// How much of the expanded query stays the words asked for.
 const RM3_ALPHA: f64 = 0.5;
 
-/// BM25 with the query expanded from its own first pass.
-///
-/// `documents` must be the tokenised corpus the index was built over, in that
-/// order, because the relevance model is estimated from the text of the
-/// documents the first pass returned rather than from the postings.
-///
-/// Two scoring passes instead of one, no model and nothing stored. See
-/// [`crate::bm25::Index::expand`] for what is being estimated and why the
-/// original query keeps a share of the weight.
+/// BM25 with the query expanded from its own first pass; see
+/// [`crate::bm25::Index::expand`]. `documents` is the tokenised corpus the
+/// index was built over, in that order.
 #[must_use]
 pub fn search_bm25_expanded(
     ask: &Ask<'_>,
@@ -608,9 +565,8 @@ fn bm25_hits(
         }
     }
 
-    // Atoms carrying a query term, from the postings; only the best `limit`
-    // are built. Cards are few and already built, and nothing below the top
-    // `limit` atoms could outrank them into the final cut.
+    // Only the best `limit` atoms are built; nothing below them can reach the
+    // final cut past the cards.
     let mut best = TopK::new(limit);
     for (ordinal, relevance) in index.score_weighted_by(scorer, query) {
         let Some(atom) = atoms.get(ordinal) else {
@@ -635,13 +591,7 @@ fn bm25_hits(
     hits
 }
 
-/// The weight two texts share, over the terms a model says they are about.
-///
-/// Both sides ascend by index, so this is one pass rather than a lookup per
-/// term. A learned sparse representation is BM25's shape with the weights
-/// learned instead of counted: a term the model thinks the text is about
-/// carries weight even where the text says it once, and a term it thinks is
-/// filler carries little where the text repeats it.
+/// Dot product of two learned sparse vectors, both ascending by index.
 #[must_use]
 pub fn sparse_dot(left: &[(u32, f32)], right: &[(u32, f32)]) -> f64 {
     let (mut here, mut there) = (0usize, 0usize);
@@ -660,11 +610,8 @@ pub fn sparse_dot(left: &[(u32, f32)], right: &[(u32, f32)]) -> f64 {
     total
 }
 
-/// Cosine between two vectors, zero when either says nothing.
-///
-/// Normalised here rather than assumed: the encoder normalises its output and
-/// a stored vector may predate that, so dividing by the norms costs two passes
-/// and removes a silent way for one atom to outrank another by magnitude.
+/// Cosine between two vectors, zero when either is empty. Normalised here:
+/// a stored vector is not assumed unit length.
 #[must_use]
 pub fn cosine(left: &[f32], right: &[f32]) -> f64 {
     if left.len() != right.len() || left.is_empty() {
@@ -695,15 +642,8 @@ pub fn embedding_of(atom: &Record) -> Option<Vec<f32>> {
     (vector.len() == items.len() && !vector.is_empty()).then_some(vector)
 }
 
-/// Late interaction: every query token against every document token, best wins.
-///
-/// A pooled vector asks whether two texts are about the same thing overall. This
-/// asks whether each thing the question names is answered somewhere in the
-/// document, and sums those answers, which is why it finds a short passage
-/// inside a long one that pooling averages away.
-///
-/// Zero when either side has no tokens, so a caller can drop a document without
-/// a second pass.
+/// Late interaction (MaxSim): for each query token the best document token,
+/// summed. Zero when either side has no tokens.
 #[must_use]
 pub fn max_sim(query: &[Vec<f32>], document: &[Vec<f32>]) -> f64 {
     if query.is_empty() || document.is_empty() {
@@ -721,15 +661,8 @@ pub fn max_sim(query: &[Vec<f32>], document: &[Vec<f32>]) -> f64 {
         .sum()
 }
 
-/// The pack ranked by what an atom means rather than which words it used.
-///
-/// A third ballot. The two lexical scorers both need the question and the atom
-/// to share words; this one does not, which is the whole point and also its
-/// cost, since it will happily rank something adjacent above something exact.
-///
-/// Atoms without a stored vector are skipped rather than scored as zero: an
-/// unencoded atom has not been judged irrelevant, and putting it at the bottom
-/// of this ballot would let the fuse read a missing encoder as a vote.
+/// The dense ballot. Atoms without a stored vector are skipped, not scored
+/// zero: a missing encoder is not a vote.
 #[must_use]
 pub fn search_dense(ask: &Ask<'_>, query: &[f32]) -> Vec<Value> {
     let Ask {
@@ -771,10 +704,7 @@ pub fn search_dense(ask: &Ask<'_>, query: &[f32]) -> Vec<Value> {
     hits
 }
 
-/// Live atoms whose review is due, whatever the query says.
-///
-/// A review that is late is the one thing in the pack with a deadline, so it
-/// leads the answer rather than competing for a place in it.
+/// Live atoms whose review is due; these lead the answer regardless of query.
 #[must_use]
 pub fn due_hits(atoms: &[Record], set: Option<&str>, now: &str) -> Vec<Value> {
     let mut hits: Vec<Value> = atoms
@@ -953,9 +883,7 @@ mod tests {
         );
     }
 
-    /// Both sides fold or neither. A stemmed index searched with unstemmed
-    /// terms matches less than no stemming at all, and that is the usual way
-    /// this is got wrong.
+    /// Both sides fold or neither.
     #[test]
     fn the_index_and_the_query_fold_the_same_way() {
         let index = atom_tokens(
@@ -994,17 +922,11 @@ mod tests {
         assert_eq!(sparse_dot(&[], &right), 0.0);
     }
 
-    /// Every name the panel accepts has to reach its own implementation.
-    ///
-    /// Five of the nine used to fall through to Borda, so asking for Schulze
-    /// got Borda's answer under Schulze's name. The enum's own doc says only
-    /// implemented names parse, and that has to be true of what runs rather
-    /// than only of what parses.
+    /// Every name the panel accepts dispatches to its own voter.
     #[test]
     fn a_named_fuse_runs_the_voter_it_names() {
-        // `c` is second on both ballots and close behind the leader on both,
-        // so it carries the most score mass and the least rank credit. A voter
-        // that reads scores puts it first; a voter that reads positions cannot.
+        // `c` is second on both ballots with most of the score mass: a score
+        // voter ranks it first, a rank voter cannot.
         let first = vec![scored("a", 10.0), scored("c", 9.9), scored("b", 1.0)];
         let second = vec![scored("b", 10.0), scored("c", 9.9), scored("a", 1.0)];
         let now = crate::clock::utcnow();
@@ -1031,9 +953,7 @@ mod tests {
             assert_ne!(ranked, borda, "{name} is still answering as borda");
         }
 
-        // And every rank voter answers with what its own module answers,
-        // which is the property a fall-through breaks silently: a wrong
-        // dispatch still returns a plausible full ranking.
+        // Every rank voter answers with what its own module answers.
         let lists = [first.clone(), second.clone()];
         let keys: Vec<Vec<String>> = lists.iter().map(|hits| ballot_keys(hits)).collect();
         let k = 3;
@@ -1254,10 +1174,8 @@ mod tests {
     }
 }
 
-/// The identity of a hit across two ranked lists.
-///
-/// Field and id together, because a prose hit has no id and two of them from
-/// different cards must not collapse into one.
+/// The identity of a hit across ranked lists: field and id, since a prose hit
+/// has no id of its own.
 #[must_use]
 pub fn hit_key_of(hit: &Value) -> String {
     format!(
@@ -1276,19 +1194,11 @@ fn ballot_keys(hits: &[Value]) -> Vec<String> {
         .collect()
 }
 
-/// Fused scores, keeping first-seen order through a tie.
-///
-/// A tie broken by hash order would reorder results between two runs over the
-/// same data, so the order a key was first seen in decides.
 /// Reciprocal rank fusion's smoothing constant, as the paper sets it.
 const RRF_K0: usize = 60;
 
-/// Run the named voter and give every key a weight from where it landed.
-///
-/// One dispatch, to the module that implements the name. The voters do not
-/// share a score scale, so position stands in as the weight: what reads it is
-/// the diversify slot, which needs a monotone relevance and not a calibrated
-/// one.
+/// Run the named voter; a key's weight is its position, since the voters
+/// share no score scale. Ties keep first-seen order.
 fn fuse_scores(
     fuse: crate::panel::Fuse,
     ballots: &[Vec<String>],
