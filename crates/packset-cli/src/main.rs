@@ -6,6 +6,11 @@
 //!
 //! ```console
 //! packset ensure | start | stop | status | port | url | which
+//! packset remember [--workspace WS] TEXT...
+//! packset prefer [--workspace WS] TEXT...
+//! packset search [--workspace WS] QUERY...
+//! packset due [WORKSPACE]
+//! packset grade ID [--lapsed] [WORKSPACE]
 //! packset pin [NAME]
 //! packset accessions [WORKSPACE]
 //! packset atoms [--as-of TS] [WORKSPACE]
@@ -79,6 +84,11 @@ fn run() -> anyhow::Result<()> {
             println!("{}", daemon.display());
             Ok(())
         }
+        "remember" => write(port, "lesson", rest),
+        "prefer" => write(port, "preference", rest),
+        "search" => search(port, rest),
+        "due" => due(port, rest.first().map(String::as_str)),
+        "grade" => grade(port, rest),
         "pin" => pin(port, rest.first().map(String::as_str)),
         "accessions" => accessions(port, rest.first().map(String::as_str)),
         "atoms" => atoms(port, rest),
@@ -111,6 +121,11 @@ fn usage() -> String {
          start | stop\n\
          status [WORKSPACE]     counts by kind, pin, index\n\
          port | url | which\n\
+         remember [--workspace WS] TEXT   one lesson, two sentences at most\n\
+         prefer [--workspace WS] TEXT     one standing preference\n\
+         search [--workspace WS] QUERY    ranked claims, score kind id text\n\
+         due [WORKSPACE]        claims whose review clock has run out\n\
+         grade ID [--lapsed] [WS]  mark a review recalled, or lapsed\n\
          pin [NAME]             read, or set, the pinned set\n\
          accessions [WORKSPACE] deed accessions live atoms cite\n\
          atoms [--as-of TS] [WS] live-now atoms, or those live at TS\n\
@@ -391,6 +406,108 @@ fn export(port: u16, args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `--workspace WS` pulled out of an argument list; the rest is the text.
+fn split_workspace(args: &[String]) -> (Option<String>, Vec<String>) {
+    let mut workspace = None;
+    let mut rest = Vec::new();
+    let mut at = 0;
+    while at < args.len() {
+        if args[at] == "--workspace" {
+            workspace = args.get(at + 1).cloned();
+            at += 2;
+            continue;
+        }
+        rest.push(args[at].clone());
+        at += 1;
+    }
+    (workspace, rest)
+}
+
+/// POST one explicit claim of `kind`; the text is stored as given.
+fn write(port: u16, kind: &str, args: &[String]) -> anyhow::Result<()> {
+    let (given, words) = split_workspace(args);
+    let text = words.join(" ").trim().to_string();
+    if text.is_empty() {
+        anyhow::bail!("{kind}: the text is the claim; pass it");
+    }
+    let workspace = workspace(given.as_deref())?;
+    let atom = serde_json::json!({
+        "schema": "inside.atom/v1",
+        "kind": kind,
+        "level": "explicit",
+        "text": text,
+        "workspace": workspace,
+    });
+    let stored = client(port).post_atom(&atom)?;
+    println!(
+        "{}\t{}\tdue {}",
+        stored["id"].as_str().unwrap_or("-"),
+        kind,
+        stored["due_at"].as_str().unwrap_or("-")
+    );
+    Ok(())
+}
+
+/// Ranked claims for a question: score, kind, id, text.
+fn search(port: u16, args: &[String]) -> anyhow::Result<()> {
+    let (given, words) = split_workspace(args);
+    let query = words.join(" ").trim().to_string();
+    if query.is_empty() {
+        anyhow::bail!("search: pass a question");
+    }
+    let workspace = workspace(given.as_deref())?;
+    for hit in client(port).search(&workspace, &query, 10)? {
+        println!(
+            "{:.4}\t{}\t{}\t{}",
+            hit.score,
+            hit.kind,
+            hit.id.as_deref().unwrap_or("-"),
+            hit.text
+        );
+    }
+    Ok(())
+}
+
+/// Live claims whose `due_at` has passed, soonest first: due, id, text.
+fn due(port: u16, given: Option<&str>) -> anyhow::Result<()> {
+    let workspace = workspace(given)?;
+    let now = packset_core::clock::utcnow();
+    let mut atoms: Vec<serde_json::Value> = client(port)
+        .atoms_as_of(&workspace, None)?
+        .into_iter()
+        .filter(|a| {
+            a["due_at"]
+                .as_str()
+                .is_some_and(|d| !d.is_empty() && d <= now.as_str())
+        })
+        .collect();
+    atoms.sort_by(|a, b| a["due_at"].as_str().cmp(&b["due_at"].as_str()));
+    for atom in atoms {
+        println!(
+            "{}\t{}\t{}",
+            atom["due_at"].as_str().unwrap_or(""),
+            atom["id"].as_str().unwrap_or("-"),
+            atom["text"].as_str().unwrap_or("")
+        );
+    }
+    Ok(())
+}
+
+/// Grade one review: recalled unless `--lapsed`.
+fn grade(port: u16, args: &[String]) -> anyhow::Result<()> {
+    let lapsed = args.iter().any(|a| a == "--lapsed");
+    let mut rest: Vec<&String> = args.iter().filter(|a| *a != "--lapsed").collect();
+    let id = rest
+        .first()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("grade needs an atom id"))?;
+    rest.remove(0);
+    let workspace = workspace(rest.first().map(|s| s.as_str()))?;
+    let graded = client(port).grade(&workspace, &id, !lapsed)?;
+    println!("{}", graded["due_at"].as_str().unwrap_or("graded"));
+    Ok(())
+}
+
 /// `<workspace>.jsonl` with the path separators a git-remote workspace name
 /// carries folded to `_`.
 fn export_file_name(workspace: &str) -> String {
@@ -443,6 +560,20 @@ fn accessions(port: u16, given: Option<&str>) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_workspace_flag_leaves_the_text() {
+        let args: Vec<String> = ["--workspace", "seat", "the", "claim"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (ws, rest) = super::split_workspace(&args);
+        assert_eq!(ws.as_deref(), Some("seat"));
+        assert_eq!(rest, ["the", "claim"]);
+        let (ws, rest) = super::split_workspace(&["only".to_string()]);
+        assert!(ws.is_none());
+        assert_eq!(rest, ["only"]);
+    }
+
     #[test]
     fn a_workspace_name_is_one_file_name() {
         assert_eq!(super::export_file_name("seat"), "seat.jsonl");

@@ -1386,7 +1386,7 @@ mod merge_tests {
         let stale = hit("stale", "2025-10-01T00:00:00.000Z");
         let fresh = hit("fresh", NOW);
         let ballot = vec![stale, fresh];
-        let off = merge_ballots(&[ballot.clone()], 2, &default_panel(), NOW);
+        let off = merge_ballots(std::slice::from_ref(&ballot), 2, &default_panel(), NOW);
         assert_eq!(off[0]["id"], "stale");
         let fsrs = crate::panel::Panel::named("combmnz", "none", "fsrs").unwrap();
         let ranked = merge_ballots(&[ballot], 2, &fsrs, NOW);

@@ -1,0 +1,70 @@
+#+title: packset
+#+options: toc:nil num:nil
+
+#+begin_export rst
+.. raw:: html
+
+   <div class="vi-hero">
+     <div class="vi-hero-brand">
+       <img class="vi-hero-mark" src="_static/mark.svg" width="64" height="64" alt="" />
+       <div>
+         <p class="vi-hero-name">packset</p>
+         <p class="vi-hero-tag">What does this seat know, standing?</p>
+       </div>
+     </div>
+     <p class="vi-hero-tagline">A pack of written claims with a review clock, not a transcript with an index.</p>
+     <div class="vi-hero-pills">
+       <span>Remember / Prefer only</span>
+       <span>LMDB, one writer</span>
+       <span>CLI + HTTP + MCP</span>
+     </div>
+     <div class="vi-hero-actions">
+       <a class="vi-btn vi-btn-gold" href="getting-started.html">Get started</a>
+       <a class="vi-btn vi-btn-ghost" href="reference.html">Reference</a>
+     </div>
+   </div>
+#+end_export
+
+A pack holds what a seat has decided to keep: one claim per atom, written
+on purpose, never mined from a transcript. Search ranks the claims by a
+measured panel of scorers. A review clock brings each claim back before it
+is forgotten, and a claim that is not reviewed decays in the ranking. The
+writer is one daemon over one LMDB file, and every other tool is a client.
+
+* Install
+
+#+begin_src console
+$ cargo install --git https://github.com/leidarljos/packset packset-cli packset-daemon
+$ cargo install --git https://github.com/leidarljos/packset packset-mcp   # optional
+$ packset ensure
+PACKSET_URL=http://127.0.0.1:8761
+#+end_src
+
+=packset ensure= starts the writer when it is down and prints the URL every
+client reads from =PACKSET_URL=. The dense scorer is a separate binary,
+=packset-embed=, and the pack answers without it.
+
+* First minute
+
+#+begin_src console
+$ export PACKSET_URL=http://127.0.0.1:8761
+$ curl -s $PACKSET_URL/v1/atoms -d '{"schema":"inside.atom/v1","kind":"lesson","level":"explicit",
+    "workspace":"demo","text":"BM25+ is the default lexical scorer. It beat BM25 by two points."}'
+$ curl -s "$PACKSET_URL/v1/search?workspace=demo&q=lexical+scorer" | jq '.hits[0].text'
+"BM25+ is the default lexical scorer. It beat BM25 by two points."
+#+end_src
+
+The [[file:getting-started.org][tutorial]] does the same through the seat's
+own verbs and ends with a handover another machine can open.
+
+#+begin_export rst
+.. toctree::
+   :maxdepth: 1
+   :caption: Guides
+   :hidden:
+
+   getting-started
+   howto
+   reference
+   explanation
+#+end_export
