@@ -44,6 +44,12 @@ TIMELINE_NOTE = (
 SESSION_TIMED = (
     "\n### Session {}:\nSession Date: {} ({} days before the question)\nSession Content:\n{}\n"
 )
+# The arithmetic done for the reader: every pair of retrieved sessions and
+# the days between them. A question that asks how long after one event
+# another came is answered by one of these lines once the reader has
+# placed the two events in their sessions.
+GAPS_NOTE = "The days between each pair of sessions are listed after the sessions; use them for any question about how long between two events.\n\n"
+GAPS_HEAD = "\n### Days between sessions\n"
 
 
 # MemoryAgentBench: the retrieved chunks or facts of one record, each with
@@ -346,6 +352,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--types", default="", help="comma list of question types to keep")
     ap.add_argument("--no-timeline", action="store_true", help="raw dates only, the benchmark's own reading prompt")
+    ap.add_argument("--gaps", action="store_true", help="list the days between every pair of retrieved sessions after them")
     ap.add_argument("--chunks", default="", help="MemoryAgentBench chunk store (PACKSET_MAB_CHUNKS)")
     ap.add_argument("--learn", default="", choices=["", "none", "fsrs", "oracle"],
                     help="LoCoMo test-time learning: answer in order, grade the turns used, reweigh by the review clock")
@@ -448,9 +455,20 @@ def main():
             else:
                 parts.append(SESSION_TIMED.format(n + 1, q["haystack_dates"][i], gap, content))
         history = "".join(fit(parts))
+        if a.gaps and len(picked) > 1:
+            lines = []
+            for x in range(len(picked)):
+                for y in range(x + 1, len(picked)):
+                    dx, dy = days_of(q["haystack_dates"][picked[x]]), days_of(q["haystack_dates"][picked[y]])
+                    if dx is not None and dy is not None:
+                        lines.append(f"Session {x + 1} to Session {y + 1}: {int(round(dy - dx))} days")
+            if lines:
+                history += GAPS_HEAD + "\n".join(lines) + "\n"
         prompt = READ.format(history, q["question_date"], q["question"])
         if not a.no_timeline:
             prompt = TIMELINE_NOTE + prompt
+        if a.gaps:
+            prompt = GAPS_NOTE + prompt
         try:
             response = chat(base, key, reader, prompt, 512)
             verdict = chat(base, key, judge, judge_prompt(q["question_type"], q["question"], q["answer"], response), 8)
@@ -489,6 +507,8 @@ def report(results, a, reader, judge, bench):
         t[1] += 1
     total = sum(r["correct"] for r in results)
     timeline = "raw dates" if getattr(a, "no_timeline", False) else "timeline"
+    if getattr(a, "gaps", False):
+        timeline += " with gaps"
     print(f"\n{bench} answer accuracy, arm {a.arm!r} top {a.top}, {timeline}, reader {reader}, judge {judge}\n")
     print("| type | asked | accuracy |\n|---|---|---|")
     for kind, (c, n) in sorted(by.items()):
