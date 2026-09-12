@@ -382,13 +382,29 @@ fn export(port: u16, args: &[String]) -> anyhow::Result<()> {
         lines.push_str(&serde_json::to_string(atom)?);
         lines.push('\n');
     }
-    let path = into.join(format!("{workspace}.jsonl"));
+    let path = into.join(export_file_name(&workspace));
     std::fs::write(&path, lines)?;
     eprintln!("{} atoms to {}", atoms.len(), path.display());
     for accession in cited {
         println!("{accession}");
     }
     Ok(())
+}
+
+/// `<workspace>.jsonl` with the path separators a git-remote workspace name
+/// carries folded to `_`.
+fn export_file_name(workspace: &str) -> String {
+    let flat: String = workspace
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    format!("{flat}.jsonl")
 }
 
 /// Live-now atoms, or those live at `--as-of`, one JSON object a line.
@@ -423,4 +439,16 @@ fn accessions(port: u16, given: Option<&str>) -> anyhow::Result<()> {
         println!("{accession}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_workspace_name_is_one_file_name() {
+        assert_eq!(super::export_file_name("seat"), "seat.jsonl");
+        assert_eq!(
+            super::export_file_name("git:github.com/leidarljos/ljos"),
+            "git_github.com_leidarljos_ljos.jsonl"
+        );
+    }
 }
