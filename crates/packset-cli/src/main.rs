@@ -34,7 +34,6 @@ use std::time::{Duration, Instant};
 use packset_client::PacksetClient;
 
 /// The port a seat uses when it says nothing.
-const DEFAULT_PORT: u16 = 8761;
 
 /// How long `start` waits for the daemon to bind.
 const STARTUP: Duration = Duration::from_secs(5);
@@ -150,11 +149,7 @@ fn usage() -> String {
 
 /// The port this seat uses.
 fn port() -> u16 {
-    env::var("PACKSET_PORT")
-        .or_else(|_| env::var("GROK_MEM_PORT"))
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .unwrap_or(DEFAULT_PORT)
+    packset_client::default_port()
 }
 
 /// Where the daemon's own output goes.

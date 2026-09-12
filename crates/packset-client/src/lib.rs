@@ -30,6 +30,20 @@ fn path_seg(id: &str) -> String {
     out
 }
 
+/// The port a writer listens on when nothing names one. The command line,
+/// the server and this client agree on it, so a seat needs no variable set.
+pub const DEFAULT_PORT: u16 = 8761;
+
+/// `PACKSET_PORT` (`GROK_MEM_PORT` is an alias), else [`DEFAULT_PORT`].
+#[must_use]
+pub fn default_port() -> u16 {
+    env::var("PACKSET_PORT")
+        .or_else(|_| env::var("GROK_MEM_PORT"))
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(DEFAULT_PORT)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("packset url missing")]
@@ -88,14 +102,20 @@ impl PacksetClient {
         Self { base }
     }
 
+    /// The writer the seat talks to, with nothing set: `PACKSET_URL`
+    /// (`INSIDE_MEMORY_URL` is an alias), else the loopback port the command
+    /// line starts a writer on, `PACKSET_PORT` (`GROK_MEM_PORT`) or 8761.
+    /// `PACKSET_URL=off` is the one way to have no pack.
     pub fn from_env() -> Result<Self, Error> {
         let url = env::var("PACKSET_URL")
             .or_else(|_| env::var("INSIDE_MEMORY_URL"))
-            .map_err(|_| Error::NoUrl)?;
-        if url.is_empty() || url == "off" {
-            return Err(Error::NoUrl);
+            .ok()
+            .filter(|url| !url.is_empty());
+        match url {
+            Some(url) if url == "off" => Err(Error::NoUrl),
+            Some(url) => Ok(Self::new(url)),
+            None => Ok(Self::new(format!("http://127.0.0.1:{}", default_port()))),
         }
-        Ok(Self::new(url))
     }
 
     pub fn base(&self) -> &str {

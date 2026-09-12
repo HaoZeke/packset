@@ -2,6 +2,13 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
+## Unreleased
+
+- The client finds the writer at `http://127.0.0.1:8761` when `PACKSET_URL`
+  is unset (`PACKSET_PORT` moves the port), the same default the command
+  line and the MCP server use, so a seat needs no variable set.
+  `PACKSET_URL=off` is the one way to have no pack.
+
 ## 0.3.0 (2026-09-12)
 
 What a user gets:

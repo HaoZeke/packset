@@ -1,8 +1,9 @@
 #+title: How-to
 #+options: toc:nil num:nil
 
-Each section is one task. Every command reads =PACKSET_URL= from the
-environment; =packset ensure= prints it.
+Each section is one task. Every command finds the writer on
+=127.0.0.1:8761= with nothing set; =PACKSET_URL= points it elsewhere and
+=packset ensure= prints the address it started.
 
 * Name the workspace once
 

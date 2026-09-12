@@ -6,7 +6,7 @@ milli is a projection. Every agent is an HTTP client.
 
 * Contract
 
-- URL: =PACKSET_URL= (=INSIDE_MEMORY_URL= alias)
+- URL: =PACKSET_URL= (=INSIDE_MEMORY_URL= alias); unset, =http://127.0.0.1:8761=; =off= means no pack
 - Host: =127.0.0.1= only. Never =localhost=.
 - Port: =8761= (=PACKSET_PORT=)
 - Health: =packsetd ok=

@@ -62,11 +62,7 @@ impl PacksetServer {
     /// Read the port and workspace the seat uses, the same as the command line.
     #[must_use]
     pub fn from_env() -> Self {
-        let port = std::env::var("PACKSET_PORT")
-            .or_else(|_| std::env::var("GROK_MEM_PORT"))
-            .ok()
-            .and_then(|raw| raw.trim().parse().ok())
-            .unwrap_or(7777);
+        let port = packset_client::default_port();
         let workspace = std::env::var("PACKSET_WORKSPACE").unwrap_or_else(|_| "default".into());
         Self { port, workspace }
     }
