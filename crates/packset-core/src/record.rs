@@ -825,12 +825,49 @@ pub fn token_jaccard(left: &str, right: &str) -> f64 {
     }
 }
 
+/// The words of a claim in order, lowercased, punctuation dropped and the
+/// function words kept: the shape [`same_head`] compares.
+#[must_use]
+pub fn head_tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// The least a shared head must cover of the shorter claim.
+pub const HEAD_SHARE: f64 = 0.6;
+/// The least words a shared head has.
+pub const HEAD_MIN: usize = 3;
+
+/// Whether two claims say the same thing about the same subject with a
+/// different object: they open with the same words for at least
+/// [`HEAD_MIN`] words and [`HEAD_SHARE`] of the shorter claim, and each
+/// goes on to say something the other does not. `The default fuse is
+/// Borda` and `The default fuse is CombMNZ` share a head; so do `Roy
+/// Rogers is married to Dale Evans` and `Roy Rogers is married to John
+/// McVie`, where a set measure misses them because the object is two
+/// words. Two claims that open alike and then diverge for most of their
+/// length are two claims.
+#[must_use]
+pub fn same_head(a: &[String], b: &[String]) -> bool {
+    let shared = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let shorter = a.len().min(b.len());
+    if shorter == 0 || shared < HEAD_MIN || shared == a.len() || shared == b.len() {
+        return false;
+    }
+    (shared as f64) >= HEAD_SHARE * (shorter as f64) && a[shared..] != b[shared..]
+}
+
 /// Whether `new` is a replacement for `old`, not a neighbour and not a retry.
 ///
 /// Same kind, different text, and either an explicit `supersedes` id, a
-/// `correction` that shares an entity, or a rewrite of the same claim
-/// (token Jaccard at least 0.6). Linked atoms about the same entities
-/// with different sentences stay both live.
+/// `correction` that shares an entity, a rewrite of the same claim (token
+/// Jaccard at least 0.6), or the same head with a new object
+/// ([`same_head`]). When both carry entities they must share one; a claim
+/// without entities is read by its text alone, because most claims a seat
+/// remembers name none. Linked atoms about the same entities with
+/// different sentences stay both live.
 #[must_use]
 pub fn replaces(new: &Map<String, Value>, old: &Map<String, Value>) -> bool {
     if new.get("kind") != old.get("kind") {
@@ -854,17 +891,17 @@ pub fn replaces(new: &Map<String, Value>, old: &Map<String, Value>) -> bool {
             }
         }
     }
-    let shared: BTreeSet<_> = entities_of(new)
-        .intersection(&entities_of(old))
-        .cloned()
-        .collect();
-    if shared.is_empty() {
+    let new_entities = entities_of(new);
+    let old_entities = entities_of(old);
+    let shared: BTreeSet<_> = new_entities.intersection(&old_entities).cloned().collect();
+    if !new_entities.is_empty() && !old_entities.is_empty() && shared.is_empty() {
         return false;
     }
-    if new.get("kind").and_then(Value::as_str) == Some("correction") {
+    if new.get("kind").and_then(Value::as_str) == Some("correction") && !shared.is_empty() {
         return true;
     }
     token_jaccard(new_text, old_text) >= 0.6
+        || same_head(&head_tokens(new_text), &head_tokens(old_text))
 }
 
 /// Close the live window. Search already drops atoms whose `valid_to` is past.
@@ -1070,6 +1107,55 @@ mod tests {
         assert!(
             !replaces(&old, &old),
             "the same text is a retry, not a close"
+        );
+    }
+
+    #[test]
+    fn a_new_object_under_the_same_head_replaces_without_entities() {
+        let old = atom(json!({"text": "Roy Rogers is married to Dale Evans.", "kind": "lesson"}));
+        let new = atom(json!({"text": "Roy Rogers is married to John McVie.", "kind": "lesson"}));
+        assert!(replaces(&new, &old), "same head, two-word object");
+        let fuse_old = atom(json!({"text": "The default fuse is Borda.", "kind": "lesson"}));
+        let fuse_new = atom(json!({"text": "The default fuse is CombMNZ.", "kind": "lesson"}));
+        assert!(replaces(&fuse_new, &fuse_old));
+        let other = atom(json!({
+            "text": "The pack refuses free text where a deed accession belongs.",
+            "kind": "lesson"
+        }));
+        let alike = atom(json!({
+            "text": "The pack refuses a claim over two sentences.",
+            "kind": "lesson"
+        }));
+        assert!(!replaces(&alike, &other), "alike openings, two claims");
+        // Entities on both sides still have to meet.
+        let tagged_old =
+            atom(json!({"text": "The capital is Oslo.", "kind": "lesson", "entities": ["norway"]}));
+        let tagged_new =
+            atom(json!({"text": "The capital is Bern.", "kind": "lesson", "entities": ["swiss"]}));
+        assert!(
+            !replaces(&tagged_new, &tagged_old),
+            "different subjects by entity"
+        );
+    }
+
+    #[test]
+    fn a_head_is_shared_by_order_not_by_set() {
+        let h = |t: &str| head_tokens(t);
+        assert!(same_head(
+            &h("X is located in the continent of Asia"),
+            &h("X is located in the continent of Europe")
+        ));
+        assert!(
+            !same_head(&h("a b c"), &h("a b c")),
+            "a retry is not a rewrite"
+        );
+        assert!(
+            !same_head(&h("a b c d"), &h("a b c")),
+            "a prefix of the other is not a new object"
+        );
+        assert!(
+            !same_head(&h("the cat sat"), &h("the cat ran far away from home now")),
+            "the head must cover the shorter"
         );
     }
 
