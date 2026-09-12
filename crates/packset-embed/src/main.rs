@@ -153,8 +153,29 @@ const KNOWN: &str = "bge-small, bge-base, bge-large, e5-base, e5-large (multilin
                      e5-large-v2 (English, from files), gte-large, mxbai-large";
 
 /// Where a seat keeps weights, when it says.
+/// Where models live: `PACKSET_EMBED_CACHE`, else `$XDG_CACHE_HOME/packset/embed`,
+/// else `~/.cache/packset/embed`. Never the working directory.
 fn cache_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("PACKSET_EMBED_CACHE").map(std::path::PathBuf::from)
+    cache_dir_from(
+        std::env::var_os("PACKSET_EMBED_CACHE"),
+        std::env::var_os("XDG_CACHE_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+fn cache_dir_from(
+    named: Option<std::ffi::OsString>,
+    xdg: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    if let Some(dir) = named.filter(|d| !d.is_empty()) {
+        return Some(std::path::PathBuf::from(dir));
+    }
+    let base = match xdg.filter(|d| !d.is_empty()) {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::path::PathBuf::from(home?).join(".cache"),
+    };
+    Some(base.join("packset").join("embed"))
 }
 
 /// Load the model a choice names.
@@ -279,8 +300,8 @@ fn late_interaction(query: bool) -> anyhow::Result<()> {
     // full-precision model would give, so it bounds late interaction from
     // below rather than measuring it exactly.
     let mut options = Bgem3InitOptions::new(Bgem3Model::BGEM3Q).with_show_download_progress(false);
-    if let Some(dir) = std::env::var_os("PACKSET_EMBED_CACHE") {
-        options = options.with_cache_dir(std::path::PathBuf::from(dir));
+    if let Some(dir) = cache_dir() {
+        options = options.with_cache_dir(dir);
     }
     let mut model = Bgem3Embedding::try_new(options)?;
 
@@ -363,8 +384,8 @@ fn cross_encode() -> anyhow::Result<()> {
         other => anyhow::bail!("unknown reranker `{other}`; known: {RERANKERS}"),
     };
     let mut options = RerankInitOptions::new(model).with_show_download_progress(false);
-    if let Some(dir) = std::env::var_os("PACKSET_EMBED_CACHE") {
-        options = options.with_cache_dir(std::path::PathBuf::from(dir));
+    if let Some(dir) = cache_dir() {
+        options = options.with_cache_dir(dir);
     }
     let mut reranker = TextRerank::try_new(options)?;
 
@@ -467,3 +488,30 @@ const USAGE: &str = "packset-embed: text in, vectors out\n\
                               PACKSET_EMBED_CACHE/user/e5-large-v2/\n\
         PACKSET_RERANK_MODEL  bge-reranker-base (default), bge-reranker-v2-m3,\n\
                               jina-turbo, jina-v2";
+
+#[cfg(test)]
+mod tests {
+    use super::cache_dir_from;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_model_never_lands_in_the_working_directory() {
+        let named = Some(OsString::from("/models"));
+        let xdg = Some(OsString::from("/xdg"));
+        let home = Some(OsString::from("/home/seat"));
+        assert_eq!(
+            cache_dir_from(named, xdg.clone(), home.clone()),
+            Some(PathBuf::from("/models"))
+        );
+        assert_eq!(
+            cache_dir_from(None, xdg, home.clone()),
+            Some(PathBuf::from("/xdg/packset/embed"))
+        );
+        assert_eq!(
+            cache_dir_from(Some(OsString::new()), None, home),
+            Some(PathBuf::from("/home/seat/.cache/packset/embed"))
+        );
+        assert_eq!(cache_dir_from(None, None, None), None);
+    }
+}
