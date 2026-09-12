@@ -192,15 +192,8 @@ fn dense(query: &[f32], vectors: &[Vec<f32>]) -> Vec<(usize, f64)> {
     scored
 }
 
-/// Two rankings fused by the shipped panel (CombMNZ), as ordinals.
-fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)], limit: usize) -> Vec<usize> {
-    fused_scored(lexical, dense, limit)
-        .into_iter()
-        .map(|(i, _)| i)
-        .collect()
-}
-
-/// The same fusion with the fused score kept, for arms that scale it.
+/// Two rankings fused by the shipped panel (CombMNZ): ordinals with the
+/// fused score, for arms that scale it.
 fn fused_scored(
     lexical: &[(usize, f64)],
     dense: &[(usize, f64)],
