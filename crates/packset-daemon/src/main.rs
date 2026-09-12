@@ -54,7 +54,11 @@ fn main() -> anyhow::Result<()> {
     }
 
     // The panel is named at the host, never by a client, and an unknown name
-    // fails closed here rather than silently falling back mid-search.
+    // fails closed here rather than silently falling back mid-search. A flag
+    // wins over the variable of the same name; nothing named is the default.
+    let fuse = fuse.or_else(|| std::env::var("PACKSET_FUSE").ok());
+    let diversify = diversify.or_else(|| std::env::var("PACKSET_DIVERSIFY").ok());
+    let decay = decay.or_else(|| std::env::var("PACKSET_DECAY").ok());
     let panel = packset_core::Panel::from_env_vars(
         fuse.as_deref(),
         diversify.as_deref(),

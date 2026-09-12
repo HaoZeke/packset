@@ -222,7 +222,7 @@ impl Panel {
         Self::named(
             env_or(fuse, "combmnz", UnknownVoter::Fuse)?,
             env_or(diversify, "mmr", UnknownVoter::Diversify)?,
-            env_or(decay, "off", UnknownVoter::Decay)?,
+            env_or(decay, "fsrs", UnknownVoter::Decay)?,
         )
     }
 
@@ -618,6 +618,13 @@ mod tests {
         assert_eq!(reranked, dpp_rerank(&items, items.len()));
         assert_eq!(reranked, vec!["keep", "other", "dup"]);
         assert_eq!(Panel::default().diversify, Diversify::Mmr);
+    }
+
+    #[test]
+    fn nothing_named_is_the_shipped_default() {
+        let panel = Panel::from_env_vars(None, None, None).unwrap();
+        assert_eq!(panel, Panel::default());
+        assert_eq!(panel.decay, Decay::Fsrs);
     }
 
     #[test]

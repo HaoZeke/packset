@@ -7,6 +7,10 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 - LongMemEval_S with an encoder: the fused panel over session documents
   reaches 0.920 hit@1 and 0.968 recall@5 on the first hundred questions,
   against 0.840 and 0.904 for the lexical ballot alone.
+- The writer reads `PACKSET_FUSE`, `PACKSET_DIVERSIFY` and `PACKSET_DECAY`
+  when the flag of the same name is absent. It read only the flags, so a
+  writer started with `PACKSET_DECAY=fsrs` in its environment ran with
+  decay off and `status` said so.
 - The decay slot defaults to `fsrs`: retrievability from the review clock,
   floored at 0.25, cards exempt. `PACKSET_DECAY=off` turns it off. On a
   corpus with no review history the slot changes nothing.
