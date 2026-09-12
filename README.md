@@ -49,6 +49,14 @@ accession.
 Whether the deed exists is a question the pack cannot ask. It checks the shape;
 `deedar` answers the rest.
 
+## Trust
+
+A `trust` atom is one row of an influence graph: `from`, `to`, and a `weight`
+in `(0, 1]`, with the usual `text` and any deeds it cites as `entities`. It
+is memory, so it has a validity window and can be superseded, and `export`
+carries it with the rest. The seat reads the live rows into a consensus; the
+pack does not settle anything itself.
+
 ## Law
 
 - One writer. Working tree is not the pack.

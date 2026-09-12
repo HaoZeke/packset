@@ -43,6 +43,7 @@ pub const KINDS: &[&str] = &[
     "summary",
     "correction",
     "belief",
+    "trust",
 ];
 
 /// Whether the claim was stated or inferred.
@@ -273,9 +274,36 @@ pub fn validate(atom: &mut Map<String, Value>) -> Result<(), AtomError> {
         }
     }
 
+    if kind == "trust" {
+        check_trust(atom)?;
+    }
+
     let report = prose::refuse(&text, prose::Role::Atom)?;
     atom.insert("prose".into(), prose_value(&report));
     Ok(())
+}
+
+/// A `trust` atom names `from`, `to` and a `weight` in `(0, 1]`; it is one
+/// row of the influence graph a consensus settles over.
+fn check_trust(atom: &Map<String, Value>) -> Result<(), AtomError> {
+    let name = |key: &str| -> Result<String, AtomError> {
+        match atom.get(key).and_then(Value::as_str).map(str::trim) {
+            Some(v) if !v.is_empty() => Ok(v.to_string()),
+            _ => Err(AtomError(format!("trust atom needs {key}"))),
+        }
+    };
+    let (from, to) = (name("from")?, name("to")?);
+    if from == to {
+        return Err(AtomError(
+            "trust atom: from and to are the same agent".into(),
+        ));
+    }
+    match atom.get("weight").and_then(Value::as_f64) {
+        Some(w) if w > 0.0 && w <= 1.0 => Ok(()),
+        _ => Err(AtomError(
+            "trust atom: weight must be a number in (0, 1]".into(),
+        )),
+    }
 }
 
 fn value_repr(v: &Value) -> String {
@@ -1040,6 +1068,29 @@ mod tests {
         }));
         validate(&mut a).unwrap();
         assert_eq!(a["something_else"], json!({"nested": [1, 2, 3]}));
+    }
+
+    #[test]
+    fn a_trust_atom_is_one_weighted_edge() {
+        let row = |from: &str, to: &str, weight: Value| {
+            atom(json!({
+                "kind": "trust",
+                "text": format!("{from} trusts {to}."),
+                "workspace": "w",
+                "from": from,
+                "to": to,
+                "weight": weight,
+            }))
+        };
+        assert!(validate(&mut row("a", "b", json!(0.5))).is_ok());
+        assert!(validate(&mut row("a", "b", json!(1))).is_ok());
+        assert!(validate(&mut row("a", "a", json!(0.5))).is_err());
+        assert!(validate(&mut row("a", "", json!(0.5))).is_err());
+        assert!(validate(&mut row("a", "b", json!(0))).is_err());
+        assert!(validate(&mut row("a", "b", json!(1.5))).is_err());
+        assert!(validate(&mut row("a", "b", json!("0.5"))).is_err());
+        let mut bare = atom(json!({"kind": "trust", "text": "a trusts b.", "workspace": "w"}));
+        assert!(validate(&mut bare).is_err());
     }
 
     #[test]
