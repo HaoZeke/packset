@@ -44,6 +44,18 @@ granularity under all three document protocols, and 0.86 hit@1. Preference
 questions are the weak type at 0.30 to 0.47 hit@1; the dense arm is the
 next measurement there.
 
+Two systems publish on the same benchmarks and do a different job. Mem0
+(doi:10.48550/arXiv.2504.19413) reports a 26% relative gain in an
+LLM-judged score over a proprietary memory on LoCoMo, with a 91% lower p95
+latency than full context; Zep (doi:10.48550/arXiv.2501.13956) reports
+94.8% against MemGPT's 93.4% on the deep memory retrieval set and up to
+18.5% higher accuracy on LongMemEval. Both numbers are answer accuracy
+through a model over an extracted transcript memory. The pack's rows are
+retrieval recall over claims a person or agent wrote on purpose: same
+benchmark, a different job, and no shared metric yet. A reader over the
+retrieved sessions would give one; until it exists the pack does not claim
+to beat either system at answering, and neither of them settles a panel.
+
 * Forgetting is a feature
 
 #+ATTR_HTML: :alt The memory loop: write, review clock, due, graded, islands, fire, retract :width 100%

@@ -4,6 +4,10 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- `PacksetClient::with_workspace` pins the workspace ahead of
+  `PACKSET_WORKSPACE` and the working directory, so a seat can be one memory
+  across every repository it works in.
+
 - The client finds the writer at `http://127.0.0.1:8761` when `PACKSET_URL`
   is unset (`PACKSET_PORT` moves the port), the same default the command
   line and the MCP server use, so a seat needs no variable set.

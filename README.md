@@ -43,7 +43,10 @@ $ packset island fusing two ballots     # the memories a task activates
 - Search fuses a prefix-and-edit scan, BM25+ over an index, and a dense
   ballot when an encoder is present. Measured on LoCoMo: 0.736 hit@1 fused
   against 0.752 published; on LongMemEval_S, 0.91 recall@5 at session level
-  with BM25+ alone.
+  with BM25+ alone. Mem0 and Zep publish answer accuracy on the same
+  benchmarks (doi:10.48550/arXiv.2504.19413, doi:10.48550/arXiv.2501.13956);
+  that is a different metric over a different memory, and the explanation
+  page says why there is no head-to-head yet.
 - Claims link by shared names; links carry weights that use strengthens and
   disuse decays; `island` returns the cluster a task activates.
 - A `trust` atom is one weighted edge of an influence graph, scoped to

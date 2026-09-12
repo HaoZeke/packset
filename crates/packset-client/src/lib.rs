@@ -61,6 +61,9 @@ pub enum Error {
 #[derive(Debug, Clone)]
 pub struct PacksetClient {
     base: String,
+    /// A workspace pinned by the caller; `None` reads the environment and
+    /// the working directory.
+    workspace: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +102,20 @@ impl PacksetClient {
         while base.ends_with('/') {
             base.pop();
         }
-        Self { base }
+        Self {
+            base,
+            workspace: None,
+        }
+    }
+
+    /// Pin the workspace this client speaks for, ahead of `PACKSET_WORKSPACE`
+    /// and the working directory. A seat that is one memory across every
+    /// repository it works in sets this once.
+    #[must_use]
+    pub fn with_workspace(mut self, workspace: impl Into<String>) -> Self {
+        let workspace = workspace.into();
+        self.workspace = (!workspace.is_empty()).then_some(workspace);
+        self
     }
 
     /// The writer the seat talks to, with nothing set: `PACKSET_URL`
@@ -123,6 +139,9 @@ impl PacksetClient {
     }
 
     pub fn workspace(&self) -> String {
+        if let Some(w) = &self.workspace {
+            return w.clone();
+        }
         if let Ok(w) = env::var("PACKSET_WORKSPACE") {
             if !w.is_empty() {
                 return w;
