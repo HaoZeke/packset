@@ -140,7 +140,10 @@ fn cache_dir() -> Option<std::path::PathBuf> {
 
 fn read_rows(path: &std::path::Path, n: usize) -> Option<Vec<Vec<f32>>> {
     let mut bytes = Vec::new();
-    std::fs::File::open(path).ok()?.read_to_end(&mut bytes).ok()?;
+    std::fs::File::open(path)
+        .ok()?
+        .read_to_end(&mut bytes)
+        .ok()?;
     let mut rows = Vec::with_capacity(n);
     let mut at = 0;
     for _ in 0..n {
@@ -225,7 +228,11 @@ fn main() -> anyhow::Result<()> {
     let encoder = packset_daemon::embed::binary().is_some();
     println!(
         "encoder: {}",
-        if encoder { "present, lexical and fused arms" } else { "absent, lexical arm only" }
+        if encoder {
+            "present, lexical and fused arms"
+        } else {
+            "absent, lexical arm only"
+        }
     );
     let mut dump = std::env::var_os("PACKSET_LOCOMO_DUMP")
         .map(|p| std::fs::File::create(p).expect("dump file"));
@@ -234,13 +241,18 @@ fn main() -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     for (nth, (turns, questions)) in corpus.iter().enumerate() {
         let index = Index::build(turns.iter().map(|t| t.tokens.as_slice()));
-        let vecs = if encoder { vectors(nth, turns) } else { Vec::new() };
+        let vecs = if encoder {
+            vectors(nth, turns)
+        } else {
+            Vec::new()
+        };
         for (qn, q) in questions.iter().enumerate() {
             let mut lex = index.score(&tokens(&q.text));
             ranked(&mut lex);
             let lex_ids: Vec<String> = lex.iter().map(|(i, _)| turns[*i].id.clone()).collect();
             lex_tally.add(&lex_ids, &q.evidence);
-            let mut retrieved = json!({"turns": lex_ids.iter().take(DUMP_DEPTH).collect::<Vec<_>>()});
+            let mut retrieved =
+                json!({"turns": lex_ids.iter().take(DUMP_DEPTH).collect::<Vec<_>>()});
             if encoder {
                 let query = packset_daemon::embed::encode_query(&q.text).unwrap_or_default();
                 let mut den: Vec<(usize, f64)> = vecs
@@ -251,8 +263,10 @@ fn main() -> anyhow::Result<()> {
                     .filter(|(_, s)| *s > 0.0)
                     .collect();
                 ranked(&mut den);
-                let fused_ids: Vec<String> =
-                    fused(&lex, &den).into_iter().map(|i| turns[i].id.clone()).collect();
+                let fused_ids: Vec<String> = fused(&lex, &den)
+                    .into_iter()
+                    .map(|i| turns[i].id.clone())
+                    .collect();
                 fused_tally.add(&fused_ids, &q.evidence);
                 retrieved["turns fused"] =
                     json!(fused_ids.iter().take(DUMP_DEPTH).collect::<Vec<_>>());
