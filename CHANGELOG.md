@@ -9,6 +9,11 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
   the other; eight concurrent hooks took 281 ms wall on one encoder and
   243 ms on two once warm. The pool is warmed at start, since the first
   use of a cold second encoder cost 770 ms.
+- A recency arm on LongMemEval, measured as a negative: scaling the fused
+  score by the fourteen-day temporal slot for the session's age at the
+  question falls from 0.889 to 0.551 hit@1 and loses on every type but
+  temporal reasoning, knowledge-update included. Forgetting by age alone
+  throws away what a question needs.
 - LongMemEval_S over every answerable question: the fused panel reaches
   0.889 hit@1, 0.949 recall@5, 0.981 recall@10 at session granularity,
   against 0.855, 0.914, 0.952 for the lexical ballot.

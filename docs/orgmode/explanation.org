@@ -60,6 +60,19 @@ is what fits the reranker's input, and a window without its session is a
 worse witness than the session's own dense vector; the arm stays opt-in
 (=PACKSET_LME_RERANK=) as a measured negative.
 
+Recency by age is the second negative, and it bears on the memory model.
+An arm that scales the fused score by the shipped temporal slot (a
+fourteen-day half-life) for the age of each session at the question's
+date falls from 0.889 to 0.551 hit@1 over the 470 questions, and loses on
+every type but temporal reasoning (0.850 against 0.811). It loses even on
+knowledge-update questions (0.431 against 0.944), where the intuition
+says the latest session should win: the sessions that answer are not the
+newest in the haystack, only newer than the one they supersede. Forgetting
+by age alone throws away what a question needs; the pack's default decay
+is by review, retrievability from the clock of what was recalled and when,
+which a chat log without reviews cannot exercise and which this arm was
+the closest public proxy for.
+
 Two systems publish on the same benchmarks and do a different job. Mem0
 (doi:10.48550/arXiv.2504.19413) reports a 26% relative gain in an
 LLM-judged score over a proprietary memory on LoCoMo, with a 91% lower p95
