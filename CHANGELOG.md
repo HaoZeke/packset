@@ -4,6 +4,8 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- Search hits and island rows carry `ts`, when the memory was written, so
+  a reader can lay what it recalls on a timeline.
 - The full answer-accuracy run, 470 questions, top five sessions, 7B
   reader and judge: labelled sessions 0.634, fused panel 0.549, lexical
   0.532; fused leads where retrieval decides, the reader decides the rest.

@@ -1003,6 +1003,7 @@ impl Service {
                     "id": atoms[*at].get("id").cloned().unwrap_or(Value::Null),
                     "kind": atoms[*at].get("kind").cloned().unwrap_or(Value::Null),
                     "text": atoms[*at].get("text").cloned().unwrap_or(Value::Null),
+                    "ts": atoms[*at].get("ts").cloned().unwrap_or(Value::Null),
                     "activation": activation / strongest,
                     "seed": weighted.iter().any(|(s, _)| s == at),
                 })

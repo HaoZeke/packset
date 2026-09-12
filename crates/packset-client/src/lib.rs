@@ -74,6 +74,10 @@ pub struct Hit {
     pub score: f64,
     #[serde(default)]
     pub kind: String,
+    /// When the memory was written, the writer's clock, RFC 3339. Absent
+    /// on card paragraphs, which have no clock.
+    #[serde(default)]
+    pub ts: Option<String>,
 }
 
 /// A refusal, carrying the reason the writer gave in its body.

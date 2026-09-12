@@ -326,6 +326,7 @@ fn atom_hit(atom: &Record, score: f64) -> Value {
         "id": atom.get("id").cloned().unwrap_or(Value::Null),
         "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
         "text": atom.get("text").cloned().unwrap_or(Value::Null),
+        "ts": atom.get("ts").cloned().unwrap_or(Value::Null),
         "due_at": atom.get("due_at").cloned().unwrap_or(Value::Null),
         "score": score,
     })
@@ -720,6 +721,7 @@ pub fn due_hits(atoms: &[Record], set: Option<&str>, now: &str) -> Vec<Value> {
                 "id": atom.get("id").cloned().unwrap_or(Value::Null),
                 "kind": atom.get("kind").cloned().unwrap_or(Value::Null),
                 "text": atom.get("text").and_then(Value::as_str).unwrap_or(""),
+                "ts": ts,
                 "due_at": atom.get("due_at").cloned().unwrap_or(Value::Null),
                 "score": 2.0 + 0.1 * trust_of(atom) + recency(ts, now),
             })
