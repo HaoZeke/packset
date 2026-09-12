@@ -989,18 +989,21 @@ impl Service {
         // is not seen here, as it is not seen by a read.
         let mut buckets: std::collections::HashMap<String, Vec<usize>> =
             std::collections::HashMap::new();
+        let mut keys_of: Vec<Vec<String>> = Vec::with_capacity(atoms.len());
         for (i, atom) in atoms.iter().enumerate() {
             let text = atom.get("text").and_then(Value::as_str).unwrap_or("");
             let head = record::head_tokens(text);
+            let mut keys = Vec::new();
             if head.len() >= record::HEAD_MIN {
-                buckets
-                    .entry(format!("h:{}", head[..record::HEAD_MIN].join(" ")))
-                    .or_default()
-                    .push(i);
+                keys.push(format!("h:{}", head[..record::HEAD_MIN].join(" ")));
             }
             for entity in record::entities_of(atom) {
-                buckets.entry(format!("e:{entity}")).or_default().push(i);
+                keys.push(format!("e:{entity}"));
             }
+            for key in &keys {
+                buckets.entry(key.clone()).or_default().push(i);
+            }
+            keys_of.push(keys);
         }
         let mut open = vec![true; atoms.len()];
         let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -1009,9 +1012,9 @@ impl Service {
                 open[i] = false;
                 continue;
             }
-            let mut candidates: Vec<usize> = buckets
-                .values()
-                .filter(|members| members.contains(&i))
+            let mut candidates: Vec<usize> = keys_of[i]
+                .iter()
+                .filter_map(|key| buckets.get(key))
                 .flat_map(|members| members.iter().copied())
                 .filter(|&j| j < i && open[j])
                 .collect();
