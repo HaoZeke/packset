@@ -127,6 +127,14 @@ fn query(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("linear scan", n), &n, |b, _| {
             b.iter(|| search::search_linear(&asked))
         });
+        // The path the writer takes: the atoms were tokenised to build the
+        // index, and the scan scores by those tokens rather than making them
+        // again.
+        group.bench_with_input(
+            BenchmarkId::new("linear scan, cached tokens", n),
+            &n,
+            |b, _| b.iter(|| search::search_linear_with(&asked, &docs)),
+        );
     }
     group.finish();
 }

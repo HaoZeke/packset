@@ -37,7 +37,11 @@ type Snapshot = (u64, Vec<Record>, Arc<Vec<Record>>);
 /// One generation's snapshot, its inverted index, and the tokens the index
 /// was built from. The tokens stay because the scan scores by them too, and
 /// tokenising the pack again per question was most of what the scan cost.
-type Searchable = (u64, Arc<Vec<Record>>, Arc<Index>, Arc<Vec<Vec<String>>>);
+type Searchable = (u64, SearchSet);
+
+/// What a search runs over: the snapshot, the inverted index, and the tokens
+/// the index was built from, all shared.
+pub type SearchSet = (Arc<Vec<Record>>, Arc<Index>, Arc<Vec<Vec<String>>>);
 
 /// The key for one atom.
 #[must_use]
@@ -305,13 +309,10 @@ impl Store {
     /// # Errors
     ///
     /// Fails when the scan does.
-    pub fn searchable(
-        &self,
-        workspace: &str,
-    ) -> anyhow::Result<(Arc<Vec<Record>>, Arc<Index>, Arc<Vec<Vec<String>>>)> {
+    pub fn searchable(&self, workspace: &str) -> anyhow::Result<SearchSet> {
         let generation = self.generation.load(Ordering::Acquire);
         if let Ok(cache) = self.terms.read() {
-            if let Some((seen, atoms, index, documents)) = cache.get(workspace) {
+            if let Some((seen, (atoms, index, documents))) = cache.get(workspace) {
                 if *seen == generation {
                     return Ok((Arc::clone(atoms), Arc::clone(index), Arc::clone(documents)));
                 }
@@ -334,9 +335,11 @@ impl Store {
                     workspace.to_string(),
                     (
                         generation,
-                        Arc::clone(&atoms),
-                        Arc::clone(&index),
-                        Arc::clone(&documents),
+                        (
+                            Arc::clone(&atoms),
+                            Arc::clone(&index),
+                            Arc::clone(&documents),
+                        ),
                     ),
                 );
             }
