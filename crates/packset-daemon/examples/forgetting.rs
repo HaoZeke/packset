@@ -101,11 +101,18 @@ fn main() -> anyhow::Result<()> {
         let early = rng.below(30) as i64;
         let mut kept = claim(topic, 0, early);
         keep_recalling(&mut kept, DAYS);
-        atoms.push(kept);
+        let mut group = vec![kept];
         for variant in 1..=PARAPHRASES {
             let late = 150 + rng.below(30) as i64;
-            atoms.push(claim(topic, variant, late));
+            group.push(claim(topic, variant, late));
         }
+        // Stored in a random order, so a tie broken by position does not
+        // hand the kept claim the first place for free.
+        for i in (1..group.len()).rev() {
+            let j = rng.below(i as u64 + 1) as usize;
+            group.swap(i, j);
+        }
+        atoms.extend(group);
     }
     let documents: Vec<Vec<String>> = atoms.iter().map(atom_tokens).collect();
     let index = Index::build(documents.iter().map(Vec::as_slice));
