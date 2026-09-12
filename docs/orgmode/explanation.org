@@ -73,6 +73,12 @@ is by review, retrievability from the clock of what was recalled and when,
 which a chat log without reviews cannot exercise and which this arm was
 the closest public proxy for.
 
+On LoCoMo at turn granularity, where the unit is the dialogue turn the
+benchmark marks as evidence, the fused panel finds an evidence turn first
+0.414 of the time and within ten 0.759, against 0.318 and 0.647 for the
+lexical ballot over 1986 questions; a turn is a short witness, so the
+answer-accuracy run hands the reader ten or twenty of them.
+
 Two systems publish on the same benchmarks and do a different job. Mem0
 (doi:10.48550/arXiv.2504.19413) reports a 26% relative gain in an
 LLM-judged score over a proprietary memory on LoCoMo, with a 91% lower p95

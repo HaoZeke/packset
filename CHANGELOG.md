@@ -9,6 +9,9 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
   the other; eight concurrent hooks took 281 ms wall on one encoder and
   243 ms on two once warm. The pool is warmed at start, since the first
   use of a cold second encoder cost 770 ms.
+- LoCoMo at turn granularity, 1986 questions: the fused panel finds an
+  evidence turn first 0.414 of the time and within ten 0.759, against
+  0.318 and 0.647 for the lexical ballot.
 - A recency arm on LongMemEval, measured as a negative: scaling the fused
   score by the fourteen-day temporal slot for the session's age at the
   question falls from 0.889 to 0.551 hit@1 and loses on every type but
