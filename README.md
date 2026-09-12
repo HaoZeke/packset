@@ -278,9 +278,14 @@ for. One millisecond a question is acceptable for a seat; the number is here
 so that stays a decision rather than an assumption.
 
 The pack's own scorer, the prefix-and-one-edit scan that makes a typo still
-find an atom, is linear in the pack by design and costs about 5 µs an atom.
-At ten thousand atoms it is the slowest ballot by twenty times and the next
-thing to measure into.
+find an atom, is linear in the pack by design. It was tokenising every atom
+again on every question, lowercasing and stemming a text the writer had
+tokenised a moment before to build the index. The writer now hands the scan
+the tokens it already holds, and in one run on the shared node the scan went
+from 60 ms to 13 ms at ten thousand atoms and from 620 ms to 155 ms at a
+hundred thousand: 4.6 and 4 times. What remains is the comparison itself,
+every query token against every atom token with an edit distance on the
+misses, and that is the next thing to measure into.
 
 ## What did not work
 
