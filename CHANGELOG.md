@@ -4,6 +4,13 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- A claim replaces an earlier one of the same kind when the two share a
+  head and differ in the object (`The default fuse is Borda` to `The
+  default fuse is CombMNZ`; `Roy Rogers is married to Dale Evans` to
+  `... John McVie`, which a set measure missed), and a claim without
+  entities is read by its text: the seat's own lessons name none, so the
+  pack had never closed one. Entities on both sides still have to meet.
+  The MemoryAgentBench live arm uses this rule.
 - Every fused hit says how many ballots named it (`ballots`) out of how
   many ran (`of`), so a reader can keep to what the scorers agree on.
 - A MemoryAgentBench harness (`examples/memoryagentbench.rs`): the

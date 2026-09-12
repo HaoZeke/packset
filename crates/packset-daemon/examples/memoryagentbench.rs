@@ -19,7 +19,7 @@
 //! chat questions, where it is a sentence; the reader's accuracy over the
 //! dump is the benchmark's own metric.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -192,52 +192,30 @@ fn latest_first(ranked: &[(usize, f64)], docs: &[Document]) -> Vec<usize> {
     top
 }
 
-/// The fact's subject and relation: every word up to the object. The
-/// benchmark's facts are templated one relation a sentence (`X is married
-/// to Y`, `The capital of X is Y`), so two facts with the same head are the
-/// same claim, and the later one is the pack's supersession: the earlier's
-/// window closes. Stated as the rule it is; a free-text pack reads the head
-/// through its entities instead.
-fn head(text: &str) -> Option<String> {
-    let body = text.split_once(". ").map_or(text, |(_, rest)| rest);
-    let words: Vec<&str> = body.split_whitespace().collect();
-    // The object is the tail after the relation's last function word.
-    let cut = words
-        .iter()
-        .rposition(|w| {
-            let w = w.to_ascii_lowercase();
-            matches!(
-                w.trim_end_matches(','),
-                "is" | "of" | "in" | "to" | "by" | "at" | "for" | "with" | "as"
-            )
-        })
-        .map(|i| i + 1)?;
-    if cut < 2 || cut >= words.len() {
-        return None;
-    }
-    Some(words[..cut].join(" ").to_ascii_lowercase())
-}
-
-/// Which documents are live once each later fact closes the earlier one
-/// with the same head.
+/// Which facts are live once each later fact closes the earlier one it
+/// replaces, by the pack's own rule (`packset_core::record::same_head`):
+/// the same opening words, a new object. The list's numbering is dropped
+/// before the comparison, as a claim's text carries none.
 fn live(docs: &[Document]) -> Vec<bool> {
-    let mut latest: BTreeMap<String, usize> = BTreeMap::new();
-    for (i, d) in docs.iter().enumerate() {
-        if let Some(h) = head(&d.text) {
-            latest.insert(h, i);
-        }
-    }
-    let closed: BTreeSet<usize> = docs
+    let heads: Vec<Vec<String>> = docs
         .iter()
-        .enumerate()
-        .filter_map(|(i, d)| {
-            head(&d.text)
-                .and_then(|h| latest.get(&h))
-                .filter(|&&l| l != i)
-                .map(|_| i)
+        .map(|d| {
+            let body = d
+                .text
+                .split_once(". ")
+                .map_or(d.text.as_str(), |(_, rest)| rest);
+            packset_core::record::head_tokens(body)
         })
         .collect();
-    (0..docs.len()).map(|i| !closed.contains(&i)).collect()
+    let mut alive = vec![true; docs.len()];
+    for i in 0..docs.len() {
+        for j in 0..i {
+            if alive[j] && packset_core::record::same_head(&heads[i], &heads[j]) {
+                alive[j] = false;
+            }
+        }
+    }
+    alive
 }
 
 fn cache_dir() -> Option<PathBuf> {
