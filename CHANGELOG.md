@@ -4,6 +4,10 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- A window arm on LongMemEval: the time a question names (a date, a month,
+  a count of units ago, last week or month) read into a window over the
+  sessions and those inside scored twice, a filter the question asks for
+  rather than a decay.
 - The answer-accuracy script hands the reader the seat's reading of time:
   every session marked with its distance in days before the question and
   the rule that a later session supersedes an earlier one on the same fact

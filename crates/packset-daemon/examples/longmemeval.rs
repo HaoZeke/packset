@@ -48,14 +48,161 @@ fn days_of(date: &str) -> Option<f64> {
     let mut t = hm.split(':');
     let h: f64 = t.next()?.parse().ok()?;
     let mi: f64 = t.next()?.parse().ok()?;
-    // Days from civil (Howard Hinnant).
+    Some(civil_days(y, m, d) + (h * 60.0 + mi) / 1440.0)
+}
+
+/// Days from civil (Howard Hinnant).
+fn civil_days(y: i64, m: i64, d: i64) -> f64 {
     let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
     let doy = (153 * m + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    Some(days as f64 + (h * 60.0 + mi) / 1440.0)
+    (era * 146_097 + doe - 719_468) as f64
+}
+
+/// The civil date of a day count, for month arithmetic.
+fn civil_of(days: f64) -> (i64, i64, i64) {
+    let z = days.floor() as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+const MONTHS: &[&str] = &[
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+];
+
+/// The window of days a question points at, when it names a time: an
+/// explicit date, a month with or without a day and year, a count of
+/// days, weeks, months or years ago, or last week, month or year. This is
+/// the pack's validity window read off the question: what was true then,
+/// not what is recent. `None` when the question names no time.
+fn window_of(question: &str, asked: f64) -> Option<(f64, f64)> {
+    let lower = question.to_lowercase();
+    let tokens: Vec<&str> = lower
+        .split(|c: char| !(c.is_alphanumeric() || c == '/'))
+        .filter(|t| !t.is_empty())
+        .collect();
+    let (qy, qm, _) = civil_of(asked);
+    // An explicit date.
+    for t in &tokens {
+        let parts: Vec<&str> = t.split('/').collect();
+        if let [y, m, d] = parts.as_slice() {
+            if let (Ok(y), Ok(m), Ok(d)) = (y.parse::<i64>(), m.parse::<i64>(), d.parse::<i64>()) {
+                if (1..=12).contains(&m) && (1..=31).contains(&d) {
+                    let day = civil_days(y, m, d);
+                    return Some((day, day + 1.0));
+                }
+            }
+        }
+    }
+    // A count of units ago.
+    for (i, t) in tokens.iter().enumerate() {
+        if *t == "ago" && i >= 2 {
+            let unit = match tokens[i - 1].trim_end_matches('s') {
+                "day" => 1.0,
+                "week" => 7.0,
+                "month" => 30.4,
+                "year" => 365.25,
+                _ => continue,
+            };
+            let n: f64 = match tokens[i - 2] {
+                "a" | "an" | "one" => 1.0,
+                "two" => 2.0,
+                "three" => 3.0,
+                "four" => 4.0,
+                "five" => 5.0,
+                "six" => 6.0,
+                other => other.parse().ok()?,
+            };
+            let point = asked - n * unit;
+            return Some((point - unit / 2.0, point + unit / 2.0));
+        }
+    }
+    // Last or this week, month, year; yesterday.
+    for (i, t) in tokens.iter().enumerate() {
+        if *t == "yesterday" {
+            return Some((asked - 2.0, asked));
+        }
+        if (*t == "last" || *t == "this" || *t == "past") && i + 1 < tokens.len() {
+            let span = match tokens[i + 1] {
+                "week" => 7.0,
+                "month" => 30.4,
+                "year" => 365.25,
+                _ => continue,
+            };
+            return Some(if *t == "last" {
+                (asked - 2.0 * span, asked - span)
+            } else {
+                (asked - span, asked)
+            });
+        }
+    }
+    // A month, with a day and a year when given.
+    for (i, t) in tokens.iter().enumerate() {
+        let Some(m) = MONTHS.iter().position(|name| name == t || (t.len() >= 3 && name.starts_with(t) && t.len() == 3)) else {
+            continue;
+        };
+        let m = m as i64 + 1;
+        let day = tokens
+            .get(i + 1)
+            .and_then(|d| d.trim_end_matches(|c: char| c.is_alphabetic()).parse::<i64>().ok())
+            .filter(|d| (1..=31).contains(d));
+        let year = tokens
+            .iter()
+            .skip(i)
+            .take(4)
+            .find_map(|y| y.parse::<i64>().ok().filter(|y| (1990..=2100).contains(y)))
+            .unwrap_or(if m > qm { qy - 1 } else { qy });
+        return Some(match day {
+            Some(d) => (civil_days(year, m, d), civil_days(year, m, d) + 1.0),
+            None => {
+                let start = civil_days(year, m, 1);
+                let end = if m == 12 { civil_days(year + 1, 1, 1) } else { civil_days(year, m + 1, 1) };
+                (start, end)
+            }
+        });
+    }
+    None
+}
+
+/// The fused ranking with the sessions inside the question's window scored
+/// twice: a filter the question itself asks for, and nothing when it names
+/// no time. This is the pack's as-of read over the benchmark.
+fn windowed(question: &Question, docs: &[Document], fused: &[(usize, f64)]) -> Vec<(usize, f64)> {
+    let Some(asked) = days_of(&question.date) else {
+        return fused.to_vec();
+    };
+    let Some((start, end)) = window_of(&question.text, asked) else {
+        return fused.to_vec();
+    };
+    let inside: BTreeSet<&str> = question
+        .sessions
+        .iter()
+        .filter(|(_, date, _)| days_of(date).is_some_and(|d| d >= start - 1.0 && d < end + 1.0))
+        .map(|(sid, _, _)| sid.as_str())
+        .collect();
+    let mut scaled: Vec<(usize, f64)> = fused
+        .iter()
+        .map(|(i, s)| {
+            let boost = if inside.contains(docs[*i].session.as_str()) { 2.0 } else { 1.0 };
+            (*i, s * boost)
+        })
+        .collect();
+    scaled.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    scaled
 }
 
 fn questions(raw: &Value) -> Vec<Question> {
@@ -424,6 +571,7 @@ fn main() -> anyhow::Result<()> {
             arms.push(format!("{p} dense"));
             arms.push(format!("{p} fused"));
             arms.push(format!("{p} fused recency"));
+            arms.push(format!("{p} fused window"));
             if rerank {
                 arms.push(format!("{p} fused rerank"));
             }
@@ -473,6 +621,9 @@ fn main() -> anyhow::Result<()> {
                 slot += 1;
                 let aged = recency(question, docs, &fused_docs);
                 record(&collapse(aged.iter().map(|(i, _)| *i), docs), slot);
+                slot += 1;
+                let framed = windowed(question, docs, &fused_docs);
+                record(&collapse(framed.iter().map(|(i, _)| *i), docs), slot);
                 slot += 1;
                 if rerank {
                     let top: Vec<&str> = fused_sessions
