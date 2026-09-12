@@ -78,6 +78,33 @@ writer's environment, not in a client:
 =on= is a fourteen-day half-life on age. [[file:explanation.org][Explanation]]
 says what each was measured against.
 
+* See what a task involves
+
+Islands are the natural clusters of the link graph; a cue activates one.
+On a seat's own pack of thirty claims:
+
+#+begin_src text
+$ packset islands
+9  The org to rst exporter fails with stringp nil on a src block with no language. Every begin_sr
+7  Trust rows live in the pack as trust atoms and reach the settle through ljos consensus. One le
+1  ljos pins packset-client to one git commit in its lock file. A client change needs cargo updat
+$ packset island settle a vote with learned trust
+1.000  seed  1bd8ee9e370dc5d1b6eb86aca804b15a  Trust rows live in the pack as trust atoms and reach
+0.888  seed  e7574b841812abff43b3c83e6a704d5e  A trust graph with rows into only some voters makes 
+0.810  seed  a34d89130f030ea528b5d70a3d0a22c9  The tracker verb takes --trust JSON rows laid over the con
+0.732  seed  5a779f5aee06da68e95edc90c1bf3cf6  Trust rows over static trust config for the seat's c
+#+end_src
+
+The first column is activation relative to the strongest; =seed= marks a
+claim search found itself, the rest were reached along links. Add =--fire=
+when the seat goes on to use the island: the strongest eight fire together
+and their links gain weight, so the next such cue walks a heavier path.
+
+#+begin_src console
+$ packset island --fire settle a vote with learned trust
+$ packset fire 1bd8ee9e... e7574b84...     # or name the claims yourself
+#+end_src
+
 * Turn on the dense scorer
 
 The dense ballot needs the =packset-embed= binary beside =packsetd= or on
