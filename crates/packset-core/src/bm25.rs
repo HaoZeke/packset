@@ -1,21 +1,6 @@
-//! Okapi BM25 over the pack, with the postings to answer it.
-//!
-//! The pack's own scorer answers a different question: it takes the best any
-//! query token can do against a text and adds those up, which is what makes a
-//! typo and a prefix still find an atom. What it cannot do is weigh a word by
-//! how much saying it narrows anything down, or stop a long atom scoring well
-//! because it has more words to match with.
-//!
-//! BM25 does both and nothing else: an exact term, weighted by how rare it is,
-//! saturating so a fourth occurrence adds less than the second, and normalised
-//! by length against the corpus average. The two scorers disagree about
-//! different queries, which is the reason to run both and let the panel fuse
-//! them rather than to replace one with the other.
-//!
-//! The index is here rather than in the caller because a scan is the wrong
-//! shape for this scorer. BM25 gives nothing to a document carrying no query
-//! term, so touching every document to find that out costs the whole pack per
-//! question; the postings cost the answer instead.
+//! BM25, BM25+ and Dirichlet query likelihood over the pack, with postings.
+//! A document carrying no query term scores nothing, so the index answers
+//! from the postings rather than a scan.
 
 use std::collections::HashMap;
 
@@ -25,25 +10,15 @@ const K1: f64 = 1.2;
 /// How much length normalisation applies. 0 is none, 1 is full.
 const B: f64 = 0.75;
 
-/// Lower bound on a term's contribution (BM25+).
-///
-/// Length normalisation drives one occurrence in a long document toward zero,
-/// the value of an absence. The floor keeps an occurrence worth a fixed amount
-/// more than none, whatever the length. Lv and Zhai, doi:10.1145/2063576.2063584.
+/// BM25+ floor under one occurrence, so length normalisation cannot drive it
+/// to the value of an absence. Lv and Zhai, doi:10.1145/2063576.2063584.
 const DELTA: f64 = 1.0;
 
-/// Dirichlet prior for query likelihood, in pseudo-tokens from the collection.
-///
-/// A document shorter than this is smoothed toward the collection, a longer
-/// one toward itself; that is the whole length behaviour. Zhai and Lafferty,
-/// doi:10.1145/984321.984322. Taken from the paper, not fitted here.
+/// Dirichlet prior for query likelihood, in pseudo-tokens. Zhai and Lafferty,
+/// doi:10.1145/984321.984322; the paper's value, not fitted here.
 const MU: f64 = 2000.0;
 
 /// Which scoring family answers a query.
-///
-/// Three derivations, not three settings: BM25, BM25 with a floor under an
-/// occurrence, and query likelihood under a Dirichlet prior. They disagree,
-/// which is what a fusion panel is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Scorer {
     /// Okapi BM25, with no floor.
@@ -95,11 +70,7 @@ pub struct Index {
 }
 
 impl Index {
-    /// Build over a corpus of tokenised documents, in the caller's order.
-    ///
-    /// The ordinal of a document is its position in that order, so a caller
-    /// that keeps the corpus and the index together can go straight from a
-    /// score back to what was scored.
+    /// Build over tokenised documents; a document's ordinal is its position.
     #[must_use]
     pub fn build<'a>(documents: impl IntoIterator<Item = &'a [String]>) -> Self {
         let mut index = Self::default();
@@ -147,12 +118,8 @@ impl Index {
         }
     }
 
-    /// How much one term narrows the corpus down.
-    ///
-    /// The `+ 1` inside the logarithm is what keeps this positive for a term in
-    /// every document. Without it such a term scores negative, and a document
-    /// is then punished for carrying a word everything carries, which is not
-    /// what "says nothing" should mean.
+    /// Inverse document frequency; the `+ 1` keeps a term in every document
+    /// at zero rather than negative.
     #[must_use]
     pub fn idf(&self, term: &str) -> f64 {
         let n = self.lengths.len() as f64;
@@ -210,10 +177,7 @@ impl Index {
         }
     }
 
-    /// Every document carrying at least one query term, with its score.
-    ///
-    /// Ordinals ascend, so the caller's tie-break decides ties rather than a
-    /// hash iteration order.
+    /// Every document carrying a query term, with its score, ordinals ascending.
     #[must_use]
     pub fn score(&self, query: &[String]) -> Vec<(usize, f64)> {
         let mut totals: HashMap<u32, f64> = HashMap::new();
@@ -234,12 +198,7 @@ impl Index {
         scored
     }
 
-    /// Score against a query whose terms carry weights.
-    ///
-    /// The unweighted form is this with every weight one, which is what a
-    /// query somebody typed is: each word asked for once, none of them worth
-    /// more than another. An expansion has to say how much less its guesses
-    /// count than the words actually asked for, so it needs the weights.
+    /// Score against a weighted query; the unweighted form has every weight one.
     #[must_use]
     pub fn score_weighted(&self, query: &[(String, f64)]) -> Vec<(usize, f64)> {
         self.score_weighted_by(Scorer::default(), query)
@@ -270,23 +229,9 @@ impl Index {
         scored
     }
 
-    /// A query expanded from the documents its own first pass returned.
-    ///
-    /// The question a person asks names a few of the words the answer uses. A
-    /// relevance model estimates the rest from what came back: terms frequent
-    /// in the top documents and rare in the corpus are what the asker meant and
-    /// did not say. Nothing is trained and nothing is stored, so a pack pays
-    /// one extra scoring pass and no model.
-    ///
-    /// `alpha` is how much of the final query stays the words asked for. The
-    /// original terms keep that share because feedback taken on trust is how
-    /// this drifts: the first pass is not a relevance judgement, and a wrong
-    /// top document expands into more of itself.
-    ///
-    /// Lavrenko, Croft, Relevance based language models, SIGIR 2001,
-    /// doi:10.1145/383952.383972. The interpolation with the original query is
-    /// RM3; Lv, Zhai, doi:10.1145/1645953.1646259 for why it is the estimate
-    /// worth using.
+    /// RM3: the query expanded from its own first pass, with `alpha` of the
+    /// weight kept on the original terms. Lavrenko and Croft,
+    /// doi:10.1145/383952.383972; Lv and Zhai, doi:10.1145/1645953.1646259.
     #[must_use]
     pub fn expand(
         &self,
@@ -325,11 +270,7 @@ impl Index {
                 *model.entry(term).or_insert(0.0) += share * f64::from(count) / length;
             }
         }
-        // P(t | R) as it stands. Weighting it by rarity here would apply the
-        // rarity twice, since BM25 weights every term by its own idf when it
-        // scores: a rare word in one short feedback document would arrive
-        // carrying idf squared, which is how an expansion ends up ranked by
-        // whichever name happened to appear once.
+        // P(t | R) unweighted: scoring applies idf once already.
         let mut ranked: Vec<(&str, f64)> = model.into_iter().collect();
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
         ranked.truncate(terms);
@@ -344,11 +285,7 @@ impl Index {
         out
     }
 
-    /// Score a document that is not in the index, against this corpus.
-    ///
-    /// A card paragraph is written the same way an atom is and competes with
-    /// one for the same place in an answer, so it is weighed by how rare its
-    /// words are among the atoms rather than by a corpus of its own.
+    /// Score a document outside the index against this corpus's statistics.
     #[must_use]
     pub fn score_foreign(&self, query: &[String], document: &[String]) -> f64 {
         if document.is_empty() || self.is_empty() {

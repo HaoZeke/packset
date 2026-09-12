@@ -336,6 +336,7 @@ fn id_of(atom: &Record) -> &str {
     atom.get("id").and_then(Value::as_str).unwrap_or("")
 }
 
+/// Score descending, then field, then id: a total order.
 fn sort_hits(hits: &mut [Value]) {
     hits.sort_by(|a, b| {
         let sa = a["score"].as_f64().unwrap_or(0.0);
