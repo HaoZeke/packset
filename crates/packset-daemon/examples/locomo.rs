@@ -1,46 +1,21 @@
-//! Retrieval quality, against somebody else's relevance judgements.
-//!
-//! Every claim this crate makes about search has been about mechanism and cost.
-//! Neither says whether an answer is any good, and the two scorers were fused
-//! on the argument that they are strong at different queries, which is a
-//! hypothesis rather than a measurement.
-//!
-//! LoCoMo (DOI 10.48550/arXiv.2402.17753) supplies the judgements: 1986
-//! questions over ten long conversations, each question labelled with the
-//! dialogue turns that answer it. That is a retrieval ground truth, and it does
-//! not care who wrote the retriever.
+//! Retrieval quality against LoCoMo's relevance judgements
+//! (doi:10.48550/arXiv.2402.17753): 1986 questions over ten conversations,
+//! each labelled with the turns that answer it. Turns are loaded as atoms, so
+//! this measures the scorer, not what should have been remembered, and it is
+//! recall of labelled evidence with no model in the loop, not the end-to-end
+//! answer accuracy the memory papers report. Category 5 (unanswerable) is
+//! excluded.
 //!
 //! ```console
 //! $ curl -sSLO https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json
 //! $ cargo run --release -p packset-daemon --example locomo -- locomo10.json
 //! ```
 //!
-//! What this measures and what it does not:
-//!
-//! - It measures the scorer. Turns are loaded as atoms, which is not how a pack
-//!   is built: nothing in packset extracts, and an atom exists because a person
-//!   wrote one. Giving every arm the same corpus is what isolates the ranking
-//!   from the question of what should have been remembered.
-//! - It is not the number the memory papers report. Those are end-to-end answer
-//!   accuracy with a model reading the retrieved context and a model judging the
-//!   answer. This is recall of labelled evidence, with no model in the loop, so
-//!   it is not comparable to 92.5 or 94.4 and is not offered as though it were.
-//! - Category 5 is adversarial, meaning the conversation does not answer the
-//!   question. Recall is undefined there and those questions are excluded.
-//!
-//! Four knobs, all off by default and all about what a run costs:
-//! `PACKSET_LOCOMO_RERANK` adds the cross-encoder second stage, which is the
-//! one arm here that is not free: it runs a forward pass per candidate per
-//! question where every other arm answers from what it stored. `/v1/search`
-//! runs that same stage when `PACKSET_RERANK` or `?rerank=1` asks. The report
-//! prints what the stage cost when it ran.
-//!
-//! `PACKSET_LOCOMO_LATE` adds the per-token arms, `PACKSET_LOCOMO_WALK` adds
-//! the restart walk over the link graph, `PACKSET_LOCOMO_CONVERSATIONS` scores
-//! the first N, and `PACKSET_LOCOMO_CACHE` names a directory to keep the
-//! encodings in. A capped run keeps the arms comparable to each other and stops
-//! them being comparable to a run over all ten, so a number from one says which
-//! it was.
+//! Knobs, all off by default: `PACKSET_LOCOMO_RERANK` (cross-encoder second
+//! stage, a forward pass per candidate), `PACKSET_LOCOMO_LATE` (per-token
+//! arms), `PACKSET_LOCOMO_WALK` (link-graph walk), `PACKSET_LOCOMO_CONVERSATIONS`
+//! (score the first N; not comparable to a full run), `PACKSET_LOCOMO_CACHE`
+//! (directory for encodings).
 
 use std::collections::BTreeSet;
 
@@ -85,11 +60,7 @@ struct Tally {
 /// Where NDCG is reported. The published number on this benchmark is at five.
 const NDCG_CUT: usize = 5;
 
-/// Discounted cumulative gain of a ranking, against the best it could be.
-///
-/// Relevance is binary here, because the benchmark labels a turn as evidence
-/// or not and says nothing about how much. So the ideal ranking puts every
-/// labelled item first, and the ideal gain depends only on how many there are.
+/// nDCG of a ranking under binary relevance.
 fn ndcg_at(ranked: &[String], evidence: &BTreeSet<String>, cut: usize) -> f64 {
     let discount = |place: usize| 1.0 / ((place + 2) as f64).log2();
     let gain: f64 = ranked
@@ -176,11 +147,8 @@ fn conversations(raw: &Value) -> Vec<Conversation> {
                     .get("speaker")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                // No `entities` field, so the extractor runs the way it does
-                // for an atom nobody annotated: proper nouns out of the text.
-                // Naming the speaker as the only entity would make every pair
-                // of turns by one person identical to the link rule, and the
-                // graph arm below would be measuring nothing.
+                // No `entities`: the speaker as the only entity would link
+                // every pair of one person's turns.
                 let atom = json!({
                     "id": id,
                     "workspace": "locomo",
@@ -220,16 +188,8 @@ fn conversations(raw: &Value) -> Vec<Conversation> {
     out
 }
 
-/// The arms compared at session granularity, where the difference between them
-/// is what a document is.
-///
-/// A retrieval number reported "at session granularity" can mean either of two
-/// protocols, and they are not the same retriever. Rank the turns and read off
-/// which session each came from, so a session is scored by its single best
-/// turn; or index the session itself, so every word anyone said in it counts
-/// toward one score. A published BM25 baseline five points above the one here
-/// is more likely a different unit than a better implementation of the same
-/// formula, and this table is what says which.
+/// The arms at session granularity under both protocols: rank turns and read
+/// off the session, or index the session as one document.
 const PROTOCOLS: &[&str] = &[
     "turn bm25",
     "turn bm25+",
@@ -272,61 +232,23 @@ const ARMS: &[&str] = &[
     "m3 sparse+late",
 ];
 
-/// The diversify slot's three settings, over the arm the table above leads on.
-///
-/// The fuse slot's default was argued, then measured over nine voters, and
-/// moved. The slot beside it had never been measured at all, and it is not
-/// passive: maximal marginal relevance reorders the final ranking on every
-/// question, trading relevance for novelty at a fixed lambda.
-///
-/// Measured, it does nothing here. All three settings agree to three decimals
-/// on every cut-off, and the only difference anywhere is one point of nDCG@5
-/// against the shipped MMR. So the worry that motivated the sweep, a default
-/// silently costing recall, was unfounded, and the default stays.
-///
-/// The other half of that result is what this benchmark cannot see. A
-/// diversifier is not for recall; it is for not spending four of five answers
-/// on the same claim said four ways. LoCoMo scores whether labelled evidence
-/// was retrieved, so a method whose whole job is to suppress redundancy has
-/// nothing here to suppress and nothing to be credited for. Reading this table
-/// as "diversity does not help" would be reading it past what it measures.
-///
-/// The decay slot is deliberately not swept beside this one. Its default is
-/// `off`, the passive setting, so an unmeasured default there costs nothing;
-/// the diversify default reorders every answer, which is what made leaving it
-/// unmeasured a cost nobody had accounted for. Measuring decay would need a
-/// corpus where recency predicts relevance, and a dialogue benchmark whose
-/// questions are drawn evenly over the conversation is not one.
+/// The diversify slot's three settings over the leading arm. LoCoMo scores
+/// recall of labelled evidence, so a redundancy suppressor has nothing to be
+/// credited for here; the README carries the numbers. Decay is not swept:
+/// recency does not predict relevance on this corpus.
 const DIVERSIFIERS: &[&str] = &["mmr", "dpp", "none"];
 
-/// Every fusion the panel accepts, run over one pair of ballots.
-///
-/// The published lexical-plus-dense system on this benchmark attributes its
-/// gain to fusing at the score level rather than the rank level, and packset
-/// ships a rank fusion. Fusing ballots that are already computed costs a merge,
-/// so the question is answered inside the run that produced them rather than by
-/// nine runs of the encoder.
+/// Every fusion the panel accepts over one pair of ballots, from one encode.
 const VOTERS: &[&str] = &[
     "borda", "rrf", "combsum", "combmnz", "dowdall", "kemeny", "schulze", "copeland", "tideman",
 ];
 
-/// The voters swept a second time, over the ballots the seat ships.
-///
-/// Five rather than nine, because the second sweep is what takes a run past
-/// what this builder lets finish. Schulze, ranked pairs and Copeland build a
-/// pairwise matrix over every candidate, which is the expensive part, and the
-/// sweep above already measures all three: the first two degenerate to their
-/// own first ballot on two voters, and Copeland tracks Borda. That every name
-/// reaches its own implementation is a property, and it is pinned by a test
-/// rather than by paying for it once a question here.
+/// The voters swept again over the shipped ballots; five, since the pairwise
+/// voters degenerate on two ballots and the sweep above covers them.
 const SHIPPED_VOTERS: &[&str] = &["borda", "rrf", "combsum", "combmnz", "dowdall"];
 
-/// Where encodings are kept between runs, when the seat names a directory.
-///
-/// The encode dominates a run, costs the same every time, and depends on
-/// nothing but the model and the text. A benchmark that pays it again on every
-/// run is a benchmark that cannot be re-run, which is how a question about
-/// fusion ends up waiting on a question about a scheduler.
+/// Where encodings are kept between runs, when `PACKSET_LOCOMO_CACHE` names a
+/// directory; the encode dominates a run.
 fn cache_dir() -> Option<std::path::PathBuf> {
     let raw = std::env::var_os("PACKSET_LOCOMO_CACHE")?;
     let dir = std::path::PathBuf::from(raw);
@@ -364,11 +286,8 @@ fn write_rows(path: &std::path::Path, rows: &[Vec<f32>]) {
     }
 }
 
-/// The same, one level deeper: a group of rows per item.
-///
-/// Late interaction is a vector per token, so an atom is a group and the
-/// corpus is a list of groups. Written with both counts so a truncated file
-/// fails its count check rather than scoring against half an atom.
+/// A group of rows per item, with both counts so a truncated file fails its
+/// check.
 fn write_groups(path: &std::path::Path, groups: &[Vec<Vec<f32>>]) {
     if groups.is_empty() || groups.iter().any(Vec::is_empty) {
         return;
@@ -423,11 +342,7 @@ fn read_groups(path: &std::path::Path, expected: usize) -> Option<Vec<Vec<Vec<f3
     Some(groups)
 }
 
-/// Learned term weights as one row: index, weight, index, weight.
-///
-/// An index is an integer and a weight is not, and both fit a f32 exactly at
-/// the sizes a vocabulary reaches, so the pair travels in the format the other
-/// two already use rather than earning a third one.
+/// Learned term weights as one row: index, weight, index, weight, all f32.
 fn flatten_sparse(sparse: &packset_daemon::embed::Sparse) -> Vec<f32> {
     let mut out = Vec::with_capacity(sparse.len() * 2);
     for (index, weight) in sparse {
@@ -473,11 +388,7 @@ fn read_rows(path: &std::path::Path, expected: usize) -> Option<Vec<Vec<f32>>> {
     Some(rows)
 }
 
-/// How many conversations to score, when a machine cannot hold a whole run.
-///
-/// All ten by default. A smaller number is not a smaller benchmark so much as a
-/// different one, and the arms stay comparable to each other because they all
-/// see the same corpus; they stop being comparable to a run over ten.
+/// How many conversations to score; all ten by default.
 fn conversation_cap() -> Option<usize> {
     std::env::var("PACKSET_LOCOMO_CONVERSATIONS")
         .ok()
@@ -485,19 +396,8 @@ fn conversation_cap() -> Option<usize> {
         .filter(|n| *n > 0)
 }
 
-/// Whether to spend the time and memory on the per-token encoding.
-///
-/// Off unless asked, because it is one vector per token: the same corpus that
-/// costs twenty five megabytes pooled costs about a gigabyte this way, and the
-/// encode takes several times as long.
-/// Whether to spend the time on the restart walk.
-///
-/// Off unless asked. The walk touches every edge on every round for every
-/// question, which is most of a run's time, and it has answered its question
-/// twice over: on three conversations and on ten, filling the last ten places
-/// of twenty by a personalised PageRank scored below letting the ranking
-/// continue, and barely above one hop. Leaving it on taxes every future run
-/// with a settled question.
+/// Whether to run the restart walk; off unless asked, since it touches every
+/// edge every round and measured below letting the ranking continue.
 fn walk_wanted() -> bool {
     std::env::var("PACKSET_LOCOMO_WALK").is_ok_and(|v| !v.is_empty() && v != "0")
 }
@@ -506,17 +406,8 @@ fn late_wanted() -> bool {
     std::env::var("PACKSET_LOCOMO_LATE").is_ok_and(|v| !v.is_empty() && v != "0")
 }
 
-/// Whether the second stage runs.
-///
-/// Off by default because it is not free the way every other arm here is. The
-/// first stage embeds a corpus once and answers every question from what it
-/// stored; a cross-encoder runs a forward pass per candidate per question, so
-/// turning this on multiplies the run by the depth of the rerank.
-/// Whether the learned-sparse ballot from a model trained for it runs.
-///
-/// BGE-M3's sparse head rides along with the late arms and measured below
-/// BM25; that is a side output of a dense model, not the sparse model the
-/// literature means. This asks SPLADE++, which is.
+/// Whether the SPLADE++ learned-sparse ballot runs; BGE-M3's sparse head is a
+/// side output of a dense model and rides with the late arms instead.
 fn splade_wanted() -> bool {
     std::env::var("PACKSET_LOCOMO_SPLADE").is_ok_and(|v| !v.is_empty() && v != "0")
 }
@@ -528,10 +419,7 @@ fn rerank_wanted() -> bool {
 /// How deep the second stage reads. Same window `/v1/search` uses.
 const RERANK_DEPTH: usize = packset_daemon::embed::RERANK_DEPTH;
 
-/// Reorder the top of a ranking by the same stage `/v1/search` runs.
-///
-/// Timed so the report can say what the stage cost, not only what it scored.
-/// An absent or broken reranker leaves the ranking exactly as it was.
+/// Reorder the top of a ranking by the stage `/v1/search` runs, timed.
 fn reranked(question: &str, hits: &[Value], spent: &mut std::time::Duration) -> Vec<Value> {
     let start = std::time::Instant::now();
     let out = packset_daemon::embed::rerank_hits(question, hits).unwrap_or_else(|| hits.to_vec());
@@ -549,11 +437,6 @@ fn session_of(id: &str) -> &str {
 }
 
 /// A turn ranking read as a session ranking, best turn first.
-///
-/// The retrieval papers on this benchmark score a session by its best turn and
-/// ask whether the right session is in the top k. That is an easier question
-/// than which turn, because a session holds dozens, and reporting both is what
-/// keeps a number from being read against one it does not answer.
 fn sessions_of(ranked: &[String]) -> Vec<String> {
     let mut seen = BTreeSet::new();
     ranked
@@ -563,35 +446,16 @@ fn sessions_of(ranked: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// How many turns a passage covers.
-///
-/// Set from what a passage is for rather than searched over: a window wants to
-/// be long enough to carry a question and the answer to it, which in dialogue
-/// is a few exchanges, and short enough that length normalisation still bites.
-/// Picking this by which value scores best on these questions would be fitting
-/// the benchmark rather than filling in a method.
+/// How many turns a passage covers; set, not fitted to the benchmark.
 const WINDOW: usize = 6;
 
-/// How far one window starts after the last.
-///
-/// Half a window, so a match spanning a boundary is whole in the next one. A
-/// stride equal to the window would cut exactly the matches a passage exists
-/// to catch.
+/// How far one window starts after the last: half a window, so a match
+/// spanning a boundary is whole in the next.
 const STRIDE: usize = 3;
 
-/// A conversation as overlapping windows of adjacent turns.
-///
-/// The two protocols already measured are the degenerate cases of this: a
-/// window of one turn is the turn ranking, and a window of a whole session is
-/// the session document. The middle is what the retrieval literature has meant
-/// by passage-level evidence since Callan
-/// (doi:10.1007/978-1-4471-2099-5_31): score a document by its best passage,
-/// because a match sitting in a few adjacent turns is diluted by the length of
-/// everything around it.
-///
-/// Each window carries the id of the session it came from, so a ranking over
-/// windows reads as a ranking over sessions by taking the first window each
-/// session appears in, which is that session's best.
+/// A conversation as overlapping windows of adjacent turns: passage evidence
+/// (Callan, doi:10.1007/978-1-4471-2099-5_31). Each window carries its session
+/// id, so a window ranking collapses to a session ranking.
 fn passage_documents(atoms: &[Record]) -> Vec<Record> {
     // Grouped by session rather than by run of adjacent atoms, so a session
     // whose turns are not contiguous still yields one series of windows and
@@ -645,12 +509,7 @@ fn room_of_window(id: &str) -> &str {
     id.split_once('#').map_or(id, |(room, _)| room)
 }
 
-/// A conversation's sessions as one document each, in the order they happened.
-///
-/// Concatenating a session's turns is a different document from any of them:
-/// it is longer, so BM25's length normalisation treats it differently, and a
-/// question whose words are spread over several turns matches it where it
-/// matches no single turn.
+/// A conversation's sessions as one document each, in order.
 fn session_documents(atoms: &[Record]) -> Vec<Record> {
     let mut order: Vec<String> = Vec::new();
     let mut bodies: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -705,11 +564,6 @@ fn collapse(hits: &[Value]) -> Vec<Value> {
 }
 
 /// A window ranking read as a session ranking, best window first.
-///
-/// This is `collapse` over the other id shape, and it is the whole of what
-/// passage evidence does at the end: a session takes the place of its best
-/// passage, so a match sitting in a few adjacent turns is not averaged away by
-/// the length of the session around it.
 fn collapse_windows(hits: &[Value]) -> Vec<Value> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -752,11 +606,8 @@ fn rank_late(ask: &Ask<'_>, query: &[Vec<f32>], documents: &[Vec<Vec<f32>>]) -> 
     hits
 }
 
-/// Rank by the learned term weights the same pass returned.
-///
-/// The scorer is a dot product over shared vocabulary entries, so this is the
-/// inverted index's shape with the weights learned rather than counted. It
-/// costs one number a term where the per-token form costs a vector a token.
+/// Rank by the learned term weights the same pass returned: a dot product
+/// over shared vocabulary entries.
 fn rank_sparse(
     ask: &Ask<'_>,
     query: &packset_daemon::embed::Sparse,
@@ -826,11 +677,7 @@ fn rank_pooled(ask: &Ask<'_>, query: &[f32], documents: &[Vec<f32>]) -> Vec<Valu
     hits
 }
 
-/// The stored link graph, as positions rather than ids.
-///
-/// Built once per conversation because a restart walk touches every edge on
-/// every round, and rebuilding the adjacency per question would dominate what
-/// the walk itself costs.
+/// The stored link graph as positions, built once per conversation.
 struct Graph {
     ids: Vec<String>,
     at: std::collections::HashMap<String, usize>,
@@ -871,15 +718,8 @@ impl Graph {
         Self { ids, at, edges }
     }
 
-    /// Personalised PageRank from a seeded restart distribution.
-    ///
-    /// One hop is the weakest thing a graph can do for a query, and measuring
-    /// only that understates what a graph is worth. The retrieval work that
-    /// reports a gain from a memory graph runs a restart random walk over it,
-    /// which reaches a node no seed links to directly and weights it by how
-    /// many seeds reach it at all. Page, Brin, Motwani, Winograd, The PageRank
-    /// citation ranking, 1999; the seeded form as HippoRAG uses it,
-    /// DOI 10.48550/arXiv.2405.14831.
+    /// Personalised PageRank from a seeded restart distribution, as HippoRAG
+    /// uses it (doi:10.48550/arXiv.2405.14831).
     fn walk(&self, seeds: &[String], damping: f64, rounds: usize) -> Vec<(usize, f64)> {
         let n = self.ids.len();
         let mut restart = vec![0.0f64; n];
@@ -954,11 +794,6 @@ const WALK_DAMPING: f64 = 0.5;
 const WALK_ROUNDS: usize = 20;
 
 /// Follow each hit's stored links once, appending neighbours behind the hits.
-///
-/// The link graph is built by the write path and read by nothing that answers a
-/// question, so whether it earns its place in retrieval has never been asked.
-/// One hop behind the ranking is the cheapest way to ask: the ranking is
-/// unchanged at the top and the neighbours can only fill places further down.
 fn one_hop(ranked: &[String], atoms: &[Record], limit: usize) -> Vec<String> {
     let links: std::collections::HashMap<&str, Vec<&str>> = atoms
         .iter()
@@ -1111,10 +946,7 @@ fn main() -> anyhow::Result<()> {
 
     for (nth, conversation) in corpus.iter_mut().enumerate() {
         turns += conversation.atoms.len();
-        // The write path is what builds the graph, so the benchmark runs it
-        // rather than a copy of it: `apply_links` is what bounds the peer side
-        // of an edge, and picking the neighbours without it produced a graph
-        // with thirteen edges a turn against a cap of eight.
+        // The write path builds the graph; `apply_links` bounds the peer side.
         let mut stored: Vec<Record> = Vec::with_capacity(conversation.atoms.len());
         for atom in &conversation.atoms {
             let mut fresh = atom.clone();
@@ -1175,10 +1007,7 @@ fn main() -> anyhow::Result<()> {
         let mut passage_corpus = passage_documents(&conversation.atoms);
         let passage_tokens: Vec<Vec<String>> =
             passage_corpus.iter().map(search::atom_tokens).collect();
-        // The passage protocol on the dense side too. The lexical arm gained
-        // from windows over turns; an encoder reading six turns has the
-        // context a single turn does not carry, and asking whether that gain
-        // is the protocol's or the scorer's needs both scorers on both units.
+        // The passage protocol on the dense side too: both scorers on both units.
         if encoder {
             let model = model_name();
             let file = cache_dir().map(|dir| dir.join(format!("{model}-windows-{nth}.vec")));
@@ -1327,11 +1156,7 @@ fn main() -> anyhow::Result<()> {
         let mut m3_atoms: Vec<Vec<f32>> = Vec::new();
         let mut sparse_atoms: Vec<packset_daemon::embed::Sparse> = Vec::new();
         if late {
-            // Cached like the pooled vectors, and for a stronger reason: the
-            // per-token encode is what made a ten-conversation run take longer
-            // than this builder lets a job live, so the arm was never measured
-            // at that size. Three files because the three forms come out of
-            // one pass and a caller wants them together.
+            // Cached like the pooled vectors; three files from one pass.
             let held = cache_dir();
             let (tokens_file, pooled_file, sparse_file) = match held.as_ref() {
                 Some(dir) => (
@@ -1432,10 +1257,8 @@ fn main() -> anyhow::Result<()> {
                 .map(|weights| rank_sparse(&ask, weights, &sparse_atoms))
                 .unwrap_or_default();
 
-            // Does the stored graph earn a place in an answer? Half the places
-            // are the ranking's, and the rest go either to the ranking
-            // continuing or to the neighbours of what it already found. Same
-            // budget, same question, one difference.
+            // Same budget: half the places to the ranking, the rest to either
+            // the ranking continuing or the neighbours.
 
             let deep = hit_ids(&search::merge_ballots(
                 &[lexical.clone(), terms.clone()],
@@ -1569,15 +1392,9 @@ fn main() -> anyhow::Result<()> {
             // the arm where the defect they fix is the arm's own shape.
             let passage_floored = passage_by(Scorer::Bm25Plus);
             let passage_likely = passage_by(Scorer::Dirichlet);
-            // Read as sessions, from a ranking taken deep enough that the
-            // collapse can still fill the deepest cut-off.
-            //
-            // A session ranking read off twenty turns is not twenty sessions:
-            // the top turns cluster in a handful of rooms, so the arm is asked
-            // for twenty and answers with fewer. Comparing that against a
-            // corpus of session documents, where twenty hits are twenty
-            // sessions, measures the depth of the ranking as if it were the
-            // protocol. Every arm that collapses gets the same budget.
+            // Read as sessions from a ranking deep enough that the collapse
+            // still fills the deepest cut-off; every collapsing arm gets the
+            // same budget.
             let by_turn = collapse(&search::search_bm25_plain(&deep_ask, &index));
             // The same protocol with the floor under an occurrence, so the
             // scorer is compared at every granularity rather than only where
@@ -1691,12 +1508,8 @@ fn main() -> anyhow::Result<()> {
                 };
                 protocol[slot].add(&ranked, &rooms);
             }
-            // And the fusion question again, on the pair this table says is
-            // strongest, because the published gain is credited to the fusion
-            // rather than to either retriever. The lexical half is the passage
-            // ranking: the protocol table above is what says which lexical
-            // ballot to fuse, and answering the fusion question on a weaker one
-            // would credit the fusion with a gap the retriever already closed.
+            // The fusion question on the strongest pair, with the passage
+            // ranking as the lexical half.
             let room_pair = if by_late.is_empty() {
                 vec![passage_floored.clone(), by_meaning.clone()]
             } else {
