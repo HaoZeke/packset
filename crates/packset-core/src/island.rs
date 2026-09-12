@@ -64,7 +64,7 @@ impl Graph {
             .into_iter()
             .map(|row| {
                 let mut edges: Vec<(usize, f64)> = row.into_iter().collect();
-                edges.sort_by(|a, b| a.0.cmp(&b.0));
+                edges.sort_by_key(|e| e.0);
                 edges
             })
             .collect();
