@@ -161,6 +161,11 @@ pub fn fire(atoms: &mut [Record], fired: &[usize]) -> Vec<usize> {
                 .to_string()
         })
         .collect();
+    let position: HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
     let mut changed = std::collections::BTreeSet::new();
     for &i in &fired {
         let peers: Vec<String> = atoms[i]
@@ -175,10 +180,19 @@ pub fn fire(atoms: &mut [Record], fired: &[usize]) -> Vec<usize> {
             .unwrap_or_default();
         for peer in peers {
             let together = fired.iter().any(|&j| ids[j] == peer);
-            if !together {
-                let w = weight_of(&atoms[i], &peer) * (1.0 - LAMBDA);
-                set_weight(&mut atoms[i], &peer, w);
-                changed.insert(i);
+            if together {
+                continue;
+            }
+            // Both ends carry the edge's weight, so the decay is written on
+            // the peer as well when it is in the set.
+            let w = weight_of(&atoms[i], &peer) * (1.0 - LAMBDA);
+            set_weight(&mut atoms[i], &peer, w);
+            changed.insert(i);
+            if let Some(&j) = position.get(peer.as_str()) {
+                if j != i && !ids[i].is_empty() {
+                    set_weight(&mut atoms[j], &ids[i], w);
+                    changed.insert(j);
+                }
             }
         }
     }
@@ -372,7 +386,7 @@ mod tests {
         let graph = Graph::from_atoms(&atoms);
         assert_eq!(graph.weight(0, 1), Some(WEIGHT_DEFAULT));
         let changed = fire(&mut atoms, &[0, 1]);
-        assert_eq!(changed, vec![0, 1]);
+        assert_eq!(changed, vec![0, 1, 2], "the decayed peer is written too");
         let graph = Graph::from_atoms(&atoms);
         let w1 = graph.weight(0, 1).unwrap();
         assert!(w1 > WEIGHT_DEFAULT && w1 < 1.0, "{w1}");
