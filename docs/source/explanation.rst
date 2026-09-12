@@ -51,8 +51,16 @@ for it: a diversifier is for not answering the same claim four ways, and
 LoCoMo has nothing to suppress. The full table with every arm is in the
 repository README.
 
+On LongMemEval\_S (https://doi.org/10.48550/arXiv.2410.10813), 470 answerable questions
+over about fifty sessions each, BM25+ alone reaches 0.91 recall@5 at session
+granularity under all three document protocols, and 0.86 hit@1. Preference
+questions are the weak type at 0.30 to 0.47 hit@1; the dense arm is the
+next measurement there.
+
 Forgetting is a feature
 -----------------------
+
+.. image:: _static/memory.svg
 
 A claim that is never used should not weigh as much as one that is. The
 pack gives every claim a review clock modelled on spaced repetition: a
@@ -77,6 +85,31 @@ answers is still found. Trust rows and cards are exempt; they are weighed,
 not recalled. LoCoMo carries no review history, so this slot cannot be
 measured there and stays off by default. A longitudinal benchmark is the
 open work.
+
+Islands
+-------
+
+Every claim links to the claims it shares names with, at most eight,
+chosen by relative-neighbourhood pruning so a neighbourhood spreads over
+the directions a claim is about instead of piling into one. That graph has
+natural clusters. ``packset islands`` lists them by label propagation
+(https://doi.org/10.1103/PhysRevE.76.036106), and ``packset island CUE`` finds the one a
+task activates: the top five search hits seed a spread, half the
+activation crosses each hop divided by fan-out, two hops, strongest first.
+The construction is spreading activation over a semantic network (Collins
+and Loftus, https://doi.org/10.1037/0033-295X.82.6.407). An island is not a set or a
+persona: a set is a slice a person pinned, a persona colours everything,
+an island is what one piece of work touches, found from the work itself.
+
+Use shapes the graph. A link carries a weight, 0.5 until something fires
+over it. When the seat uses an island, the claims in it fired together:
+each pair's weight moves a tenth of the way to one, a pair with no link
+gains one, and every other link of a fired claim loses two percent. That is
+Hebb's rule with the forgetting term Oja added so weights stay bounded
+(https://doi.org/10.1007/BF00275687). Activation spreads in proportion to weight, so
+the paths a seat walks carry more each time and the ones it never walks
+fade toward nothing without being deleted. Weights sit beside the links on
+the atom and travel in a handover.
 
 One writer
 ----------

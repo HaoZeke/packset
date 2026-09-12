@@ -46,6 +46,9 @@ next measurement there.
 
 * Forgetting is a feature
 
+#+ATTR_HTML: :alt The memory loop: write, review clock, due, graded, islands, fire, retract :width 100%
+[[file:_static/memory.svg]]
+
 A claim that is never used should not weigh as much as one that is. The
 pack gives every claim a review clock modelled on spaced repetition: a
 stability in days, a difficulty, and a due date. Grading a review recalled

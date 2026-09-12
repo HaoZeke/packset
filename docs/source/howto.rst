@@ -127,6 +127,26 @@ Export for a handover, import from one
 Import is one POST per line of the ``.jsonl``; the seat's ``ljos receive``
 with ``--import`` does that after checking the bag. Trust rows travel the same way.
 
+Serve many agents
+-----------------
+
+One writer serves every client on the seat. The worker pool is the balance:
+``PACKSET_WORKERS`` sets it (default: the core count), a burst waits in the
+accept queue rather than becoming threads, and one logical write runs at a
+time so two identical claims arriving together are stored once. Reads share
+one parsed snapshot per write. The encoder runs before the write lock and is
+warmed at start.
+
+.. code:: console
+
+    $ PACKSET_WORKERS=8 packsetd --port 8761
+    $ PACKSET_URL=http://127.0.0.1:8761 cargo run --release -p packset-daemon --example hammer -- 32 100
+
+The example prints requests per second and latency percentiles for
+remember and search under 32 clients; the README carries the measured
+table. A second host is not a second writer: it is a client over the
+network, or its own pack.
+
 Run the retrieval benchmark
 ---------------------------
 
