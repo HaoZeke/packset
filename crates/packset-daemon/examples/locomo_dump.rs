@@ -109,7 +109,7 @@ fn conversations(raw: &Value) -> Vec<(Vec<Turn>, Vec<Question>)> {
     out
 }
 
-fn ranked(scored: &mut Vec<(usize, f64)>) {
+fn ranked(scored: &mut [(usize, f64)]) {
     scored.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
