@@ -15,7 +15,11 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 - The LongMemEval harness gains an island arm: sessions link to their five
   nearest by dense cosine, the fused top ten seed the writer's own
   spreading activation over that graph, and the cluster is ranked. The
-  island the seat reads at a sitting, measured on the benchmark.
+  island the seat reads at a sitting, measured on the benchmark, and a
+  measured negative as a ranking: hit@1 0.377 against the fused 0.889 over
+  470 questions, recall@10 unchanged at 0.981. Activation follows the
+  graph's degree, not the question; the island is orientation beside the
+  hits, which is where the seat prints it, not a ranking in their place.
 
 ## 0.7.2 (2026-09-12)
 
