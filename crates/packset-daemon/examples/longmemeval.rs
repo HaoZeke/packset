@@ -335,10 +335,19 @@ fn main() -> anyhow::Result<()> {
         }
     );
     let mut arms: Vec<String> = PROTOCOLS.iter().map(|p| p.to_string()).collect();
+    // `PACKSET_LME_RERANK=1` adds the cross-encoder arm: the windows of the
+    // fused top sessions are scored against the question by the reranker
+    // (bge-reranker-base unless `PACKSET_RERANK_MODEL` says otherwise) and
+    // the sessions reordered by their best window. A window fits the
+    // reranker's input; a whole session does not.
+    let rerank = encoder && std::env::var_os("PACKSET_LME_RERANK").is_some();
     if encoder {
         for p in DENSE_PROTOCOLS {
             arms.push(format!("{p} dense"));
             arms.push(format!("{p} fused"));
+            if rerank {
+                arms.push(format!("{p} fused rerank"));
+            }
         }
     }
     // `PACKSET_LME_DUMP` names a JSONL file: one line a question with the
@@ -379,11 +388,51 @@ fn main() -> anyhow::Result<()> {
                 let den = dense(&query, &vecs);
                 record(&collapse(den.iter().map(|(i, _)| *i), docs), slot);
                 slot += 1;
-                record(
-                    &collapse(fused(lex, &den, FUSE_DEPTH).into_iter(), docs),
-                    slot,
-                );
+                let fused_sessions = collapse(fused(lex, &den, FUSE_DEPTH).into_iter(), docs);
+                record(&fused_sessions, slot);
                 slot += 1;
+                if rerank {
+                    let top: Vec<&str> = fused_sessions
+                        .iter()
+                        .take(packset_daemon::embed::RERANK_DEPTH)
+                        .map(String::as_str)
+                        .collect();
+                    let (windows, _) = &kept["windows"];
+                    let candidates: Vec<&Document> = windows
+                        .iter()
+                        .filter(|d| top.contains(&d.session.as_str()))
+                        .collect();
+                    let texts: Vec<String> = candidates.iter().map(|d| d.text.clone()).collect();
+                    let reranked = match packset_daemon::embed::rerank(&question.text, &texts) {
+                        Some(scores) if scores.len() == candidates.len() => {
+                            let mut best: BTreeMap<&str, f32> = BTreeMap::new();
+                            for (d, s) in candidates.iter().zip(&scores) {
+                                let e = best.entry(d.session.as_str()).or_insert(f32::MIN);
+                                if *s > *e {
+                                    *e = *s;
+                                }
+                            }
+                            let mut order: Vec<(&str, f32)> = best.into_iter().collect();
+                            order.sort_by(|a, b| {
+                                b.1.partial_cmp(&a.1)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                                    .then_with(|| a.0.cmp(b.0))
+                            });
+                            let mut out: Vec<String> =
+                                order.into_iter().map(|(s, _)| s.to_string()).collect();
+                            // The tail keeps the fused order, as the daemon does.
+                            for s in &fused_sessions {
+                                if !out.contains(s) {
+                                    out.push(s.clone());
+                                }
+                            }
+                            out
+                        }
+                        _ => fused_sessions.clone(),
+                    };
+                    record(&reranked, slot);
+                    slot += 1;
+                }
             }
         }
         if let Some(file) = dump.as_mut() {
