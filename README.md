@@ -46,8 +46,9 @@ $ packset island fusing two ballots     # the memories a task activates
   with BM25+ alone.
 - Claims link by shared names; links carry weights that use strengthens and
   disuse decays; `island` returns the cluster a task activates.
-- A `trust` atom is one weighted edge of an influence graph, exported with
-  the rest, read by the seat's consensus.
+- A `trust` atom is one weighted edge of an influence graph, scoped to
+  domains by its entities; a `persona` atom is a voter with its own anchor.
+  Both are exported with the rest and read by the seat's consensus.
 - One logical write at a time; 150 to 230 requests a second at 32 clients on
   four cores, no failures.
 

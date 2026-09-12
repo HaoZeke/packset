@@ -63,7 +63,7 @@ Schema =inside.atom/v1=. Fields the writer reads:
 
 | Field | Meaning |
 |---+---|
-| =kind= | one of =voice=, =habit=, =cache-pointer=, =preference=, =lesson=, =goal=, =conclusion=, =card_line=, =summary=, =correction=, =belief=, =trust= |
+| =kind= | one of =voice=, =habit=, =cache-pointer=, =preference=, =lesson=, =goal=, =conclusion=, =card_line=, =summary=, =correction=, =belief=, =trust=, =persona= |
 | =level= | =explicit= for a claim a person or seat wrote |
 | =text= | the claim: at most two sentences of at most twenty-five words |
 | =workspace= | required |
@@ -74,7 +74,8 @@ Schema =inside.atom/v1=. Fields the writer reads:
 | =due_at=, =review= | the review clock: =stability=, =difficulty=, =reps=, =last=, =interval_s= |
 | =links= | peers by entity overlap, at most eight, chosen by relative-neighbourhood pruning; =fire= adds peers up to eight |
 | =link_weights= | weight per link in (0, 1], absent meaning 0.5; moved by =fire= |
-| =from=, =to=, =weight= | a =trust= row: one edge of an influence graph, weight in (0, 1] |
+| =from=, =to=, =weight= | a =trust= row: one edge of an influence graph, weight in (0, 1]; =entities= scope it to domains |
+| =name=, =anchor= | a =persona=: a voter and how far it moves off its own ballot, in [0, 1]; the text is its view, =entities= its domains |
 
 Fields the writer does not model round-trip untouched.
 

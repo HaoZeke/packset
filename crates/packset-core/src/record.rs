@@ -44,6 +44,7 @@ pub const KINDS: &[&str] = &[
     "correction",
     "belief",
     "trust",
+    "persona",
 ];
 
 /// Whether the claim was stated or inferred.
@@ -222,6 +223,7 @@ pub fn validate(atom: &mut Map<String, Value>) -> Result<(), AtomError> {
         return Err(AtomError(format!("unknown atom kind: {shown}")));
     }
     let trust = kind == "trust";
+    let persona = kind == "persona";
     let level = atom
         .get("level")
         .and_then(Value::as_str)
@@ -278,10 +280,29 @@ pub fn validate(atom: &mut Map<String, Value>) -> Result<(), AtomError> {
     if trust {
         check_trust(atom)?;
     }
+    if persona {
+        check_persona(atom)?;
+    }
 
     let report = prose::refuse(&text, prose::Role::Atom)?;
     atom.insert("prose".into(), prose_value(&report));
     Ok(())
+}
+
+/// A `persona` atom names a voter and its anchor: `name`, and `anchor` in
+/// `[0, 1]`, how far the persona moves off its own ballot in a settle. The
+/// text is its view, the entities the domains it speaks to.
+fn check_persona(atom: &Map<String, Value>) -> Result<(), AtomError> {
+    match atom.get("name").and_then(Value::as_str).map(str::trim) {
+        Some(n) if !n.is_empty() => {}
+        _ => return Err(AtomError("persona atom needs a name".into())),
+    }
+    match atom.get("anchor").and_then(Value::as_f64) {
+        Some(a) if (0.0..=1.0).contains(&a) => Ok(()),
+        _ => Err(AtomError(
+            "persona atom: anchor must be a number in [0, 1]".into(),
+        )),
+    }
 }
 
 /// A `trust` atom names `from`, `to` and a `weight` in `(0, 1]`; it is one
@@ -1092,6 +1113,23 @@ mod tests {
         assert!(validate(&mut row("a", "b", json!("0.5"))).is_err());
         let mut bare = atom(json!({"kind": "trust", "text": "a trusts b.", "workspace": "w"}));
         assert!(validate(&mut bare).is_err());
+    }
+
+    #[test]
+    fn a_persona_atom_is_a_named_anchor() {
+        let who = |anchor: Value| {
+            atom(json!({
+                "kind": "persona", "text": "Reads for the general reader.", "workspace": "w",
+                "name": "broad", "anchor": anchor,
+            }))
+        };
+        assert!(validate(&mut who(json!(0.8))).is_ok());
+        assert!(validate(&mut who(json!(0))).is_ok());
+        assert!(validate(&mut who(json!(1.2))).is_err());
+        assert!(validate(&mut who(json!("0.5"))).is_err());
+        let mut nameless =
+            atom(json!({"kind": "persona", "text": "A view.", "workspace": "w", "anchor": 0.5}));
+        assert!(validate(&mut nameless).is_err());
     }
 
     #[test]
