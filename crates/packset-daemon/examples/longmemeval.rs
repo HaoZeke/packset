@@ -30,9 +30,32 @@ struct Question {
     text: String,
     date: String,
     answer: String,
-    /// Session id, then its turns in order.
-    sessions: Vec<(String, Vec<String>)>,
+    /// Session id, its date as the benchmark writes it, then its turns.
+    sessions: Vec<(String, String, Vec<String>)>,
     answers: BTreeSet<String>,
+}
+
+/// Days since the epoch of a benchmark date, `2023/05/20 (Sat) 02:21`,
+/// good enough to take differences between two of them.
+fn days_of(date: &str) -> Option<f64> {
+    let mut parts = date.split_whitespace();
+    let ymd = parts.next()?;
+    let hm = parts.nth(1).unwrap_or("00:00");
+    let mut it = ymd.split('/');
+    let y: i64 = it.next()?.parse().ok()?;
+    let m: i64 = it.next()?.parse().ok()?;
+    let d: i64 = it.next()?.parse().ok()?;
+    let mut t = hm.split(':');
+    let h: f64 = t.next()?.parse().ok()?;
+    let mi: f64 = t.next()?.parse().ok()?;
+    // Days from civil (Howard Hinnant).
+    let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * m + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days as f64 + (h * 60.0 + mi) / 1440.0)
 }
 
 fn questions(raw: &Value) -> Vec<Question> {
@@ -47,11 +70,18 @@ fn questions(raw: &Value) -> Vec<Question> {
                 return None;
             }
             let ids = q["haystack_session_ids"].as_array()?;
+            let dates = q["haystack_dates"].as_array().cloned().unwrap_or_default();
             let sessions = q["haystack_sessions"].as_array()?;
             let sessions = ids
                 .iter()
+                .enumerate()
                 .zip(sessions)
-                .filter_map(|(sid, turns)| {
+                .filter_map(|((n, sid), turns)| {
+                    let date = dates
+                        .get(n)
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     let turns: Vec<String> = turns
                         .as_array()?
                         .iter()
@@ -61,7 +91,7 @@ fn questions(raw: &Value) -> Vec<Question> {
                             Some(format!("{role}: {content}"))
                         })
                         .collect();
-                    Some((sid.as_str()?.to_string(), turns))
+                    Some((sid.as_str()?.to_string(), date, turns))
                 })
                 .collect();
             let answers = q["answer_session_ids"]
@@ -105,7 +135,7 @@ fn documents(question: &Question, protocol: &str) -> Vec<Document> {
         text,
     };
     let mut out = Vec::new();
-    for (sid, turns) in &question.sessions {
+    for (sid, _, turns) in &question.sessions {
         match protocol {
             "turns" => {
                 for turn in turns {
@@ -164,6 +194,14 @@ fn dense(query: &[f32], vectors: &[Vec<f32>]) -> Vec<(usize, f64)> {
 
 /// Two rankings fused by the shipped panel (CombMNZ), as ordinals.
 fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)], limit: usize) -> Vec<usize> {
+    fused_scored(lexical, dense, limit)
+        .into_iter()
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The same fusion with the fused score kept, for arms that scale it.
+fn fused_scored(lexical: &[(usize, f64)], dense: &[(usize, f64)], limit: usize) -> Vec<(usize, f64)> {
     let ballot = |ranked: &[(usize, f64)]| -> Vec<Value> {
         ranked
             .iter()
@@ -175,8 +213,52 @@ fn fused(lexical: &[(usize, f64)], dense: &[(usize, f64)], limit: usize) -> Vec<
     let now = packset_core::clock::utcnow();
     merge_ballots(&[ballot(lexical), ballot(dense)], limit, &panel, &now)
         .iter()
-        .filter_map(|hit| hit["id"].as_str()?.parse().ok())
+        .filter_map(|hit| {
+            Some((
+                hit["id"].as_str()?.parse().ok()?,
+                hit["score"].as_f64().unwrap_or(0.0),
+            ))
+        })
         .collect()
+}
+
+/// The fused ranking with each document's score scaled by the shipped
+/// temporal slot (`PACKSET_DECAY=on`, a fourteen-day half-life) for the age
+/// of its session at the question's date. This is the forgetting the
+/// benchmark can see: a knowledge-update question wants the latest
+/// session, a single-session question does not care, and the table by type
+/// says what recency buys and costs.
+fn recency(
+    question: &Question,
+    docs: &[Document],
+    fused: &[(usize, f64)],
+) -> Vec<(usize, f64)> {
+    let panel = Panel::named("combmnz", "none", "on").expect("a shipped panel");
+    let asked = days_of(&question.date);
+    let age_of: BTreeMap<&str, f64> = question
+        .sessions
+        .iter()
+        .map(|(sid, date, _)| {
+            let age = match (asked, days_of(date)) {
+                (Some(a), Some(d)) => (a - d).max(0.0),
+                _ => 0.0,
+            };
+            (sid.as_str(), age)
+        })
+        .collect();
+    let mut scaled: Vec<(usize, f64)> = fused
+        .iter()
+        .map(|(i, s)| {
+            let age = age_of.get(docs[*i].session.as_str()).copied().unwrap_or(0.0);
+            (*i, s * panel.decay_weight("session", age, 1.0))
+        })
+        .collect();
+    scaled.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    scaled
 }
 
 /// Sessions in the order their best document ranks.
@@ -345,6 +427,7 @@ fn main() -> anyhow::Result<()> {
         for p in DENSE_PROTOCOLS {
             arms.push(format!("{p} dense"));
             arms.push(format!("{p} fused"));
+            arms.push(format!("{p} fused recency"));
             if rerank {
                 arms.push(format!("{p} fused rerank"));
             }
@@ -388,8 +471,12 @@ fn main() -> anyhow::Result<()> {
                 let den = dense(&query, &vecs);
                 record(&collapse(den.iter().map(|(i, _)| *i), docs), slot);
                 slot += 1;
-                let fused_sessions = collapse(fused(lex, &den, FUSE_DEPTH).into_iter(), docs);
+                let fused_docs = fused_scored(lex, &den, FUSE_DEPTH);
+                let fused_sessions = collapse(fused_docs.iter().map(|(i, _)| *i), docs);
                 record(&fused_sessions, slot);
+                slot += 1;
+                let aged = recency(question, docs, &fused_docs);
+                record(&collapse(aged.iter().map(|(i, _)| *i), docs), slot);
                 slot += 1;
                 if rerank {
                     let top: Vec<&str> = fused_sessions
