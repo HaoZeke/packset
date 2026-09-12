@@ -233,16 +233,16 @@ impl PacksetClient {
         rerank: bool,
     ) -> Result<Vec<Hit>, Error> {
         let url = format!("{}/v1/search", self.base);
-        let timeout = if rerank {
-            Duration::from_secs(60)
+        let budget = if rerank {
+            Duration::from_secs(60).max(timeout())
         } else {
-            TIMEOUT
+            timeout()
         };
         let mut req = ureq::get(&url)
             .query("workspace", workspace)
             .query("q", q)
             .query("limit", &limit.to_string())
-            .timeout(timeout);
+            .timeout(budget);
         if let Some(at) = as_of {
             req = req.query("as_of", at);
         }
