@@ -1,14 +1,6 @@
-//! `packset-embed`: the dense projection, driven as a separate process.
-//!
-//! Same shape as the search projection, and for the same reason. A model and
-//! the runtime under it are a native dependency with a download behind them,
-//! and most machines that build the writer will never hold one. So this is its
-//! own binary, absent is a supported state, and the writer falls back to the
-//! scorers it already has.
-//!
-//! One JSON line in, one JSON line out, flushed, until the input closes.
-//! Loading the model is the expensive part, so this is meant to be kept open
-//! rather than spawned per question.
+//! `packset-embed`: the dense projection as a separate process. One JSON line
+//! in, one out, flushed, until the input closes; keep it open, loading the
+//! model is the cost.
 //!
 //! ```console
 //! $ echo '{"id":"a","text":"Prefer ripgrep for search."}' | packset-embed
@@ -16,12 +8,8 @@
 //! $ echo '{"id":"q","text":"which search tool"}' | packset-embed --query
 //! ```
 //!
-//! Documents and questions are encoded differently, and differently again per
-//! family: BGE asks a question to carry a retrieval instruction that a document
-//! must not, and E5 wants a word on both sides. Passing `--query` for a
-//! document, or the wrong pair for a model, silently costs recall rather than
-//! failing. The library applies no prefix of its own, so both live here beside
-//! the name they belong to.
+//! Documents and questions take different prefixes per model family (BGE
+//! instructs the question, E5 prefixes both), applied here beside the name.
 
 use std::io::{BufRead, Write};
 
@@ -56,37 +44,21 @@ struct Pairing {
     d: Vec<String>,
 }
 
-/// What the cross-encoder made of them.
-///
-/// Scores in the caller's order rather than a reordered list, so the caller
-/// keeps the mapping from candidate to atom it already had. Reordering here
-/// would hand back a permutation of texts and make the caller match strings
-/// back to ids.
+/// Cross-encoder scores, in the caller's order.
 #[derive(Serialize)]
 struct Scored {
     id: String,
     s: Vec<f32>,
 }
 
-/// One thing encoded both ways, from one pass.
-///
-/// Late interaction scores a document by the best match each query token finds
-/// anywhere in it, so it needs the tokens kept apart rather than pooled. That
-/// is the whole difference, and it is also the whole cost: a short claim
-/// carries thirty vectors where the pooled form carries one.
-///
-/// The model returns its own pooled vector from the same forward pass, and it
-/// rides along so a caller can compare the two scorings with the model held
-/// fixed. Comparing this model's tokens against another model's pooling
-/// measures both differences at once and attributes them to one.
+/// One text from one pass: a vector per token for late interaction, the
+/// pooled vector, and the learned term weights.
 #[derive(Serialize)]
 struct Tokens {
     id: String,
     t: Vec<Vec<f32>>,
     v: Vec<f32>,
-    /// The learned term weights from the same pass: which vocabulary entries
-    /// this text activates, and how much. One number a term where the token
-    /// form is a vector a token, so it costs what an inverted index costs.
+    /// Learned term weights from the same pass.
     s: Sparse,
 }
 
