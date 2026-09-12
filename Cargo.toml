@@ -13,7 +13,7 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "MIT"
-version = "0.3.0"
+version = "0.4.0"
 publish = true
 repository = "https://github.com/leidarljos/packset"
 homepage = "https://leidarljos.github.io/packset/"

@@ -2,7 +2,7 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
-## Unreleased
+## 0.4.0 (2026-09-12)
 
 - `PacksetClient::with_workspace` pins the workspace ahead of
   `PACKSET_WORKSPACE` and the working directory, so a seat can be one memory
