@@ -278,12 +278,35 @@ impl Store {
             }
         }
         let atoms = self.live(workspace)?;
-        let documents: Arc<Vec<Vec<String>>> = Arc::new(
-            atoms
+        // Tokenising is most of what a rebuild costs. When the live set is the
+        // cached one with atoms appended, which is what a write does, only the
+        // new atoms are tokenised and the index is rebuilt from cached tokens.
+        let previous = self
+            .terms
+            .read()
+            .ok()
+            .and_then(|cache| cache.get(workspace).map(|(_, set)| set.clone()));
+        let documents: Arc<Vec<Vec<String>>> = Arc::new(match previous {
+            Some((old_atoms, _, old_documents))
+                if old_atoms.len() <= atoms.len()
+                    && old_atoms
+                        .iter()
+                        .zip(atoms.iter())
+                        .all(|(a, b)| a.get("id") == b.get("id") && a.get("ts") == b.get("ts")) =>
+            {
+                let mut documents = (*old_documents).clone();
+                documents.extend(
+                    atoms[old_atoms.len()..]
+                        .iter()
+                        .map(packset_core::search::atom_tokens),
+                );
+                documents
+            }
+            _ => atoms
                 .iter()
                 .map(packset_core::search::atom_tokens)
                 .collect(),
-        );
+        });
         let index = Arc::new(Index::build(documents.iter().map(Vec::as_slice)));
         // Same rule as the snapshot: cached only if nothing committed while
         // this was built, since an index over a superseded pack served under

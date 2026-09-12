@@ -72,11 +72,15 @@ impl Service {
     /// [`AtomError`] when the text is a tool dump or the record does not
     /// validate, else the store's.
     pub fn add(&self, atom: Record) -> anyhow::Result<Record> {
+        // Validation and the encoder run before the lock: the encode is the
+        // slow part of a write and depends on the text alone.
+        let atom = self.prepare(atom)?;
         let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
-        self.add_unlocked(atom)
+        self.add_prepared(atom)
     }
 
-    fn add_unlocked(&self, mut atom: Record) -> anyhow::Result<Record> {
+    /// Check a claim and fill the fields that depend on nothing stored.
+    fn prepare(&self, mut atom: Record) -> anyhow::Result<Record> {
         let text = atom
             .get("text")
             .and_then(Value::as_str)
@@ -120,7 +124,11 @@ impl Service {
         atom.insert("tombstone".into(), Value::Bool(false));
         atom.entry("embedding").or_insert(Value::Null);
         self.encode_into(&mut atom);
+        Ok(atom)
+    }
 
+    /// Store a prepared claim, or return the live one that already says it.
+    fn add_prepared(&self, mut atom: Record) -> anyhow::Result<Record> {
         let workspace = atom
             .get("workspace")
             .and_then(Value::as_str)
@@ -849,7 +857,7 @@ impl Service {
     pub fn accept(&self, workspace: &str, proposal_id: &str) -> anyhow::Result<Record> {
         let _write = self.writes.lock().unwrap_or_else(|e| e.into_inner());
         let (atom, rec) = crate::proposals::accept(&self.home, workspace, proposal_id)?;
-        let stored = self.add_unlocked(atom)?;
+        let stored = self.add_prepared(self.prepare(atom)?)?;
         let atom_id = stored.get("id").and_then(Value::as_str).unwrap_or("");
         crate::proposals::mark_accepted(&self.home, workspace, &rec, atom_id)?;
         Ok(stored)
