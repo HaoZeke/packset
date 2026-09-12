@@ -31,6 +31,40 @@ READ = (
 )
 SESSION = "\n### Session {}:\nSession Date: {}\nSession Content:\n{}\n"
 
+# The seat's own reading of time, handed to the reader: every session dated
+# as a distance from the question, and the rule the pack applies to facts
+# that supersede each other. A memory that knows when things happened does
+# the date arithmetic; a 7B reader given raw timestamps mostly cannot.
+TIMELINE_NOTE = (
+    "The sessions are in date order, each marked with how many days before the "
+    "question it happened. A later session supersedes an earlier one on the same "
+    "fact. Use the marked distances for any question about when or how long ago.\n\n"
+)
+SESSION_TIMED = (
+    "\n### Session {}:\nSession Date: {} ({} days before the question)\nSession Content:\n{}\n"
+)
+
+
+def days_of(date):
+    """Days since the epoch of a benchmark date, `2023/05/20 (Sat) 02:21`."""
+    import datetime
+
+    try:
+        head = date.split(" (")[0]
+        tail = date.split(") ")[-1] if ") " in date else "00:00"
+        y, m, d = (int(x) for x in head.split("/"))
+        hh, mm = (int(x) for x in tail.split(":")[:2])
+        return (datetime.datetime(y, m, d, hh, mm) - datetime.datetime(1970, 1, 1)).total_seconds() / 86400
+    except (ValueError, IndexError):
+        return None
+
+
+def days_before(question_date, session_date):
+    a, b = days_of(question_date), days_of(session_date)
+    if a is None or b is None:
+        return None
+    return max(0, int(round(a - b)))
+
 JUDGE_BASE = (
     "I will give you a question, a correct answer, and a response from a model. "
     "Please answer yes if the response contains the correct answer. Otherwise, "
@@ -141,6 +175,8 @@ def main():
     ap.add_argument("--arm", default="sessions fused")
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--types", default="", help="comma list of question types to keep")
+    ap.add_argument("--no-timeline", action="store_true", help="raw dates only, the benchmark's own reading prompt")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", default="")
     a = ap.parse_args()
@@ -150,6 +186,9 @@ def main():
     judge = os.environ.get("QA_JUDGE_MODEL", reader)
     raw = json.load(open(a.dataset))
     rows = [json.loads(l) for l in open(a.dump) if l.strip()]
+    if a.types:
+        keep = {t.strip() for t in a.types.split(",") if t.strip()}
+        rows = [r for r in rows if str(r.get("question_type", r.get("category", ""))) in keep]
     if a.limit:
         rows = rows[: a.limit]
     if a.bench == "locomo":
@@ -187,15 +226,19 @@ def main():
             (ids.index(s) for s in chosen if s in ids),
             key=lambda i: q["haystack_dates"][i],
         )
-        history = "".join(
-            SESSION.format(
-                n + 1,
-                q["haystack_dates"][i],
-                "\n".join(f"{t['role']}: {t['content']}" for t in q["haystack_sessions"][i]),
-            )
-            for n, i in enumerate(picked)
-        )
-        response = chat(base, key, reader, READ.format(history, q["question_date"], q["question"]), 512)
+        parts = []
+        for n, i in enumerate(picked):
+            content = "\n".join(f"{t['role']}: {t['content']}" for t in q["haystack_sessions"][i])
+            gap = None if a.no_timeline else days_before(q["question_date"], q["haystack_dates"][i])
+            if gap is None:
+                parts.append(SESSION.format(n + 1, q["haystack_dates"][i], content))
+            else:
+                parts.append(SESSION_TIMED.format(n + 1, q["haystack_dates"][i], gap, content))
+        history = "".join(parts)
+        prompt = READ.format(history, q["question_date"], q["question"])
+        if not a.no_timeline:
+            prompt = TIMELINE_NOTE + prompt
+        response = chat(base, key, reader, prompt, 512)
         verdict = chat(base, key, judge, judge_prompt(q["question_type"], q["question"], q["answer"], response), 8)
         return {
             "question_id": q["question_id"],
@@ -224,7 +267,8 @@ def report(results, a, reader, judge, bench):
         t[0] += r["correct"]
         t[1] += 1
     total = sum(r["correct"] for r in results)
-    print(f"\n{bench} answer accuracy, arm {a.arm!r} top {a.top}, reader {reader}, judge {judge}\n")
+    timeline = "raw dates" if getattr(a, "no_timeline", False) else "timeline"
+    print(f"\n{bench} answer accuracy, arm {a.arm!r} top {a.top}, {timeline}, reader {reader}, judge {judge}\n")
     print("| type | asked | accuracy |\n|---|---|---|")
     for kind, (c, n) in sorted(by.items()):
         print(f"| {kind} | {n} | {c / n:.3f} |")

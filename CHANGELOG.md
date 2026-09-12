@@ -2,6 +2,13 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
+## Unreleased
+
+- The answer-accuracy script hands the reader the seat's reading of time:
+  every session marked with its distance in days before the question and
+  the rule that a later session supersedes an earlier one on the same fact
+  (`--no-timeline` for the benchmark's raw prompt); `--types` runs a subset.
+
 ## 0.6.0 (2026-09-12)
 
 - The writer keeps two query encoders (`PACKSET_EMBED_QUERY_WORKERS`), so
