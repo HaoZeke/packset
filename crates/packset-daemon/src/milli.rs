@@ -447,19 +447,26 @@ pub fn filter_atom_hits(hits: &[Value], live: &[Record], set: Option<&str>) -> V
         .collect();
     hits.iter()
         .filter(|hit| !matches!(hit["field"].as_str(), Some("user" | "memory")))
-        .filter(|hit| {
-            let Some(id) = hit["id"].as_str() else {
-                return false;
-            };
-            let Some(atom) = by_id.get(id) else {
-                return false;
-            };
-            match set {
-                None => true,
-                Some(name) => atom.get("set").and_then(Value::as_str) == Some(name),
+        .filter_map(|hit| {
+            let id = hit["id"].as_str()?;
+            let atom = by_id.get(id)?;
+            if let Some(name) = set {
+                if atom.get("set").and_then(Value::as_str) != Some(name) {
+                    return None;
+                }
             }
+            // The index stores what it scores; the stamp, the kind and the
+            // review date come from the pack's own record.
+            let mut hit = hit.clone();
+            for key in ["ts", "kind", "due_at"] {
+                if hit.get(key).is_none_or(Value::is_null) {
+                    if let Some(value) = atom.get(key) {
+                        hit[key] = value.clone();
+                    }
+                }
+            }
+            Some(hit)
         })
-        .cloned()
         .collect()
 }
 
@@ -563,6 +570,25 @@ mod tests {
 
     fn record(value: Value) -> Record {
         value.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn an_index_hit_carries_the_records_stamp() {
+        let live = vec![record(json!({
+            "id": "a1", "kind": "lesson", "text": "one",
+            "ts": "2026-09-01T00:00:00.000Z", "due_at": "2026-09-20T00:00:00.000Z"
+        }))];
+        let hits = vec![
+            json!({"field": "atom", "id": "a1", "text": "one", "score": 1.0}),
+            json!({"field": "atom", "id": "gone", "text": "two", "score": 0.5}),
+            json!({"field": "user", "id": null, "text": "card", "score": 0.4}),
+        ];
+        let kept = filter_atom_hits(&hits, &live, None);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0]["ts"], json!("2026-09-01T00:00:00.000Z"));
+        assert_eq!(kept[0]["kind"], json!("lesson"));
+        assert_eq!(kept[0]["due_at"], json!("2026-09-20T00:00:00.000Z"));
+        assert_eq!(kept[0]["score"], json!(1.0));
     }
 
     #[test]
