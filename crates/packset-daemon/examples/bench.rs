@@ -127,8 +127,7 @@ fn main() -> anyhow::Result<()> {
             10,
         );
 
-        // A write, then the first read after it: that read is the one that
-        // used to pay for the whole snapshot being rebuilt.
+        // A write, then the first read after it, which rebuilds the snapshot.
         let mut counter = made;
         let write = timed(
             || {

@@ -943,7 +943,7 @@ mod tests {
         let borda = order("borda");
         assert_eq!(borda.first().map(String::as_str), Some("a"), "{borda:?}");
 
-        // The bug this pins: both score fusions used to return Borda's answer.
+        // Each score fusion answers with its own ranking, not Borda's.
         for name in ["combsum", "combmnz"] {
             let ranked = order(name);
             assert_eq!(
