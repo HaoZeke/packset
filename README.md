@@ -59,6 +59,10 @@ $ packset island fusing two ballots     # the memories a task activates
   0.747. `scripts/longmemeval_qa.py` runs it over the
   harness's retrieval dump with any OpenAI-compatible reader and judge; the
   explanation page says how to read the result.
+- A later claim closes the earlier one it rewrites: a rewrite, a correction
+  sharing an entity, or the same opening words with a new object; the
+  closed one keeps its window for an as-of read. `POST /v1/consolidate`
+  runs the rule over what is held and reports the pairs before writing.
 - Claims link by shared names; links carry weights that use strengthens and
   disuse decays; `island` returns the cluster a task activates.
 - A `trust` atom is one weighted edge of an influence graph, scoped to
