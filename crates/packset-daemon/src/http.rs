@@ -462,7 +462,8 @@ fn route(
             ) else {
                 return Answer::err(400, "workspace and id required");
             };
-            answer(service.delete_atom(workspace, id).map(Value::Object))
+            let why = body.get("why").and_then(Value::as_str);
+            answer(service.delete_atom(workspace, id, why).map(Value::Object))
         }
         (Method::Post, "/v1/grade") => {
             let workspace = body.get("workspace").and_then(Value::as_str).unwrap_or("");

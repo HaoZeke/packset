@@ -49,6 +49,17 @@ accession.
 Whether the deed exists is a question the pack cannot ask. It checks the shape;
 `deedar` answers the rest.
 
+A retraction cites a deed too. `POST /v1/atoms/delete` takes an optional `why`,
+which has to be an accession rather than free text, and writes it onto the
+tombstone beside the text it withdraws. The tombstone leaves the live set, so
+`accessions` and `citers` stop reporting it, which is the point: a withdrawn
+claim should not keep asserting anything. Read it back through the window it was
+live in.
+
+```
+packset atoms --as-of 2026-09-11T00:00:00Z WORKSPACE   # what the pack held then
+```
+
 ## Trust
 
 A `trust` atom is one row of an influence graph: `from`, `to`, and a `weight`

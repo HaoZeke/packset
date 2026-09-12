@@ -365,12 +365,15 @@ impl Store {
         Ok(counts.into_iter().collect())
     }
 
-    /// Tombstone one live record.
+    /// Tombstone one live record, optionally naming the deed that withdrew it.
+    ///
+    /// The whole record is carried onto the tombstone, so `why` lands beside
+    /// the text it retracts and a bitemporal read gets both at once.
     ///
     /// # Errors
     ///
     /// [`AtomError`] when the id is not in the current set, else the write's.
-    pub fn delete(&self, workspace: &str, id: &str) -> anyhow::Result<Record> {
+    pub fn delete(&self, workspace: &str, id: &str, why: Option<&str>) -> anyhow::Result<Record> {
         let mut tomb = self
             .current(workspace, None)?
             .into_iter()
@@ -378,6 +381,9 @@ impl Store {
             .ok_or_else(|| anyhow::Error::new(AtomError(format!("no current atom {id}"))))?;
         tomb.insert("tombstone".into(), Value::Bool(true));
         tomb.insert("ts".into(), Value::String(packset_core::clock::utcnow()));
+        if let Some(accession) = why {
+            tomb.insert("retracted_by".into(), Value::String(accession.to_string()));
+        }
         self.upsert(&tomb)?;
         Ok(tomb)
     }
@@ -603,12 +609,30 @@ mod tests {
         store
             .upsert(&record(json!({"id": "a", "workspace": "w", "text": "a"})))
             .unwrap();
-        let tomb = store.delete("w", "a").unwrap();
+        let tomb = store.delete("w", "a", None).unwrap();
         assert_eq!(tomb["tombstone"], json!(true));
         // The record is still there to be read; it has left the live set.
         assert!(store.get("w", "a").unwrap().is_some());
         assert!(store.current("w", None).unwrap().is_empty());
-        assert!(store.delete("w", "a").is_err(), "twice is not current");
+        assert!(store.delete("w", "a", None).is_err(), "twice is not current");
+    }
+
+    #[test]
+    fn a_retraction_carries_its_deed_onto_the_tombstone() {
+        let (_dir, store) = store();
+        store
+            .upsert(&record(
+                json!({"id": "a", "workspace": "w", "text": "the claim"}),
+            ))
+            .unwrap();
+        let tomb = store
+            .delete("w", "a", Some("deed-patch-overlay"))
+            .unwrap();
+        assert_eq!(tomb["retracted_by"], json!("deed-patch-overlay"));
+        // Both halves read back together: what was withdrawn, and on what.
+        assert_eq!(tomb["text"], json!("the claim"));
+        let stored = store.get("w", "a").unwrap().unwrap();
+        assert_eq!(stored["retracted_by"], json!("deed-patch-overlay"));
     }
 
     #[test]
@@ -675,7 +699,7 @@ mod snapshot_tests {
             .upsert(&record(json!({"id": "a", "workspace": "w", "text": "a"})))
             .unwrap();
         assert_eq!(store.live("w").unwrap().len(), 1);
-        store.delete("w", "a").unwrap();
+        store.delete("w", "a", None).unwrap();
         assert!(
             store.live("w").unwrap().is_empty(),
             "a delete must invalidate too"
@@ -806,7 +830,7 @@ mod snapshot_tests {
             .upsert(&record(json!({"id": "a", "workspace": "w", "text": "a"})))
             .unwrap();
         assert_eq!(store.live("w").unwrap().len(), 1);
-        store.delete("w", "a").unwrap();
+        store.delete("w", "a", None).unwrap();
         assert!(store.live("w").unwrap().is_empty());
         assert_matches_a_fresh_scan(&store, "w");
     }

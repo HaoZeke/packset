@@ -297,11 +297,29 @@ impl Service {
 
     /// Tombstone one atom and drop it from the projection.
     ///
+    /// `why` names the deed that withdrew the claim. A retraction cites a deed
+    /// or nothing, so unlike an entity it is refused when it is free text: the
+    /// point of writing it is that `deedar evidence` can be asked about it, and
+    /// a name no deed store answers for is a citation that only looks like one.
+    ///
     /// # Errors
     ///
-    /// The store's.
-    pub fn delete_atom(&self, workspace: &str, id: &str) -> anyhow::Result<Record> {
-        let tomb = self.store.delete(workspace, id)?;
+    /// [`AtomError`] when `why` is not a deed accession, else the store's.
+    pub fn delete_atom(
+        &self,
+        workspace: &str,
+        id: &str,
+        why: Option<&str>,
+    ) -> anyhow::Result<Record> {
+        let why = match why.map(str::trim).filter(|w| !w.is_empty()) {
+            Some(w) if !packset_core::atom::is_accession(w) => {
+                return Err(anyhow::Error::new(AtomError(format!(
+                    "{w} is not a deed accession; a retraction cites                      deed-<kind>-<slug> or sha256:<hash>"
+                ))))
+            }
+            other => other,
+        };
+        let tomb = self.store.delete(workspace, id, why)?;
         let _ = crate::milli::delete(&[id.to_string()], &self.home.milli_dir());
         Ok(tomb)
     }
@@ -1363,6 +1381,17 @@ mod tests {
     }
 
     #[test]
+    fn a_retraction_cites_a_deed_or_nothing() {
+        let (_dir, svc) = service();
+        let stored = svc.add(atom("The overlay landed.")).unwrap();
+        let id = stored["id"].as_str().unwrap().to_string();
+        let refused = svc.delete_atom("w", &id, Some("because I said so"));
+        assert!(refused.is_err(), "free text passed as a citation");
+        // Refusing the citation refuses the whole write; the atom is still live.
+        assert!(svc.delete_atom("w", &id, Some("deed-patch-overlay")).is_ok());
+    }
+
+    #[test]
     fn an_attachment_is_one_shot() {
         let (_dir, svc) = service();
         svc.put_attach("w", "a log body", "build.log");
@@ -1388,7 +1417,7 @@ mod tests {
         let (_dir, svc) = service();
         let stored = svc.add(atom("Reviews open with a check.")).unwrap();
         svc.store()
-            .delete("w", stored["id"].as_str().unwrap())
+            .delete("w", stored["id"].as_str().unwrap(), None)
             .unwrap();
         let mut second = atom("Prefer ripgrep for search.");
         second.insert("kind".into(), json!("preference"));

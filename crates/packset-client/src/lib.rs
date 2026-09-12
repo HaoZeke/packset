@@ -355,18 +355,29 @@ impl PacksetClient {
     /// entry, so a forgotten atom stops being recalled without the pack losing
     /// the fact that it once held it.
     ///
+    /// `why` is the deed accession that withdrew the claim, and the daemon
+    /// refuses one that is not an accession. It rides onto the tombstone beside
+    /// the text, so the retraction and what it retracted read back together.
+    ///
     /// # Errors
     ///
     /// [`Error::Bad`] when the workspace does not hold that atom, else the
     /// request's or a body that is not JSON.
-    pub fn delete_atom(&self, workspace: &str, id: &str) -> Result<serde_json::Value, Error> {
+    pub fn delete_atom(
+        &self,
+        workspace: &str,
+        id: &str,
+        why: Option<&str>,
+    ) -> Result<serde_json::Value, Error> {
         let url = format!("{}/v1/atoms/delete", self.base);
-        let resp = match ureq::post(&url)
-            .timeout(TIMEOUT)
-            .send_json(serde_json::json!({
-                "workspace": workspace,
-                "id": id,
-            })) {
+        let mut body = serde_json::json!({
+            "workspace": workspace,
+            "id": id,
+        });
+        if let Some(accession) = why {
+            body["why"] = serde_json::Value::String(accession.to_string());
+        }
+        let resp = match ureq::post(&url).timeout(TIMEOUT).send_json(body) {
             Ok(resp) => resp,
             Err(ureq::Error::Status(404, _)) => {
                 return Err(Error::Bad(format!("no atom {id}")));
