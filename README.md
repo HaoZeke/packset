@@ -63,6 +63,10 @@ $ packset island fusing two ballots     # the memories a task activates
   sharing an entity, or the same opening words with a new object; the
   closed one keeps its window for an as-of read. `POST /v1/consolidate`
   runs the rule over what is held and reports the pairs before writing.
+  On MemoryAgentBench's conflict-resolution split the same rule takes a
+  7B reader from 0.33 to 0.55 single-hop to 0.76 to 0.86, 0.480 over the
+  split, where the published retrieval baselines with a stronger reader
+  sit at 0.155 to 0.295.
 - Claims link by shared names; links carry weights that use strengthens and
   disuse decays; `island` returns the cluster a task activates.
 - A `trust` atom is one weighted edge of an influence graph, scoped to
