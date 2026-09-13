@@ -284,6 +284,20 @@ the benchmark's authors found for every system they measured (at most
 0.28). Their retrieval baselines, with a much stronger reader, sit at
 0.155 to 0.295 on this split.
 
+The same benchmark's accurate-retrieval split, 2000 questions over
+records of a quarter to three million characters chunked as it chunks
+them, with the same 7B reader and ten chunks a prompt: the fused panel
+answers 0.675 of the questions (EventQA 0.62 to 0.84 by record length,
+the document QA 0.79 and 0.47, the chat questions 0.39 by the
+benchmark's judge), the lexical ballot alone 0.674, five chunks 0.649;
+averaged by source rather than by question, 0.644 and 0.642. The
+published rows on this split, all with the benchmark's hosted reader, are BM25
+0.605, HippoRAG-v2 0.651, and the memory products 0.28 to 0.34. A reader
+two classes smaller reaches the top of that table, which says where the
+score comes from: the retrieval is the panel's, the ceiling is the
+reader's, and the products that put a model in the write path are behind
+the retrievers on the benchmark built to measure them.
+
 * Trust is memory too
 
 A =trust= atom is one weighted edge of an influence graph: who listens to

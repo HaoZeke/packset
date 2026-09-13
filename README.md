@@ -66,7 +66,9 @@ $ packset island fusing two ballots     # the memories a task activates
   On MemoryAgentBench's conflict-resolution split the same rule takes a
   7B reader from 0.33 to 0.55 single-hop to 0.76 to 0.86, 0.480 over the
   split, where the published retrieval baselines with a stronger reader
-  sit at 0.155 to 0.295.
+  sit at 0.155 to 0.295. On its accurate-retrieval split the fused panel
+  answers 0.675 of 2000 questions with the same 7B reader, against the
+  published 0.605 (BM25) and 0.651 (HippoRAG-v2) with a hosted reader.
 - Claims link by shared names; links carry weights that use strengthens and
   disuse decays; `island` returns the cluster a task activates.
 - A `trust` atom is one weighted edge of an influence graph, scoped to

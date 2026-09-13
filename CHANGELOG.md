@@ -4,6 +4,11 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- MemoryAgentBench accurate retrieval measured (2000 questions, ten
+  chunks, 7B reader): the fused panel 0.675 of the questions, lexical
+  0.674, five chunks 0.649; averaged by source 0.644 and 0.642, against
+  the published BM25 0.605 and HippoRAG-v2 0.651 with a GPT-4o-mini
+  reader.
 - The reading lists the days between every pair of retrieved sessions,
   by default: over the same 350 questions the raw prompt answers 0.431,
   the marked distances 0.420, the listed gaps 0.460 (temporal reasoning
