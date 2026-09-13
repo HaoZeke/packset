@@ -4,6 +4,11 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- The reading lists the days between every pair of retrieved sessions,
+  by default: over the same 350 questions the raw prompt answers 0.431,
+  the marked distances 0.420, the listed gaps 0.460 (temporal reasoning
+  0.315 to 0.386, knowledge-update 0.792 to 0.819). The store does the
+  date arithmetic; the reader places the events.
 - MemoryAgentBench conflict resolution measured (800 questions, ten
   facts, 7B reader): the fused panel 0.33 to 0.55 single-hop; the same
   hits with superseded facts closed by the replacement rule 0.76 to 0.86

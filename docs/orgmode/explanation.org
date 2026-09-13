@@ -89,10 +89,16 @@ same 350 questions of the four types the framing is for, with the 7B
 reader: 0.420 against 0.431 overall; temporal reasoning 0.339 against
 0.315, three questions gained; multi-session 0.331 against 0.372, five
 lost; knowledge-update 0.778 against 0.792; preference 0.267 against
-0.300. Within noise for this reader and not a lever: the arithmetic the
-temporal questions ask for is the reader's, and a small reader does not
-do it whether the distances are marked or not. The framing stays as an
-option (`--no-timeline` is the benchmark's own prompt) and the rows are
+0.300. Marking distances alone is within noise for this reader. Doing
+the arithmetic for it is not: the same prompt with the days between every
+pair of retrieved sessions listed after them answers 0.460 over the same
+350 questions, temporal reasoning 0.386 against the raw prompt's 0.315,
+knowledge-update 0.819 against 0.792, multi-session and preference
+unchanged. A question that asks how long after one event another came is
+answered by one of those lines once the reader has placed the events; a
+7B reader places them and does not subtract dates. The store knows every
+date, so the store subtracts. This is the reading the harness runs by
+default (`--no-timeline` is the benchmark's own prompt) and the rows are
 in the reproduction package.
 
 On LoCoMo at turn granularity, where the unit is the dialogue turn the

@@ -372,13 +372,16 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--types", default="", help="comma list of question types to keep")
     ap.add_argument("--no-timeline", action="store_true", help="raw dates only, the benchmark's own reading prompt")
-    ap.add_argument("--gaps", action="store_true", help="list the days between every pair of retrieved sessions after them")
+    ap.add_argument("--gaps", action=argparse.BooleanOptionalAction, default=True,
+                    help="list the days between every pair of retrieved sessions after them (on unless --no-gaps or --no-timeline)")
     ap.add_argument("--chunks", default="", help="MemoryAgentBench chunk store (PACKSET_MAB_CHUNKS)")
     ap.add_argument("--learn", default="", choices=["", "none", "fsrs", "oracle"],
                     help="LoCoMo test-time learning: answer in order, grade the turns used, reweigh by the review clock")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", default="")
     a = ap.parse_args()
+    if a.no_timeline:
+        a.gaps = False
     base = os.environ["QA_BASE_URL"]
     key = os.environ.get("QA_API_KEY", "")
     reader = os.environ.get("QA_MODEL", "")
