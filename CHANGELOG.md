@@ -2,6 +2,12 @@
 
 Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
+## Unreleased
+
+- `--bench mab` reads a dump without the dataset's words: the positional
+  dataset argument is the directory of split files, and questions and
+  answers come back by split, row and index.
+
 ## 0.8.0 (2026-09-12)
 
 - The timeline reading measured against the raw prompt (350 questions,

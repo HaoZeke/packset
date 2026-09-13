@@ -75,6 +75,26 @@ def substring_match(answers, response):
     return any(normal(a) and normal(a) in r for a in answers)
 
 
+def mab_fill(rows, data_dir):
+    """A dump without the dataset's words (the package copy) takes its
+    questions and answers back from the split files by (split, row, index)."""
+    if not data_dir or all("question" in r for r in rows):
+        return rows
+    splits = {}
+    for r in rows:
+        if "question" in r:
+            continue
+        s = r["split"]
+        if s not in splits:
+            with open(os.path.join(data_dir, s + ".jsonl")) as f:
+                splits[s] = [json.loads(l) for l in f if l.strip()]
+        rec = splits[s][r["row"]]
+        r["question"] = rec["questions"][r["question_index"]]
+        a = rec["answers"][r["question_index"]]
+        r["answers"] = a if isinstance(a, list) else [a]
+    return rows
+
+
 def mab_rows(rows, chunks_dir, arm, top):
     """One prompt per question from the harness's dump and chunk store."""
     stores = {}
@@ -371,6 +391,8 @@ def main():
     if a.limit:
         rows = rows[: a.limit]
     if a.bench == "mab":
+        # The positional dataset is the directory of split files, or `-`.
+        rows = mab_fill(rows, a.dataset if os.path.isdir(a.dataset) else "")
         items = list(mab_rows(rows, a.chunks, a.arm, a.top))
 
         def one_mab(item):
