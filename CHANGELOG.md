@@ -4,6 +4,18 @@ Versions follow semver at 0.x: a minor bump is a feature, a patch is a fix.
 
 ## Unreleased
 
+- MemoryAgentBench conflict resolution measured (800 questions, ten
+  facts, 7B reader): the fused panel 0.33 to 0.55 single-hop; the same
+  hits with superseded facts closed by the replacement rule 0.76 to 0.86
+  single-hop, 0.480 over the split; multi-hop stays under 0.3 for every
+  arm, as it does for every published system.
+- Test-time learning on LoCoMo measured (1540 questions, ten turns): the
+  baseline 0.584; the review clock moved by the judge's verdict 0.445;
+  moved by the gold evidence 0.544. Retrievability that decays every
+  unreviewed turn from the start loses more than confirmed turns gain,
+  on a benchmark whose every question asks about something not yet
+  asked. The review clock is for what a seat returns to, not for a
+  haystack read once.
 - `--bench mab` reads a dump without the dataset's words: the positional
   dataset argument is the directory of split files, and questions and
   answers come back by split, row and index.

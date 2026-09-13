@@ -266,7 +266,17 @@ answers an as-of read. =POST /v1/consolidate= runs the same rule over what
 is held, for a pack filled before the rule or by import, and reports the
 pairs before it writes them. The MemoryAgentBench conflict-resolution rows
 measure this rule on public data: a list of facts where a later one
-overwrites an earlier one about the same subject.
+overwrites an earlier one about the same subject. Over its 800 questions,
+ten facts handed to the 7B reader, the fused panel alone answers the
+single-hop rows 0.33 to 0.55 and the multi-hop rows 0.02 to 0.07; the
+same hits ordered latest first, 0.33 to 0.42 and 0.02 to 0.06; the same
+hits with every superseded fact closed by this rule, 0.76 to 0.86
+single-hop and 0.03 to 0.27 multi-hop, 0.480 over all eight rows. The
+rule more than doubles the single-hop answers, because the reader no
+longer sees the old fact beside the new; the multi-hop rows stay hard, as
+the benchmark's authors found for every system they measured (at most
+0.28). Their retrieval baselines, with a much stronger reader, sit at
+0.155 to 0.295 on this split.
 
 * Trust is memory too
 
